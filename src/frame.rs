@@ -1,9 +1,14 @@
+use std::collections::BTreeMap;
+
+use unicode_width::UnicodeWidthChar;
+
 use crate::terminal::TerminalSize;
 
 #[derive(Debug, Clone)]
 pub struct TerminalFrame {
     size: TerminalSize,
     cursor: TerminalPosition,
+    chars: BTreeMap<TerminalPosition, TerminalChar>,
     current_style: TerminalStyle,
 }
 
@@ -12,6 +17,7 @@ impl TerminalFrame {
         Self {
             size,
             cursor: TerminalPosition::default(),
+            chars: BTreeMap::new(),
             current_style: TerminalStyle::default(),
         }
     }
@@ -19,17 +25,41 @@ impl TerminalFrame {
     pub fn size(&self) -> TerminalSize {
         self.size
     }
+
+    fn push_char(&mut self, c: char) {
+        let Some(width) = c.width() else {
+            // control char
+            return;
+        };
+
+        let c = TerminalChar {
+            value: c,
+            style: self.current_style,
+        };
+        self.chars.insert(self.cursor, c);
+        self.cursor.col += width;
+    }
 }
 
 impl std::fmt::Write for TerminalFrame {
-    fn write_str(&mut self, s: &str) -> std::fmt::Result {
-        let mut chars = s.chars();
-        while let Some(c) = chars.next() {
-            match c {
-                _ => {
-                    //
+    fn write_str(&mut self, mut s: &str) -> std::fmt::Result {
+        loop {
+            for (i, c) in s.char_indices() {
+                match c {
+                    '\n' => {
+                        self.cursor.row += 1;
+                        self.cursor.col = 0;
+                    }
+                    '\x1b' => {
+                        s = self.current_style.update(&s[i + 1..]);
+                        continue;
+                    }
+                    _ => {
+                        self.push_char(c);
+                    }
                 }
             }
+            break;
         }
         Ok(())
     }
@@ -58,6 +88,15 @@ pub struct TerminalStyle {
     pub strikethrough: bool,
     pub fg_color: Option<Rgb>,
     pub bg_color: Option<Rgb>,
+}
+
+impl TerminalStyle {
+    fn update<'a>(&mut self, s: &'a str) -> &'a str {
+        let s = s
+            .strip_prefix('[')
+            .expect("Expected '[' after escape character '\\x1b' for valid ANSI escape sequence");
+        s
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
