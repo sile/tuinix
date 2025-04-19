@@ -35,6 +35,18 @@ impl TerminalFrame {
         self.cursor
     }
 
+    pub fn get_line(
+        &self,
+        row: usize,
+    ) -> impl '_ + Iterator<Item = (TerminalPosition, TerminalChar)> {
+        let start = TerminalPosition { row, col: 0 };
+        let end = TerminalPosition {
+            row: row + 1,
+            col: 0,
+        };
+        self.chars.range(start..end).map(|(p, c)| (*p, *c))
+    }
+
     fn push_char(&mut self, mut c: char) {
         if self.cursor.col >= self.size.cols {
             return;
