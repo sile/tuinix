@@ -26,10 +26,26 @@ impl TerminalFrame {
         self.size
     }
 
-    fn push_char(&mut self, c: char) {
-        let Some(width) = c.width() else {
-            // control char
+    pub fn set_cursor(&mut self, position: TerminalPosition) {
+        self.current_style = TerminalStyle::default();
+        self.cursor = position;
+    }
+
+    pub fn cursor(&self) -> TerminalPosition {
+        self.cursor
+    }
+
+    fn push_char(&mut self, mut c: char) {
+        if self.cursor.col >= self.size.cols {
             return;
+        }
+
+        let width = if let Some(width) = c.width() {
+            width
+        } else {
+            // control char - use replacement character (tofu)
+            c = '�';
+            1
         };
 
         let c = TerminalChar {
@@ -43,7 +59,7 @@ impl TerminalFrame {
 
 impl std::fmt::Write for TerminalFrame {
     fn write_str(&mut self, mut s: &str) -> std::fmt::Result {
-        loop {
+        while self.cursor.row < self.size.rows {
             for (i, c) in s.char_indices() {
                 match c {
                     '\n' => {
