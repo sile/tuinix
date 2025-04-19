@@ -123,15 +123,15 @@ impl TerminalStyle {
                     "Invalid RGB format in ANSI color - expected ';' separator after red component",
                 );
                 let (g, b) = s.split_once(';').expect("Invalid RGB format in ANSI color - expected ';' separator after green component");
-                let r = r.parse().expect(
-                    "Invalid red color value in ANSI RGB sequence - expected numeric value",
-                );
-                let g = g.parse().expect(
-                    "Invalid green color value in ANSI RGB sequence - expected numeric value",
-                );
-                let b = b.parse().expect(
-                    "Invalid blue color value in ANSI RGB sequence - expected numeric value",
-                );
+                let r = r
+                    .parse()
+                    .expect("Invalid red color value in ANSI RGB sequence - expected u8 value");
+                let g = g
+                    .parse()
+                    .expect("Invalid green color value in ANSI RGB sequence - expected u8 value");
+                let b = b
+                    .parse()
+                    .expect("Invalid blue color value in ANSI RGB sequence - expected u8 value");
                 if fg {
                     self.fg_color = Some(Rgb { r, g, b });
                 } else {
