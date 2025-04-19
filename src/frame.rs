@@ -3,11 +3,17 @@ use crate::terminal::TerminalSize;
 #[derive(Debug, Clone)]
 pub struct TerminalFrame {
     size: TerminalSize,
+    cursor: TerminalPosition,
+    current_style: TerminalStyle,
 }
 
 impl TerminalFrame {
     pub fn new(size: TerminalSize) -> Self {
-        Self { size }
+        Self {
+            size,
+            cursor: TerminalPosition::default(),
+            current_style: TerminalStyle::default(),
+        }
     }
 
     pub fn size(&self) -> TerminalSize {
@@ -17,8 +23,22 @@ impl TerminalFrame {
 
 impl std::fmt::Write for TerminalFrame {
     fn write_str(&mut self, s: &str) -> std::fmt::Result {
-        todo!()
+        let mut chars = s.chars();
+        while let Some(c) = chars.next() {
+            match c {
+                _ => {
+                    //
+                }
+            }
+        }
+        Ok(())
     }
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TerminalPosition {
+    pub row: usize,
+    pub col: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
