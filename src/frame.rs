@@ -28,4 +28,21 @@ pub struct TerminalChar {
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct TerminalStyle {}
+pub struct TerminalStyle {
+    pub bold: bool,
+    pub italic: bool,
+    pub underline: bool,
+    pub blink: bool,
+    pub reverse: bool,
+    pub dim: bool,
+    pub strikethrough: bool,
+    pub fg_color: Option<Rgb>,
+    pub bg_color: Option<Rgb>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Rgb {
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+}
