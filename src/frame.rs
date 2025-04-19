@@ -17,6 +17,10 @@ impl TerminalFrame {
     pub fn size(&self) -> TerminalSize {
         self.size
     }
+
+    pub fn lines(&self) -> &[TerminalLine] {
+        &self.lines
+    }
 }
 
 #[derive(Debug, Clone)]
