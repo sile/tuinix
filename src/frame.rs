@@ -4,7 +4,7 @@ use unicode_width::UnicodeWidthChar;
 
 use crate::terminal::TerminalSize;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct TerminalFrame {
     size: TerminalSize,
     cursor: TerminalPosition,
@@ -47,6 +47,8 @@ impl TerminalFrame {
         self.chars.range(start..end).map(|(p, c)| (*p, *c))
     }
 
+    // TODO: merge or draw_frame
+
     fn push_char(&mut self, mut c: char) {
         if self.cursor.col >= self.size.cols {
             return;
@@ -62,6 +64,7 @@ impl TerminalFrame {
 
         let c = TerminalChar {
             value: c,
+            width,
             style: self.current_style,
         };
         self.chars.insert(self.cursor, c);
@@ -102,6 +105,7 @@ pub struct TerminalPosition {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TerminalChar {
     pub value: char,
+    pub width: usize,
     pub style: TerminalStyle,
 }
 

@@ -4,10 +4,14 @@ use std::{
     os::fd::AsRawFd,
 };
 
+use crate::frame::{TerminalFrame, TerminalPosition, TerminalStyle};
+
 pub struct Terminal {
     stdin: Stdin,
     stdout: Stdout,
     original: libc::termios,
+    size: TerminalSize,
+    last_frame: TerminalFrame,
 }
 
 impl Terminal {
@@ -38,15 +42,22 @@ impl Terminal {
             stdin,
             stdout,
             original: unsafe { termios.assume_init() },
+            size: TerminalSize::default(),
+            last_frame: TerminalFrame::default(),
         };
         this.enable_raw_mode()?;
         this.enable_alternate_screen()?;
         this.stdout.flush()?;
+        this.update_size()?;
 
         Ok(this)
     }
 
-    pub fn get_size(&mut self) -> std::io::Result<TerminalSize> {
+    pub fn size(&self) -> TerminalSize {
+        self.size
+    }
+
+    fn update_size(&mut self) -> std::io::Result<()> {
         let mut winsize = MaybeUninit::<libc::winsize>::zeroed();
         if unsafe {
             libc::ioctl(
@@ -60,10 +71,48 @@ impl Terminal {
         }
 
         let winsize = unsafe { winsize.assume_init() };
-        Ok(TerminalSize {
-            rows: winsize.ws_row as usize,
-            cols: winsize.ws_col as usize,
-        })
+        self.size.rows = winsize.ws_row as usize;
+        self.size.cols = winsize.ws_col as usize;
+
+        // TODO: clear if the size was changed.
+
+        Ok(())
+    }
+
+    pub fn draw(&mut self, frame: TerminalFrame) -> std::io::Result<()> {
+        // TODO: save and restore cursor position if visible
+
+        for row in 0..self.size.rows {
+            if frame.get_line(row).eq(self.last_frame.get_line(row)) {
+                continue;
+            }
+
+            // TODO: clear line
+            // TODO: move cursor
+            let mut last_style = TerminalStyle::default();
+            let mut next_col = 0;
+            for (TerminalPosition { col, .. }, c) in frame.get_line(row) {
+                if last_style != c.style {
+                    // TODO: clear style
+                    last_style = c.style;
+                    // TODO: write style
+                }
+
+                write!(
+                    self.stdout,
+                    "{:spaces$}{}",
+                    "",
+                    c.value,
+                    spaces = col - next_col
+                )?;
+                next_col = col + c.width;
+            }
+
+            // TODO: clear style
+        }
+
+        self.last_frame = frame;
+        Ok(())
     }
 
     fn enable_alternate_screen(&mut self) -> std::io::Result<()> {
