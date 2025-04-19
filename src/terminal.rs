@@ -46,6 +46,26 @@ impl Terminal {
         Ok(this)
     }
 
+    pub fn get_size(&mut self) -> std::io::Result<TerminalSize> {
+        let mut winsize = MaybeUninit::<libc::winsize>::zeroed();
+        if unsafe {
+            libc::ioctl(
+                self.stdout.as_raw_fd(),
+                libc::TIOCGWINSZ,
+                winsize.as_mut_ptr(),
+            )
+        } != 0
+        {
+            return Err(std::io::Error::last_os_error());
+        }
+
+        let winsize = unsafe { winsize.assume_init() };
+        Ok(TerminalSize {
+            rows: winsize.ws_row as usize,
+            cols: winsize.ws_col as usize,
+        })
+    }
+
     fn enable_alternate_screen(&mut self) -> std::io::Result<()> {
         write!(self.stdout, "\x1b[?1049h")
     }
@@ -104,4 +124,10 @@ impl std::fmt::Debug for Terminal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Terminal").finish()
     }
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TerminalSize {
+    pub rows: usize,
+    pub cols: usize,
 }
