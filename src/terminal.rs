@@ -4,7 +4,6 @@ use std::{
     os::fd::AsRawFd,
 };
 
-// TODO: #[derive(Debug)]
 pub struct Terminal {
     stdin: Stdin,
     stdout: Stdout,
@@ -98,5 +97,11 @@ impl Drop for Terminal {
         let _ = self.disable_raw_mode();
         let _ = self.disable_alternate_screen();
         let _ = self.stdout.flush();
+    }
+}
+
+impl std::fmt::Debug for Terminal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Terminal").finish()
     }
 }
