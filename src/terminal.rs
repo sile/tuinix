@@ -49,17 +49,13 @@ impl Terminal {
         }
 
         let mut termios = MaybeUninit::<libc::termios>::zeroed();
-        if unsafe { libc::tcgetattr(stdin.as_raw_fd(), termios.as_mut_ptr()) } != 0 {
-            return Err(std::io::Error::last_os_error());
-        }
+        check_libc_result(unsafe { libc::tcgetattr(stdin.as_raw_fd(), termios.as_mut_ptr()) })?;
 
         // TODO: non blocking
 
         // TODO: duplicate check
         let mut pipefd = [0 as RawFd; 2];
-        if unsafe { libc::pipe(pipefd.as_mut_ptr()) } != 0 {
-            return Err(std::io::Error::last_os_error());
-        }
+        check_libc_result(unsafe { libc::pipe(pipefd.as_mut_ptr()) })?;
         unsafe {
             SIGWINCH_PIPE_FD = pipefd[1];
 
@@ -67,13 +63,12 @@ impl Terminal {
             sigaction.sa_sigaction = handle_sigwinch as libc::sighandler_t;
             sigaction.sa_flags = 0;
 
-            if libc::sigemptyset(&mut sigaction.sa_mask) != 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-
-            if libc::sigaction(libc::SIGWINCH, &sigaction, std::ptr::null_mut()) != 0 {
-                return Err(std::io::Error::last_os_error());
-            }
+            check_libc_result(libc::sigemptyset(&mut sigaction.sa_mask))?;
+            check_libc_result(libc::sigaction(
+                libc::SIGWINCH,
+                &sigaction,
+                std::ptr::null_mut(),
+            ))?;
         }
 
         let original_termios = unsafe { termios.assume_init() };
@@ -211,16 +206,13 @@ impl Terminal {
 
     fn update_size(&mut self) -> std::io::Result<()> {
         let mut winsize = MaybeUninit::<libc::winsize>::zeroed();
-        if unsafe {
+        check_libc_result(unsafe {
             libc::ioctl(
                 self.stdout.as_raw_fd(),
                 libc::TIOCGWINSZ,
                 winsize.as_mut_ptr(),
             )
-        } != 0
-        {
-            return Err(std::io::Error::last_os_error());
-        }
+        })?;
 
         let winsize = unsafe { winsize.assume_init() };
         self.size.rows = winsize.ws_row as usize;
@@ -296,26 +288,22 @@ impl Terminal {
         raw.c_cc[libc::VMIN] = 1;
         raw.c_cc[libc::VTIME] = 0;
 
-        if unsafe { libc::tcsetattr(self.input().as_raw_fd(), libc::TCSAFLUSH, &raw) } != 0 {
-            Err(std::io::Error::last_os_error())
-        } else {
-            Ok(())
-        }
+        check_libc_result(unsafe {
+            libc::tcsetattr(self.input().as_raw_fd(), libc::TCSAFLUSH, &raw)
+        })?;
+
+        Ok(())
     }
 
     fn disable_raw_mode(&mut self) -> std::io::Result<()> {
-        if unsafe {
+        check_libc_result(unsafe {
             libc::tcsetattr(
                 self.input().as_raw_fd(),
                 libc::TCSAFLUSH,
                 &self.original_termios,
             )
-        } != 0
-        {
-            Err(std::io::Error::last_os_error())
-        } else {
-            Ok(())
-        }
+        })?;
+        Ok(())
     }
 }
 
@@ -343,4 +331,12 @@ pub struct TerminalSize {
 pub enum Event {
     TerminalSize(TerminalSize), // TODO: Signal
     Input(Input),
+}
+
+fn check_libc_result(result: libc::c_int) -> std::io::Result<()> {
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
 }
