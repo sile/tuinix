@@ -11,6 +11,7 @@ pub struct Terminal {
     stdout: Stdout,
     original: libc::termios,
     size: TerminalSize,
+    cursor: Option<TerminalPosition>,
     last_frame: TerminalFrame,
 }
 
@@ -43,18 +44,43 @@ impl Terminal {
             stdout,
             original: unsafe { termios.assume_init() },
             size: TerminalSize::default(),
+            cursor: Some(TerminalPosition::ZERO),
             last_frame: TerminalFrame::default(),
         };
         this.enable_raw_mode()?;
         this.enable_alternate_screen()?;
         this.stdout.flush()?;
         this.update_size()?;
+        this.set_cursor(None)?;
 
         Ok(this)
     }
 
     pub fn size(&self) -> TerminalSize {
         self.size
+    }
+
+    pub fn cursor(&self) -> Option<TerminalPosition> {
+        self.cursor
+    }
+
+    pub fn set_cursor(&mut self, position: Option<TerminalPosition>) -> std::io::Result<()> {
+        match (self.cursor, position) {
+            (Some(_), None) => write!(self.stdout, "\x1b[?25l")?,
+            (None, Some(_)) => write!(self.stdout, "\x1b[?25h")?,
+            _ => {}
+        }
+        if let Some(position) = position {
+            write!(
+                self.stdout,
+                "\x1b[{};{}H",
+                position.row + 1,
+                position.col + 1
+            )?;
+        }
+        self.cursor = position;
+        self.stdout.flush()?;
+        Ok(())
     }
 
     fn update_size(&mut self) -> std::io::Result<()> {

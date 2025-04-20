@@ -102,6 +102,14 @@ pub struct TerminalPosition {
     pub col: usize,
 }
 
+impl TerminalPosition {
+    pub const ZERO: Self = Self::row_col(0, 0);
+
+    pub const fn row_col(row: usize, col: usize) -> Self {
+        Self { row, col }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TerminalChar {
     pub value: char,
