@@ -56,6 +56,53 @@ impl Terminal {
         Ok(this)
     }
 
+    // static int pipefd[2];
+
+    // void signal_handler(int signo) {
+    //     // Write a byte to the pipe
+    //     write(pipefd[1], "x", 1);
+    // }
+
+    // int main() {
+    //     // Create the pipe
+    //     pipe(pipefd);
+
+    //     // Set up signal handler
+    //     signal(SIGUSR1, signal_handler);
+
+    //     // In your thread that reads from stdin
+    //     fd_set readfds;
+    //     char buffer[256];
+
+    //     while (1) {
+    //         FD_ZERO(&readfds);
+    //         FD_SET(STDIN_FILENO, &readfds);
+    //         FD_SET(pipefd[0], &readfds);
+
+    //         int maxfd = (STDIN_FILENO > pipefd[0]) ? STDIN_FILENO : pipefd[0];
+
+    //         // Block until either stdin or the pipe has data
+    //         select(maxfd + 1, &readfds, NULL, NULL, NULL);
+
+    //         if (FD_ISSET(pipefd[0], &readfds)) {
+    //             // Signal occurred, drain the pipe
+    //             char dummy;
+    //             read(pipefd[0], &dummy, 1);
+    //             printf("Signal received\n");
+    //             // Handle the signal condition...
+    //         }
+
+    //         if (FD_ISSET(STDIN_FILENO, &readfds)) {
+    //             // Read from stdin
+    //             ssize_t n = read(STDIN_FILENO, buffer, sizeof(buffer) - 1);
+    //             if (n > 0) {
+    //                 buffer[n] = '\0';
+    //                 printf("Read from stdin: %s", buffer);
+    //             }
+    //         }
+    //     }
+    // }
+
     pub fn size(&self) -> TerminalSize {
         self.size
     }
@@ -64,6 +111,7 @@ impl Terminal {
         self.cursor
     }
 
+    // TODO: Move to TerminalFrame? or in draw()
     pub fn set_cursor(&mut self, position: Option<TerminalPosition>) -> std::io::Result<()> {
         match (self.cursor, position) {
             (Some(_), None) => write!(self.stdout, "\x1b[?25l")?,
