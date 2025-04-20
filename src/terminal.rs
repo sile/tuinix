@@ -28,6 +28,8 @@ pub struct Terminal {
 
 impl Terminal {
     pub fn new() -> std::io::Result<Self> {
+        // TODO: panic handler
+
         let stdin = std::io::stdin();
         let stdout = std::io::stdout();
         if !stdin.is_terminal() {
@@ -120,7 +122,11 @@ impl Terminal {
                     timeval_ptr,
                 );
                 if ret == -1 {
-                    return Err(std::io::Error::last_os_error());
+                    let e = std::io::Error::last_os_error();
+                    if e.kind() == std::io::ErrorKind::Interrupted {
+                        continue;
+                    }
+                    return Err(e);
                 } else if ret == 0 {
                     // Timeout
                     return Ok(None);
@@ -130,8 +136,8 @@ impl Terminal {
                     if let Some(input) = self.read_input()? {
                         return Ok(Some(Event::Input(input)));
                     }
-                } else {
-                    assert!(libc::FD_ISSET(self.sigwinch.as_raw_fd(), &readfds));
+                }
+                if libc::FD_ISSET(self.sigwinch.as_raw_fd(), &readfds) {
                     return self.read_size().map(Event::TerminalSize).map(Some);
                 }
             }
@@ -145,7 +151,10 @@ impl Terminal {
     }
 
     pub fn read_input(&mut self) -> std::io::Result<Option<()>> {
-        todo!()
+        // TODO:
+        let mut buf = [0; 1024];
+        self.stdin.read(&mut buf)?;
+        Ok(Some(()))
     }
 
     pub fn size(&self) -> TerminalSize {
