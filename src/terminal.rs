@@ -6,7 +6,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::frame::{TerminalFrame, TerminalPosition, TerminalStyle};
+use crate::{
+    frame::{TerminalFrame, TerminalPosition, TerminalStyle},
+    input::{Input, InputReader},
+};
 
 static mut SIGWINCH_PIPE_FD: RawFd = 0;
 
@@ -19,7 +22,7 @@ unsafe extern "C" fn handle_sigwinch(_: libc::c_int) {
 // TODO: TerminalOptions{ non_blocking_stdin, ..}
 
 pub struct Terminal {
-    stdin: Stdin,
+    input: InputReader<Stdin>,
     stdout: Stdout,
     sigwinch: File,
     original_termios: libc::termios,
@@ -75,7 +78,7 @@ impl Terminal {
 
         let original_termios = unsafe { termios.assume_init() };
         let mut this = Self {
-            stdin,
+            input: InputReader::new(stdin),
             stdout,
             sigwinch: unsafe { File::from_raw_fd(pipefd[0]) },
             original_termios,
@@ -107,8 +110,8 @@ impl Terminal {
         Ok(this)
     }
 
-    pub fn stdin(&self) -> &Stdin {
-        &self.stdin
+    pub fn input(&self) -> &Stdin {
+        self.input.inner()
     }
 
     pub fn stdout(&self) -> &Stdout {
@@ -125,11 +128,11 @@ impl Terminal {
             unsafe {
                 let mut readfds = MaybeUninit::<libc::fd_set>::zeroed();
                 libc::FD_ZERO(readfds.as_mut_ptr());
-                libc::FD_SET(self.stdin.as_raw_fd(), readfds.as_mut_ptr());
+                libc::FD_SET(self.input().as_raw_fd(), readfds.as_mut_ptr());
                 libc::FD_SET(self.sigwinch.as_raw_fd(), readfds.as_mut_ptr());
                 let mut readfds = readfds.assume_init();
 
-                let maxfd = self.stdin.as_raw_fd().max(self.sigwinch.as_raw_fd());
+                let maxfd = self.input().as_raw_fd().max(self.sigwinch.as_raw_fd());
 
                 let mut timeval = MaybeUninit::<libc::timeval>::zeroed();
                 let timeval_ptr = if let Some(duration) = timeout {
@@ -160,8 +163,8 @@ impl Terminal {
                     return Ok(None);
                 }
 
-                if libc::FD_ISSET(self.stdin.as_raw_fd(), &readfds) {
-                    if let Some(input) = self.read_input()? {
+                if libc::FD_ISSET(self.input().as_raw_fd(), &readfds) {
+                    if let Some(input) = self.input.read_input()? {
                         return Ok(Some(Event::Input(input)));
                     }
                 }
@@ -176,14 +179,6 @@ impl Terminal {
         self.sigwinch.read_exact(&mut [0])?;
         self.update_size()?;
         Ok(self.size)
-    }
-
-    pub fn read_input(&mut self) -> std::io::Result<Option<()>> {
-        // TODO:
-        let mut buf = [0; 1024];
-        self.stdin.read(&mut buf)?;
-        //Ok(Some(()))
-        todo!()
     }
 
     pub fn size(&self) -> TerminalSize {
@@ -301,7 +296,7 @@ impl Terminal {
         raw.c_cc[libc::VMIN] = 1;
         raw.c_cc[libc::VTIME] = 0;
 
-        if unsafe { libc::tcsetattr(self.stdin.as_raw_fd(), libc::TCSAFLUSH, &raw) } != 0 {
+        if unsafe { libc::tcsetattr(self.input().as_raw_fd(), libc::TCSAFLUSH, &raw) } != 0 {
             Err(std::io::Error::last_os_error())
         } else {
             Ok(())
@@ -311,7 +306,7 @@ impl Terminal {
     fn disable_raw_mode(&mut self) -> std::io::Result<()> {
         if unsafe {
             libc::tcsetattr(
-                self.stdin.as_raw_fd(),
+                self.input().as_raw_fd(),
                 libc::TCSAFLUSH,
                 &self.original_termios,
             )
@@ -346,6 +341,6 @@ pub struct TerminalSize {
 
 #[derive(Debug, Clone)]
 pub enum Event {
-    TerminalSize(TerminalSize),
-    Input(()),
+    TerminalSize(TerminalSize), // TODO: Signal
+    Input(Input),
 }
