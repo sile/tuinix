@@ -3,7 +3,7 @@ use std::{
     io::{IsTerminal, Read, Stdin, Stdout, Write},
     mem::MaybeUninit,
     os::fd::{AsRawFd, FromRawFd, RawFd},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use crate::frame::{TerminalFrame, TerminalPosition, TerminalStyle};
@@ -90,45 +90,50 @@ impl Terminal {
     }
 
     pub fn poll_event(&mut self, timeout: Option<Duration>) -> std::io::Result<Option<Event>> {
-        let mut readfds = MaybeUninit::<libc::fd_set>::zeroed();
-        unsafe {
-            libc::FD_ZERO(readfds.as_mut_ptr());
-            libc::FD_SET(self.stdin.as_raw_fd(), readfds.as_mut_ptr());
-            libc::FD_SET(self.sigwinch.as_raw_fd(), readfds.as_mut_ptr());
-            let mut readfds = readfds.assume_init();
+        let start_time = Instant::now();
+        loop {
+            unsafe {
+                let mut readfds = MaybeUninit::<libc::fd_set>::zeroed();
+                libc::FD_ZERO(readfds.as_mut_ptr());
+                libc::FD_SET(self.stdin.as_raw_fd(), readfds.as_mut_ptr());
+                libc::FD_SET(self.sigwinch.as_raw_fd(), readfds.as_mut_ptr());
+                let mut readfds = readfds.assume_init();
 
-            let maxfd = self.stdin.as_raw_fd().max(self.sigwinch.as_raw_fd());
+                let maxfd = self.stdin.as_raw_fd().max(self.sigwinch.as_raw_fd());
 
-            let mut timeval = MaybeUninit::<libc::timeval>::zeroed();
-            let timeval_ptr = if let Some(duration) = timeout {
-                let tv = timeval.as_mut_ptr();
-                (*tv).tv_sec = duration.as_secs() as libc::time_t;
-                (*tv).tv_usec = duration.subsec_micros() as libc::suseconds_t;
-                tv
-            } else {
-                std::ptr::null_mut()
-            };
+                let mut timeval = MaybeUninit::<libc::timeval>::zeroed();
+                let timeval_ptr = if let Some(duration) = timeout {
+                    let duration = duration.saturating_sub(start_time.elapsed());
+                    let tv = timeval.as_mut_ptr();
+                    (*tv).tv_sec = duration.as_secs() as libc::time_t;
+                    (*tv).tv_usec = duration.subsec_micros() as libc::suseconds_t;
+                    tv
+                } else {
+                    std::ptr::null_mut()
+                };
 
-            let ret = libc::select(
-                maxfd + 1,
-                &mut readfds,
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                timeval_ptr,
-            );
-            if ret == -1 {
-                return Err(std::io::Error::last_os_error());
-            } else if ret == 0 {
-                // Timeout
-                return Ok(None);
-            }
+                let ret = libc::select(
+                    maxfd + 1,
+                    &mut readfds,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    timeval_ptr,
+                );
+                if ret == -1 {
+                    return Err(std::io::Error::last_os_error());
+                } else if ret == 0 {
+                    // Timeout
+                    return Ok(None);
+                }
 
-            if libc::FD_ISSET(self.stdin.as_raw_fd(), &readfds) {
-                // TODO: loop if none
-                self.read_input().map(|i| i.map(Event::Input))
-            } else {
-                assert!(libc::FD_ISSET(self.sigwinch.as_raw_fd(), &readfds));
-                self.read_size().map(Event::TerminalSize).map(Some)
+                if libc::FD_ISSET(self.stdin.as_raw_fd(), &readfds) {
+                    if let Some(input) = self.read_input()? {
+                        return Ok(Some(Event::Input(input)));
+                    }
+                } else {
+                    assert!(libc::FD_ISSET(self.sigwinch.as_raw_fd(), &readfds));
+                    return self.read_size().map(Event::TerminalSize).map(Some);
+                }
             }
         }
     }
