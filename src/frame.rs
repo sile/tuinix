@@ -41,6 +41,7 @@ impl TerminalFrame {
         self.show_cursor = b;
     }
 
+    // TODO: rename
     pub fn show_cursor(&self) -> bool {
         self.show_cursor
     }

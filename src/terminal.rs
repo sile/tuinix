@@ -30,7 +30,7 @@ pub struct Terminal {
     signal: File,
     original_termios: libc::termios,
     size: TerminalSize,
-    cursor: Option<TerminalPosition>,
+    cursor: Option<TerminalPosition>, // TODO: remove
     last_frame: TerminalFrame,
 }
 
@@ -88,14 +88,14 @@ impl Terminal {
             signal: unsafe { File::from_raw_fd(pipefd[0]) },
             original_termios,
             size: TerminalSize::default(),
-            cursor: Some(TerminalPosition::ZERO),
+            cursor: None,
             last_frame: TerminalFrame::default(),
         };
         this.enable_raw_mode()?;
         this.enable_alternate_screen()?;
         this.output.flush()?;
         this.update_size()?;
-        this.set_cursor(None)?;
+        this.hide_cursor()?;
 
         let default_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |panic_info| {
@@ -194,20 +194,32 @@ impl Terminal {
         self.cursor
     }
 
+    fn hide_cursor(&mut self) -> std::io::Result<()> {
+        write!(self.output, "\x1b[?25l")
+    }
+
+    fn show_cursor(&mut self) -> std::io::Result<()> {
+        write!(self.output, "\x1b[?25h")
+    }
+
+    fn move_cursor(&mut self, position: TerminalPosition) -> std::io::Result<()> {
+        write!(
+            self.output,
+            "\x1b[{};{}H",
+            position.row + 1,
+            position.col + 1
+        )
+    }
+
     // TODO: Move to TerminalFrame? or in draw()
     pub fn set_cursor(&mut self, position: Option<TerminalPosition>) -> std::io::Result<()> {
         match (self.cursor, position) {
-            (Some(_), None) => write!(self.output, "\x1b[?25l")?,
-            (None, Some(_)) => write!(self.output, "\x1b[?25h")?,
+            (Some(_), None) => self.hide_cursor()?,
+            (None, Some(_)) => self.show_cursor()?,
             _ => {}
         }
         if let Some(position) = position {
-            write!(
-                self.output,
-                "\x1b[{};{}H",
-                position.row + 1,
-                position.col + 1
-            )?;
+            self.move_cursor(position)?;
         }
         self.cursor = position;
         self.output.flush()?;
@@ -230,7 +242,10 @@ impl Terminal {
     }
 
     pub fn draw(&mut self, frame: TerminalFrame) -> std::io::Result<()> {
-        // TODO: save and restore cursor position if visible
+        if self.last_frame.show_cursor() {
+            self.hide_cursor()?;
+        }
+
         for row in 0..self.size.rows {
             if frame.get_line(row).eq(self.last_frame.get_line(row)) {
                 continue;
@@ -260,7 +275,14 @@ impl Terminal {
             // TODO: clear style
         }
 
+        if frame.show_cursor() {
+            self.move_cursor(frame.cursor())?;
+            self.show_cursor()?;
+        }
+
+        self.output.flush()?;
         self.last_frame = frame;
+
         Ok(())
     }
 
