@@ -1,14 +1,24 @@
 use std::{
-    io::{IsTerminal, Stdin, Stdout, Write},
+    fs::File,
+    io::{IsTerminal, Read, Stdin, Stdout, Write},
     mem::MaybeUninit,
-    os::fd::AsRawFd,
+    os::fd::{AsRawFd, FromRawFd, RawFd},
 };
 
 use crate::frame::{TerminalFrame, TerminalPosition, TerminalStyle};
 
+static mut SIGWINCH_PIPE_FD: RawFd = 0;
+
+unsafe extern "C" fn handle_sigwinch(_: libc::c_int) {
+    unsafe {
+        let _ = libc::write(SIGWINCH_PIPE_FD, [0].as_ptr().cast(), 1);
+    }
+}
+
 pub struct Terminal {
     stdin: Stdin,
     stdout: Stdout,
+    sigwinch: File,
     original: libc::termios,
     size: TerminalSize,
     cursor: Option<TerminalPosition>,
@@ -39,9 +49,31 @@ impl Terminal {
 
         // TODO: non blocking
 
+        // TODO: duplicate check
+        let mut pipefd = [0 as RawFd; 2];
+        if unsafe { libc::pipe(pipefd.as_mut_ptr()) } != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        unsafe {
+            SIGWINCH_PIPE_FD = pipefd[1];
+
+            let mut sigaction = MaybeUninit::<libc::sigaction>::zeroed().assume_init();
+            sigaction.sa_sigaction = handle_sigwinch as libc::sighandler_t;
+            sigaction.sa_flags = 0;
+
+            if libc::sigemptyset(&mut sigaction.sa_mask) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+
+            if libc::sigaction(libc::SIGWINCH, &sigaction, std::ptr::null_mut()) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+        }
+
         let mut this = Self {
             stdin,
             stdout,
+            sigwinch: unsafe { File::from_raw_fd(pipefd[0]) },
             original: unsafe { termios.assume_init() },
             size: TerminalSize::default(),
             cursor: Some(TerminalPosition::ZERO),
@@ -56,52 +88,47 @@ impl Terminal {
         Ok(this)
     }
 
-    // static int pipefd[2];
+    // TODO: Add `timeout: Option<Duration>`
+    pub fn poll_event(&mut self) -> std::io::Result<Option<Event>> {
+        let mut readfds = MaybeUninit::<libc::fd_set>::zeroed();
+        unsafe {
+            libc::FD_ZERO(readfds.as_mut_ptr());
+            libc::FD_SET(self.stdin.as_raw_fd(), readfds.as_mut_ptr());
+            libc::FD_SET(self.sigwinch.as_raw_fd(), readfds.as_mut_ptr());
+            let mut readfds = readfds.assume_init();
 
-    // void signal_handler(int signo) {
-    //     // Write a byte to the pipe
-    //     write(pipefd[1], "x", 1);
-    // }
+            let maxfd = self.stdin.as_raw_fd().max(self.sigwinch.as_raw_fd());
+            let ret = libc::select(
+                maxfd + 1,
+                &mut readfds,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            );
+            if ret == -1 {
+                return Err(std::io::Error::last_os_error());
+            } else if ret == 0 {
+                todo!("timeout");
+            }
 
-    // int main() {
-    //     // Create the pipe
-    //     pipe(pipefd);
+            if libc::FD_ISSET(self.stdin.as_raw_fd(), &readfds) {
+                self.read_input().map(|i| i.map(Event::Input))
+            } else {
+                assert!(libc::FD_ISSET(self.sigwinch.as_raw_fd(), &readfds));
+                self.read_size().map(Event::TerminalSize).map(Some)
+            }
+        }
+    }
 
-    //     // Set up signal handler
-    //     signal(SIGUSR1, signal_handler);
+    pub fn read_size(&mut self) -> std::io::Result<TerminalSize> {
+        self.sigwinch.read_exact(&mut [0])?;
+        self.update_size()?;
+        Ok(self.size)
+    }
 
-    //     // In your thread that reads from stdin
-    //     fd_set readfds;
-    //     char buffer[256];
-
-    //     while (1) {
-    //         FD_ZERO(&readfds);
-    //         FD_SET(STDIN_FILENO, &readfds);
-    //         FD_SET(pipefd[0], &readfds);
-
-    //         int maxfd = (STDIN_FILENO > pipefd[0]) ? STDIN_FILENO : pipefd[0];
-
-    //         // Block until either stdin or the pipe has data
-    //         select(maxfd + 1, &readfds, NULL, NULL, NULL);
-
-    //         if (FD_ISSET(pipefd[0], &readfds)) {
-    //             // Signal occurred, drain the pipe
-    //             char dummy;
-    //             read(pipefd[0], &dummy, 1);
-    //             printf("Signal received\n");
-    //             // Handle the signal condition...
-    //         }
-
-    //         if (FD_ISSET(STDIN_FILENO, &readfds)) {
-    //             // Read from stdin
-    //             ssize_t n = read(STDIN_FILENO, buffer, sizeof(buffer) - 1);
-    //             if (n > 0) {
-    //                 buffer[n] = '\0';
-    //                 printf("Read from stdin: %s", buffer);
-    //             }
-    //         }
-    //     }
-    // }
+    pub fn read_input(&mut self) -> std::io::Result<Option<()>> {
+        todo!()
+    }
 
     pub fn size(&self) -> TerminalSize {
         self.size
@@ -253,4 +280,10 @@ impl std::fmt::Debug for Terminal {
 pub struct TerminalSize {
     pub rows: usize,
     pub cols: usize,
+}
+
+#[derive(Debug, Clone)]
+pub enum Event {
+    TerminalSize(TerminalSize),
+    Input(()),
 }
