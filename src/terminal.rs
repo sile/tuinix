@@ -91,6 +91,18 @@ impl Terminal {
         Ok(this)
     }
 
+    pub fn stdin(&self) -> &Stdin {
+        &self.stdin
+    }
+
+    pub fn stdout(&self) -> &Stdout {
+        &self.stdout
+    }
+
+    pub fn sigwinch(&self) -> &File {
+        &self.sigwinch
+    }
+
     pub fn poll_event(&mut self, timeout: Option<Duration>) -> std::io::Result<Option<Event>> {
         let start_time = Instant::now();
         loop {
