@@ -115,16 +115,16 @@ impl Terminal {
         Ok(this)
     }
 
-    pub fn input(&self) -> &Stdin {
-        self.input.inner()
+    pub fn input_fd(&self) -> RawFd {
+        self.input.inner().as_raw_fd()
     }
 
-    pub fn output(&self) -> &Stdout {
-        self.output.get_ref()
+    pub fn output_fd(&self) -> RawFd {
+        self.output.get_ref().as_raw_fd()
     }
 
-    pub fn signal(&self) -> &File {
-        &self.signal
+    pub fn signal_fd(&self) -> RawFd {
+        self.signal.as_raw_fd()
     }
 
     pub fn poll_event(&mut self, timeout: Option<Duration>) -> std::io::Result<Option<Event>> {
@@ -133,11 +133,11 @@ impl Terminal {
             unsafe {
                 let mut readfds = MaybeUninit::<libc::fd_set>::zeroed();
                 libc::FD_ZERO(readfds.as_mut_ptr());
-                libc::FD_SET(self.input().as_raw_fd(), readfds.as_mut_ptr());
-                libc::FD_SET(self.signal.as_raw_fd(), readfds.as_mut_ptr());
+                libc::FD_SET(self.input_fd(), readfds.as_mut_ptr());
+                libc::FD_SET(self.signal_fd(), readfds.as_mut_ptr());
                 let mut readfds = readfds.assume_init();
 
-                let maxfd = self.input().as_raw_fd().max(self.signal.as_raw_fd());
+                let maxfd = self.input_fd().max(self.signal.as_raw_fd());
 
                 let mut timeval = MaybeUninit::<libc::timeval>::zeroed();
                 let timeval_ptr = if let Some(duration) = timeout {
@@ -168,12 +168,12 @@ impl Terminal {
                     return Ok(None);
                 }
 
-                if libc::FD_ISSET(self.input().as_raw_fd(), &readfds) {
+                if libc::FD_ISSET(self.input_fd(), &readfds) {
                     if let Some(input) = self.input.read_input()? {
                         return Ok(Some(Event::Input(input)));
                     }
                 }
-                if libc::FD_ISSET(self.signal.as_raw_fd(), &readfds) {
+                if libc::FD_ISSET(self.signal_fd(), &readfds) {
                     return self.read_size().map(Event::TerminalSize).map(Some);
                 }
             }
@@ -217,11 +217,7 @@ impl Terminal {
     fn update_size(&mut self) -> std::io::Result<()> {
         let mut winsize = MaybeUninit::<libc::winsize>::zeroed();
         check_libc_result(unsafe {
-            libc::ioctl(
-                self.output().as_raw_fd(),
-                libc::TIOCGWINSZ,
-                winsize.as_mut_ptr(),
-            )
+            libc::ioctl(self.output_fd(), libc::TIOCGWINSZ, winsize.as_mut_ptr())
         })?;
 
         let winsize = unsafe { winsize.assume_init() };
@@ -297,20 +293,14 @@ impl Terminal {
         raw.c_cc[libc::VMIN] = 1;
         raw.c_cc[libc::VTIME] = 0;
 
-        check_libc_result(unsafe {
-            libc::tcsetattr(self.input().as_raw_fd(), libc::TCSAFLUSH, &raw)
-        })?;
+        check_libc_result(unsafe { libc::tcsetattr(self.input_fd(), libc::TCSAFLUSH, &raw) })?;
 
         Ok(())
     }
 
     fn disable_raw_mode(&mut self) -> std::io::Result<()> {
         check_libc_result(unsafe {
-            libc::tcsetattr(
-                self.input().as_raw_fd(),
-                libc::TCSAFLUSH,
-                &self.original_termios,
-            )
+            libc::tcsetattr(self.input_fd(), libc::TCSAFLUSH, &self.original_termios)
         })?;
         Ok(())
     }
