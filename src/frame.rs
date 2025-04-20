@@ -8,6 +8,7 @@ use crate::terminal::TerminalSize;
 pub struct TerminalFrame {
     size: TerminalSize,
     cursor: TerminalPosition,
+    show_cursor: bool,
     chars: BTreeMap<TerminalPosition, TerminalChar>,
     current_style: TerminalStyle,
 }
@@ -17,6 +18,7 @@ impl TerminalFrame {
         Self {
             size,
             cursor: TerminalPosition::default(),
+            show_cursor: false,
             chars: BTreeMap::new(),
             current_style: TerminalStyle::default(),
         }
@@ -33,6 +35,14 @@ impl TerminalFrame {
 
     pub fn cursor(&self) -> TerminalPosition {
         self.cursor
+    }
+
+    pub fn set_show_cursor(&mut self, b: bool) {
+        self.show_cursor = b;
+    }
+
+    pub fn show_cursor(&self) -> bool {
+        self.show_cursor
     }
 
     pub fn get_line(

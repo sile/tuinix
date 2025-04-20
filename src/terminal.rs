@@ -1,6 +1,6 @@
 use std::{
     fs::File,
-    io::{IsTerminal, Read, Stdin, Stdout, Write},
+    io::{BufWriter, IsTerminal, Read, Stdin, Stdout, Write},
     mem::MaybeUninit,
     os::fd::{AsRawFd, FromRawFd, RawFd},
     time::{Duration, Instant},
@@ -22,9 +22,10 @@ unsafe extern "C" fn handle_sigwinch(_: libc::c_int) {
 // TODO: TerminalOptions{ non_blocking_stdin, ..}
 
 pub struct Terminal {
+    // TODO: global lock
     input: InputReader<Stdin>,
-    stdout: Stdout,
-    sigwinch: File,
+    output: BufWriter<Stdout>,
+    signal: File,
     original_termios: libc::termios,
     size: TerminalSize,
     cursor: Option<TerminalPosition>,
@@ -74,8 +75,8 @@ impl Terminal {
         let original_termios = unsafe { termios.assume_init() };
         let mut this = Self {
             input: InputReader::new(stdin),
-            stdout,
-            sigwinch: unsafe { File::from_raw_fd(pipefd[0]) },
+            output: BufWriter::new(stdout),
+            signal: unsafe { File::from_raw_fd(pipefd[0]) },
             original_termios,
             size: TerminalSize::default(),
             cursor: Some(TerminalPosition::ZERO),
@@ -83,7 +84,7 @@ impl Terminal {
         };
         this.enable_raw_mode()?;
         this.enable_alternate_screen()?;
-        this.stdout.flush()?;
+        this.output.flush()?;
         this.update_size()?;
         this.set_cursor(None)?;
 
@@ -109,12 +110,12 @@ impl Terminal {
         self.input.inner()
     }
 
-    pub fn stdout(&self) -> &Stdout {
-        &self.stdout
+    pub fn output(&self) -> &Stdout {
+        self.output.get_ref()
     }
 
-    pub fn sigwinch(&self) -> &File {
-        &self.sigwinch
+    pub fn signal(&self) -> &File {
+        &self.signal
     }
 
     pub fn poll_event(&mut self, timeout: Option<Duration>) -> std::io::Result<Option<Event>> {
@@ -124,10 +125,10 @@ impl Terminal {
                 let mut readfds = MaybeUninit::<libc::fd_set>::zeroed();
                 libc::FD_ZERO(readfds.as_mut_ptr());
                 libc::FD_SET(self.input().as_raw_fd(), readfds.as_mut_ptr());
-                libc::FD_SET(self.sigwinch.as_raw_fd(), readfds.as_mut_ptr());
+                libc::FD_SET(self.signal.as_raw_fd(), readfds.as_mut_ptr());
                 let mut readfds = readfds.assume_init();
 
-                let maxfd = self.input().as_raw_fd().max(self.sigwinch.as_raw_fd());
+                let maxfd = self.input().as_raw_fd().max(self.signal.as_raw_fd());
 
                 let mut timeval = MaybeUninit::<libc::timeval>::zeroed();
                 let timeval_ptr = if let Some(duration) = timeout {
@@ -163,7 +164,7 @@ impl Terminal {
                         return Ok(Some(Event::Input(input)));
                     }
                 }
-                if libc::FD_ISSET(self.sigwinch.as_raw_fd(), &readfds) {
+                if libc::FD_ISSET(self.signal.as_raw_fd(), &readfds) {
                     return self.read_size().map(Event::TerminalSize).map(Some);
                 }
             }
@@ -171,7 +172,7 @@ impl Terminal {
     }
 
     pub fn read_size(&mut self) -> std::io::Result<TerminalSize> {
-        self.sigwinch.read_exact(&mut [0])?;
+        self.signal.read_exact(&mut [0])?;
         self.update_size()?;
         Ok(self.size)
     }
@@ -187,20 +188,20 @@ impl Terminal {
     // TODO: Move to TerminalFrame? or in draw()
     pub fn set_cursor(&mut self, position: Option<TerminalPosition>) -> std::io::Result<()> {
         match (self.cursor, position) {
-            (Some(_), None) => write!(self.stdout, "\x1b[?25l")?,
-            (None, Some(_)) => write!(self.stdout, "\x1b[?25h")?,
+            (Some(_), None) => write!(self.output, "\x1b[?25l")?,
+            (None, Some(_)) => write!(self.output, "\x1b[?25h")?,
             _ => {}
         }
         if let Some(position) = position {
             write!(
-                self.stdout,
+                self.output,
                 "\x1b[{};{}H",
                 position.row + 1,
                 position.col + 1
             )?;
         }
         self.cursor = position;
-        self.stdout.flush()?;
+        self.output.flush()?;
         Ok(())
     }
 
@@ -208,7 +209,7 @@ impl Terminal {
         let mut winsize = MaybeUninit::<libc::winsize>::zeroed();
         check_libc_result(unsafe {
             libc::ioctl(
-                self.stdout.as_raw_fd(),
+                self.output().as_raw_fd(),
                 libc::TIOCGWINSZ,
                 winsize.as_mut_ptr(),
             )
@@ -225,7 +226,6 @@ impl Terminal {
 
     pub fn draw(&mut self, frame: TerminalFrame) -> std::io::Result<()> {
         // TODO: save and restore cursor position if visible
-
         for row in 0..self.size.rows {
             if frame.get_line(row).eq(self.last_frame.get_line(row)) {
                 continue;
@@ -243,7 +243,7 @@ impl Terminal {
                 }
 
                 write!(
-                    self.stdout,
+                    self.output,
                     "{:spaces$}{}",
                     "",
                     c.value,
@@ -260,11 +260,11 @@ impl Terminal {
     }
 
     fn enable_alternate_screen(&mut self) -> std::io::Result<()> {
-        write!(self.stdout, "\x1b[?1049h")
+        write!(self.output, "\x1b[?1049h")
     }
 
     fn disable_alternate_screen(&mut self) -> std::io::Result<()> {
-        write!(self.stdout, "\x1b[?1049l")
+        write!(self.output, "\x1b[?1049l")
     }
 
     fn enable_raw_mode(&mut self) -> std::io::Result<()> {
@@ -311,7 +311,7 @@ impl Drop for Terminal {
     fn drop(&mut self) {
         let _ = self.disable_alternate_screen();
         let _ = self.disable_raw_mode();
-        let _ = self.stdout.flush();
+        let _ = self.output.flush();
     }
 }
 
