@@ -3,6 +3,7 @@ use std::{
     io::{BufWriter, IsTerminal, Read, Stdin, Stdout, Write},
     mem::MaybeUninit,
     os::fd::{AsRawFd, FromRawFd, RawFd},
+    sync::atomic::{AtomicBool, Ordering},
     time::{Duration, Instant},
 };
 
@@ -10,6 +11,8 @@ use crate::{
     frame::{TerminalFrame, TerminalPosition, TerminalStyle},
     input::{Input, InputReader},
 };
+
+static TERMINAL_EXISTS: AtomicBool = AtomicBool::new(false);
 
 static mut SIGWINCH_PIPE_FD: RawFd = 0;
 
@@ -22,7 +25,6 @@ unsafe extern "C" fn handle_sigwinch(_: libc::c_int) {
 // TODO: TerminalOptions{ non_blocking_stdin, ..}
 
 pub struct Terminal {
-    // TODO: global lock
     input: InputReader<Stdin>,
     output: BufWriter<Stdout>,
     signal: File,
@@ -34,6 +36,13 @@ pub struct Terminal {
 
 impl Terminal {
     pub fn new() -> std::io::Result<Self> {
+        if TERMINAL_EXISTS.swap(true, Ordering::SeqCst) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "Terminal instance already exists",
+            ));
+        }
+
         let stdin = std::io::stdin();
         let stdout = std::io::stdout();
         if !stdin.is_terminal() {
@@ -312,6 +321,7 @@ impl Drop for Terminal {
         let _ = self.disable_alternate_screen();
         let _ = self.disable_raw_mode();
         let _ = self.output.flush();
+        TERMINAL_EXISTS.store(false, Ordering::SeqCst);
     }
 }
 
