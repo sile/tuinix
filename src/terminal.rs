@@ -16,11 +16,13 @@ unsafe extern "C" fn handle_sigwinch(_: libc::c_int) {
     }
 }
 
+// TODO: TerminalOptions{ non_blocking_stdin, ..}
+
 pub struct Terminal {
     stdin: Stdin,
     stdout: Stdout,
     sigwinch: File,
-    original: libc::termios,
+    original_termios: libc::termios,
     size: TerminalSize,
     cursor: Option<TerminalPosition>,
     last_frame: TerminalFrame,
@@ -28,8 +30,6 @@ pub struct Terminal {
 
 impl Terminal {
     pub fn new() -> std::io::Result<Self> {
-        // TODO: panic handler
-
         let stdin = std::io::stdin();
         let stdout = std::io::stdout();
         if !stdin.is_terminal() {
@@ -73,11 +73,12 @@ impl Terminal {
             }
         }
 
+        let original_termios = unsafe { termios.assume_init() };
         let mut this = Self {
             stdin,
             stdout,
             sigwinch: unsafe { File::from_raw_fd(pipefd[0]) },
-            original: unsafe { termios.assume_init() },
+            original_termios,
             size: TerminalSize::default(),
             cursor: Some(TerminalPosition::ZERO),
             last_frame: TerminalFrame::default(),
@@ -87,6 +88,21 @@ impl Terminal {
         this.stdout.flush()?;
         this.update_size()?;
         this.set_cursor(None)?;
+
+        let default_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |panic_info| {
+            // Disable alternate screen and raw mode to show the panic message
+            let mut stdout = std::io::stdout();
+            let stdin = std::io::stdin();
+            unsafe {
+                libc::tcsetattr(stdin.as_raw_fd(), libc::TCSAFLUSH, &original_termios);
+            }
+            let _ = write!(stdout, "\x1b[?1049l");
+            let _ = stdout.flush();
+
+            // Call the default panic handler
+            default_hook(panic_info);
+        }));
 
         Ok(this)
     }
@@ -166,7 +182,8 @@ impl Terminal {
         // TODO:
         let mut buf = [0; 1024];
         self.stdin.read(&mut buf)?;
-        Ok(Some(()))
+        //Ok(Some(()))
+        todo!()
     }
 
     pub fn size(&self) -> TerminalSize {
@@ -264,7 +281,7 @@ impl Terminal {
     }
 
     fn enable_raw_mode(&mut self) -> std::io::Result<()> {
-        let mut raw = self.original;
+        let mut raw = self.original_termios;
 
         // Input modes: no break, no CR to NL, no parity check, no strip char,
         // no start/stop output control.
@@ -292,7 +309,13 @@ impl Terminal {
     }
 
     fn disable_raw_mode(&mut self) -> std::io::Result<()> {
-        if unsafe { libc::tcsetattr(self.stdin.as_raw_fd(), libc::TCSAFLUSH, &self.original) } != 0
+        if unsafe {
+            libc::tcsetattr(
+                self.stdin.as_raw_fd(),
+                libc::TCSAFLUSH,
+                &self.original_termios,
+            )
+        } != 0
         {
             Err(std::io::Error::last_os_error())
         } else {
@@ -303,8 +326,8 @@ impl Terminal {
 
 impl Drop for Terminal {
     fn drop(&mut self) {
-        let _ = self.disable_raw_mode();
         let _ = self.disable_alternate_screen();
+        let _ = self.disable_raw_mode();
         let _ = self.stdout.flush();
     }
 }
