@@ -241,9 +241,21 @@ impl Terminal {
         Ok(())
     }
 
+    fn clear_all(&mut self) -> std::io::Result<()> {
+        write!(self.output, "\x1b[2J")
+    }
+
+    fn clear_line(&mut self) -> std::io::Result<()> {
+        write!(self.output, "\x1b[2K")
+    }
+
     pub fn draw(&mut self, frame: TerminalFrame) -> std::io::Result<()> {
         if self.last_frame.show_cursor() {
             self.hide_cursor()?;
+        }
+
+        if self.last_frame.size() != frame.size() {
+            self.clear_all()?;
         }
 
         for row in 0..self.size.rows {
@@ -251,15 +263,15 @@ impl Terminal {
                 continue;
             }
 
-            // TODO: clear line
-            // TODO: move cursor
-            let mut last_style = TerminalStyle::default();
+            self.move_cursor(TerminalPosition::row(row))?;
+            self.clear_line()?;
+
+            let mut last_style = TerminalStyle::NONE;
             let mut next_col = 0;
             for (TerminalPosition { col, .. }, c) in frame.get_line(row) {
                 if last_style != c.style {
-                    // TODO: clear style
+                    write!(self.output, "{}{}", TerminalStyle::NONE, c.style)?;
                     last_style = c.style;
-                    // TODO: write style
                 }
 
                 write!(
@@ -271,8 +283,7 @@ impl Terminal {
                 )?;
                 next_col = col + c.width;
             }
-
-            // TODO: clear style
+            write!(self.output, "{}", TerminalStyle::NONE)?;
         }
 
         if frame.show_cursor() {

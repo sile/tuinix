@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, fmt::Display};
 
 use unicode_width::UnicodeWidthChar;
 
@@ -119,6 +119,10 @@ impl TerminalPosition {
     pub const fn row_col(row: usize, col: usize) -> Self {
         Self { row, col }
     }
+
+    pub const fn row(row: usize) -> Self {
+        Self::row_col(row, 0)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -143,6 +147,18 @@ pub struct TerminalStyle {
 }
 
 impl TerminalStyle {
+    pub const NONE: Self = Self {
+        bold: false,
+        italic: false,
+        underline: false,
+        blink: false,
+        reverse: false,
+        dim: false,
+        strikethrough: false,
+        fg_color: None,
+        bg_color: None,
+    };
+
     fn update<'a>(&mut self, s: &'a str) -> &'a str {
         let s = s
             .strip_prefix('[')
@@ -192,6 +208,67 @@ impl TerminalStyle {
         }
 
         remaining
+    }
+}
+
+impl Display for TerminalStyle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if *self == TerminalStyle::NONE {
+            return write!(f, "\x1b[0m");
+        }
+
+        write!(f, "\x1b[")?;
+
+        let mut first = true;
+        let mut write_separator = |f: &mut std::fmt::Formatter<'_>| -> std::fmt::Result {
+            if first {
+                first = false;
+                Ok(())
+            } else {
+                write!(f, ";")
+            }
+        };
+
+        if self.bold {
+            write_separator(f)?;
+            write!(f, "1")?;
+        }
+        if self.dim {
+            write_separator(f)?;
+            write!(f, "2")?;
+        }
+        if self.italic {
+            write_separator(f)?;
+            write!(f, "3")?;
+        }
+        if self.underline {
+            write_separator(f)?;
+            write!(f, "4")?;
+        }
+        if self.blink {
+            write_separator(f)?;
+            write!(f, "5")?;
+        }
+        if self.reverse {
+            write_separator(f)?;
+            write!(f, "7")?;
+        }
+        if self.strikethrough {
+            write_separator(f)?;
+            write!(f, "9")?;
+        }
+
+        if let Some(color) = self.fg_color {
+            write_separator(f)?;
+            write!(f, "38;2;{};{};{}", color.r, color.g, color.b)?;
+        }
+
+        if let Some(color) = self.bg_color {
+            write_separator(f)?;
+            write!(f, "48;2;{};{};{}", color.r, color.g, color.b)?;
+        }
+
+        write!(f, "m")
     }
 }
 
