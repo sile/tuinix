@@ -30,7 +30,6 @@ pub struct Terminal {
     signal: File,
     original_termios: libc::termios,
     size: TerminalSize,
-    cursor: Option<TerminalPosition>, // TODO: remove
     last_frame: TerminalFrame,
 }
 
@@ -88,7 +87,6 @@ impl Terminal {
             signal: unsafe { File::from_raw_fd(pipefd[0]) },
             original_termios,
             size: TerminalSize::default(),
-            cursor: None,
             last_frame: TerminalFrame::default(),
         };
         this.enable_raw_mode()?;
@@ -190,10 +188,6 @@ impl Terminal {
         self.size
     }
 
-    pub fn cursor(&self) -> Option<TerminalPosition> {
-        self.cursor
-    }
-
     fn hide_cursor(&mut self) -> std::io::Result<()> {
         write!(self.output, "\x1b[?25l")
     }
@@ -211,21 +205,6 @@ impl Terminal {
         )
     }
 
-    // TODO: Move to TerminalFrame? or in draw()
-    pub fn set_cursor(&mut self, position: Option<TerminalPosition>) -> std::io::Result<()> {
-        match (self.cursor, position) {
-            (Some(_), None) => self.hide_cursor()?,
-            (None, Some(_)) => self.show_cursor()?,
-            _ => {}
-        }
-        if let Some(position) = position {
-            self.move_cursor(position)?;
-        }
-        self.cursor = position;
-        self.output.flush()?;
-        Ok(())
-    }
-
     fn update_size(&mut self) -> std::io::Result<()> {
         let mut winsize = MaybeUninit::<libc::winsize>::zeroed();
         check_libc_result(unsafe {
@@ -235,8 +214,6 @@ impl Terminal {
         let winsize = unsafe { winsize.assume_init() };
         self.size.rows = winsize.ws_row as usize;
         self.size.cols = winsize.ws_col as usize;
-
-        // TODO: clear if the size was changed.
 
         Ok(())
     }

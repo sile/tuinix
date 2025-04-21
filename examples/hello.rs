@@ -1,15 +1,25 @@
-use tuinix::{frame::TerminalPosition, terminal::Terminal};
+use std::fmt::Write;
 
-fn main() -> std::io::Result<()> {
+use tuinix::{
+    frame::{TerminalFrame, TerminalPosition},
+    terminal::Terminal,
+};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut terminal = Terminal::new()?;
-    terminal.set_cursor(Some(TerminalPosition::row_col(2, 2)))?;
-    println!("{:?}", terminal.size());
-    terminal.set_cursor(None)?;
+
+    let mut frame = TerminalFrame::new(terminal.size());
+    frame.set_cursor(TerminalPosition::row_col(2, 2));
+    write!(frame, "Hello World: {:?}", terminal.size())?;
+    terminal.draw(frame)?;
 
     for _ in 0..5 {
         let event = terminal.poll_event(Some(std::time::Duration::from_millis(1000)))?;
         if let Some(event) = event {
-            dbg!(event);
+            let mut frame = TerminalFrame::new(terminal.size());
+            frame.set_cursor(TerminalPosition::row_col(2, 2));
+            write!(frame, "Hello World: {:?}", event)?;
+            terminal.draw(frame)?;
         }
     }
 
