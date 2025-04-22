@@ -62,7 +62,6 @@ impl Terminal {
 
         // TODO: non blocking
 
-        // TODO: duplicate check
         let mut pipefd = [0 as RawFd; 2];
         check_libc_result(unsafe { libc::pipe(pipefd.as_mut_ptr()) })?;
         unsafe {
@@ -348,5 +347,22 @@ fn check_libc_result(result: libc::c_int) -> std::io::Result<()> {
         Ok(())
     } else {
         Err(std::io::Error::last_os_error())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Terminal;
+
+    #[test]
+    fn duplicate_check() {
+        let terminal = Terminal::new().expect("ok");
+
+        // Creating a second terminal should fail while the first one exists
+        assert!(Terminal::new().is_err());
+
+        // After dropping the first terminal, creating a new one should succeed
+        std::mem::drop(terminal);
+        assert!(Terminal::new().is_ok());
     }
 }
