@@ -22,7 +22,12 @@ unsafe extern "C" fn handle_sigwinch(_: libc::c_int) {
     }
 }
 
-// TODO: TerminalOptions{ non_blocking_stdin, ..}
+#[derive(Debug, Default, Clone)]
+pub struct TerminalOptions {
+    pub non_blocking_input_fd: bool,
+    pub non_blocking_output_fd: bool,
+    pub non_blocking_signal_fd: bool,
+}
 
 pub struct Terminal {
     input: InputReader<Stdin>,
@@ -35,6 +40,10 @@ pub struct Terminal {
 
 impl Terminal {
     pub fn new() -> std::io::Result<Self> {
+        Self::with_options(TerminalOptions::default())
+    }
+
+    pub fn with_options(options: TerminalOptions) -> std::io::Result<Self> {
         if TERMINAL_EXISTS.swap(true, Ordering::SeqCst) {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::Other,
@@ -59,8 +68,6 @@ impl Terminal {
 
         let mut termios = MaybeUninit::<libc::termios>::zeroed();
         check_libc_result(unsafe { libc::tcgetattr(stdin.as_raw_fd(), termios.as_mut_ptr()) })?;
-
-        // TODO: non blocking
 
         let mut pipefd = [0 as RawFd; 2];
         check_libc_result(unsafe { libc::pipe(pipefd.as_mut_ptr()) })?;
@@ -93,6 +100,16 @@ impl Terminal {
         this.output.flush()?;
         this.update_size()?;
         this.hide_cursor()?;
+
+        if options.non_blocking_input_fd {
+            set_non_blocking(this.input_fd())?;
+        }
+        if options.non_blocking_output_fd {
+            set_non_blocking(this.output_fd())?;
+        }
+        if options.non_blocking_signal_fd {
+            set_non_blocking(this.signal_fd())?;
+        }
 
         let default_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |panic_info| {
@@ -347,6 +364,19 @@ fn check_libc_result(result: libc::c_int) -> std::io::Result<()> {
         Ok(())
     } else {
         Err(std::io::Error::last_os_error())
+    }
+}
+
+fn set_non_blocking(fd: libc::c_int) -> std::io::Result<()> {
+    unsafe {
+        let flags = libc::fcntl(fd, libc::F_GETFL, 0);
+        if flags < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        if libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(())
     }
 }
 
