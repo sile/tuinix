@@ -1,6 +1,6 @@
 use std::{
     fs::File,
-    io::{BufWriter, Read, Stdin, Stdout, Write},
+    io::{BufWriter, IsTerminal, Read, Stdin, Stdout, Write},
     mem::MaybeUninit,
     os::fd::{AsRawFd, FromRawFd, RawFd},
     sync::atomic::{AtomicBool, Ordering},
@@ -43,19 +43,18 @@ impl Terminal {
 
         let stdin = std::io::stdin();
         let stdout = std::io::stdout();
-        // TODO:
-        // if !stdin.is_terminal() {
-        //     return Err(std::io::Error::new(
-        //         std::io::ErrorKind::Other,
-        //         "STDIN is not a terminal",
-        //     ));
-        // }
-        // if !stdout.is_terminal() {
-        //     return Err(std::io::Error::new(
-        //         std::io::ErrorKind::Other,
-        //         "STDOUT is not a terminal",
-        //     ));
-        // }
+        if !stdin.is_terminal() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "STDIN is not a terminal",
+            ));
+        }
+        if !stdout.is_terminal() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "STDOUT is not a terminal",
+            ));
+        }
 
         let mut termios = MaybeUninit::<libc::termios>::zeroed();
         check_libc_result(unsafe { libc::tcgetattr(stdin.as_raw_fd(), termios.as_mut_ptr()) })?;
@@ -348,10 +347,16 @@ fn check_libc_result(result: libc::c_int) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::io::IsTerminal;
+
     use super::Terminal;
 
     #[test]
     fn duplicate_check() {
+        if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+            return;
+        }
+
         let terminal = Terminal::new().expect("ok");
 
         // Creating a second terminal should fail while the first one exists
