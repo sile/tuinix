@@ -85,23 +85,28 @@ impl TerminalFrame {
 
 impl std::fmt::Write for TerminalFrame {
     fn write_str(&mut self, mut s: &str) -> std::fmt::Result {
-        'outer: while self.cursor.row < self.size.rows {
-            for (i, c) in s.char_indices() {
-                match c {
-                    '\n' => {
-                        self.cursor.row += 1;
-                        self.cursor.col = 0;
+        if self.cursor.row >= self.size.rows {
+            return Ok(());
+        }
+
+        while let Some((i, c)) = s.char_indices().next() {
+            match c {
+                '\n' => {
+                    self.cursor.row += 1;
+                    self.cursor.col = 0;
+                    if self.cursor.row >= self.size.rows {
+                        break;
                     }
-                    '\x1b' => {
-                        s = self.current_style.update(&s[i + 1..]);
-                        continue 'outer;
-                    }
-                    _ => {
-                        self.push_char(c);
-                    }
+                    s = &s[i..];
+                }
+                '\x1b' => {
+                    s = self.current_style.update(&s[i + 1..]);
+                }
+                _ => {
+                    self.push_char(c);
+                    s = &s[i..];
                 }
             }
-            break;
         }
         Ok(())
     }
