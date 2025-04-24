@@ -5,7 +5,8 @@ use tuinix::{
     frame::{TerminalFrame, TerminalPosition},
     input::{Input, KeyCode, KeyInput},
     set_nonblocking,
-    terminal::{Event, Terminal},
+    terminal::Terminal,
+    would_block,
 };
 
 const STDIN: Token = Token(0);
@@ -60,9 +61,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             match event.token() {
                 STDIN => {
                     // Handle input events
-                    if let Some(Event::Input(input)) =
-                        terminal.poll_event(Some(Duration::from_millis(0)))?
-                    {
+                    while let Some(input) = would_block(terminal.read_input())? {
+                        let Some(input) = input else {
+                            continue;
+                        };
+
                         let mut frame = TerminalFrame::new(terminal.size());
 
                         frame.set_cursor(TerminalPosition::row_col(2, 2));
@@ -88,9 +91,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 SIGNAL => {
                     // Handle terminal resize events
-                    if let Some(Event::TerminalSize(size)) =
-                        terminal.poll_event(Some(Duration::from_millis(0)))?
-                    {
+                    while let Some(size) = would_block(terminal.read_size())? {
                         let mut frame = TerminalFrame::new(size);
 
                         frame.set_cursor(TerminalPosition::row_col(2, 2));

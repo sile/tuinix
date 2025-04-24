@@ -162,7 +162,7 @@ impl Terminal {
                 }
 
                 if libc::FD_ISSET(self.input_fd(), &readfds) {
-                    if let Some(input) = self.input.read_input()? {
+                    if let Some(input) = self.read_input()? {
                         return Ok(Some(Event::Input(input)));
                     }
                 }
@@ -171,6 +171,10 @@ impl Terminal {
                 }
             }
         }
+    }
+
+    pub fn read_input(&mut self) -> std::io::Result<Option<Input>> {
+        self.input.read_input()
     }
 
     pub fn read_size(&mut self) -> std::io::Result<TerminalSize> {
