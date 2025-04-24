@@ -269,7 +269,13 @@ impl<R: Read> InputReader<R> {
                 }
 
                 // Try to find escape sequences for arrow keys with modifiers
-                if bytes.len() >= 6 && bytes[2] == b'1' && bytes[3] == b';' && bytes.len() >= 6 && bytes[5] >= b'A' && bytes[5] <= b'D' {
+                if bytes.len() >= 6
+                    && bytes[2] == b'1'
+                    && bytes[3] == b';'
+                    && bytes.len() >= 6
+                    && bytes[5] >= b'A'
+                    && bytes[5] <= b'D'
+                {
                     let modifier = bytes[4] - b'0';
                     let alt = modifier & 0x2 != 0;
                     let ctrl = modifier & 0x4 != 0;
