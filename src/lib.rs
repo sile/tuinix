@@ -29,9 +29,17 @@ pub fn set_nonblocking(fd: RawFd) -> std::io::Result<()> {
     }
 }
 
-pub fn would_block<T>(result: std::io::Result<T>) -> std::io::Result<Option<T>> {
+pub fn try_nonblocking<T>(result: std::io::Result<T>) -> std::io::Result<Option<T>> {
     match result {
         Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
+        Err(e) => Err(e),
+        Ok(v) => Ok(Some(v)),
+    }
+}
+
+pub fn try_uninterrupted<T>(result: std::io::Result<T>) -> std::io::Result<Option<T>> {
+    match result {
+        Err(e) if e.kind() == std::io::ErrorKind::Interrupted => Ok(None),
         Err(e) => Err(e),
         Ok(v) => Ok(Some(v)),
     }
