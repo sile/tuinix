@@ -1,6 +1,6 @@
 use std::{
     fs::File,
-    io::{BufWriter, IsTerminal, Read, Stdin, Stdout, Write},
+    io::{BufWriter, Read, Stdin, Stdout, Write},
     mem::MaybeUninit,
     os::fd::{AsRawFd, FromRawFd, RawFd},
     sync::atomic::{AtomicBool, Ordering},
@@ -43,18 +43,19 @@ impl Terminal {
 
         let stdin = std::io::stdin();
         let stdout = std::io::stdout();
-        if !stdin.is_terminal() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "STDIN is not a terminal",
-            ));
-        }
-        if !stdout.is_terminal() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "STDOUT is not a terminal",
-            ));
-        }
+        // TODO:
+        // if !stdin.is_terminal() {
+        //     return Err(std::io::Error::new(
+        //         std::io::ErrorKind::Other,
+        //         "STDIN is not a terminal",
+        //     ));
+        // }
+        // if !stdout.is_terminal() {
+        //     return Err(std::io::Error::new(
+        //         std::io::ErrorKind::Other,
+        //         "STDOUT is not a terminal",
+        //     ));
+        // }
 
         let mut termios = MaybeUninit::<libc::termios>::zeroed();
         check_libc_result(unsafe { libc::tcgetattr(stdin.as_raw_fd(), termios.as_mut_ptr()) })?;
