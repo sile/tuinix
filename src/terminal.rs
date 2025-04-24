@@ -8,7 +8,8 @@ use std::{
 };
 
 use crate::{
-    frame::{TerminalFrame, TerminalPosition, TerminalStyle},
+    TerminalPosition, TerminalSize,
+    frame::{TerminalFrame, TerminalStyle},
     input::{Input, InputReader},
 };
 
@@ -328,12 +329,6 @@ impl std::fmt::Debug for Terminal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Terminal").finish()
     }
-}
-
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct TerminalSize {
-    pub rows: usize,
-    pub cols: usize,
 }
 
 #[derive(Debug, Clone)]

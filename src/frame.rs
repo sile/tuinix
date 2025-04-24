@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, fmt::Display};
 
 use unicode_width::UnicodeWidthChar;
 
-use crate::terminal::TerminalSize;
+use crate::{TerminalPosition, TerminalSize};
 
 #[derive(Debug, Default, Clone)]
 pub struct TerminalFrame {
@@ -109,24 +109,6 @@ impl std::fmt::Write for TerminalFrame {
             }
         }
         Ok(())
-    }
-}
-
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct TerminalPosition {
-    pub row: usize,
-    pub col: usize,
-}
-
-impl TerminalPosition {
-    pub const ZERO: Self = Self::row_col(0, 0);
-
-    pub const fn row_col(row: usize, col: usize) -> Self {
-        Self { row, col }
-    }
-
-    pub const fn row(row: usize) -> Self {
-        Self::row_col(row, 0)
     }
 }
 

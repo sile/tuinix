@@ -1,8 +1,12 @@
 use std::os::fd::RawFd;
 
 pub mod frame;
+mod geometry;
 pub mod input;
-pub mod terminal;
+mod terminal;
+
+pub use geometry::{TerminalPosition, TerminalSize};
+pub use terminal::Terminal;
 
 /// Sets a file descriptor to non-blocking mode.
 ///
