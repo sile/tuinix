@@ -81,7 +81,7 @@ impl<R: Read> InputReader<R> {
                     0x0D => KeyCode::Enter,     // Enter
                     0x09 => KeyCode::Tab,       // Tab
                     0x08 => KeyCode::Backspace, // Backspace (Ctrl+H)
-                    c => KeyCode::Char((c as u8 + 0x60) as char),
+                    c => KeyCode::Char((c + 0x60) as char),
                 };
                 return Ok(Some((
                     Input::Key(KeyInput {
@@ -127,7 +127,7 @@ impl<R: Read> InputReader<R> {
                         0x0D => KeyCode::Enter,
                         0x09 => KeyCode::Tab,
                         0x08 => KeyCode::Backspace,
-                        c => KeyCode::Char((c as u8 + 0x60) as char),
+                        c => KeyCode::Char((c + 0x60) as char),
                     }
                 } else {
                     KeyCode::Char(c)
@@ -269,22 +269,20 @@ impl<R: Read> InputReader<R> {
                 }
 
                 // Try to find escape sequences for arrow keys with modifiers
-                if bytes.len() >= 6 && bytes[2] == b'1' && bytes[3] == b';' {
-                    if bytes.len() >= 6 && bytes[5] >= b'A' && bytes[5] <= b'D' {
-                        let modifier = bytes[4] - b'0';
-                        let alt = modifier & 0x2 != 0;
-                        let ctrl = modifier & 0x4 != 0;
+                if bytes.len() >= 6 && bytes[2] == b'1' && bytes[3] == b';' && bytes.len() >= 6 && bytes[5] >= b'A' && bytes[5] <= b'D' {
+                    let modifier = bytes[4] - b'0';
+                    let alt = modifier & 0x2 != 0;
+                    let ctrl = modifier & 0x4 != 0;
 
-                        let code = match bytes[5] {
-                            b'A' => KeyCode::Up,
-                            b'B' => KeyCode::Down,
-                            b'C' => KeyCode::Right,
-                            b'D' => KeyCode::Left,
-                            _ => return Ok(None),
-                        };
+                    let code = match bytes[5] {
+                        b'A' => KeyCode::Up,
+                        b'B' => KeyCode::Down,
+                        b'C' => KeyCode::Right,
+                        b'D' => KeyCode::Left,
+                        _ => return Ok(None),
+                    };
 
-                        return Ok(Some((Input::Key(KeyInput { ctrl, alt, code }), 6)));
-                    }
+                    return Ok(Some((Input::Key(KeyInput { ctrl, alt, code }), 6)));
                 }
             }
 

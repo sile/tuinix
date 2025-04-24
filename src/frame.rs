@@ -85,7 +85,7 @@ impl TerminalFrame {
 
 impl std::fmt::Write for TerminalFrame {
     fn write_str(&mut self, mut s: &str) -> std::fmt::Result {
-        while self.cursor.row < self.size.rows {
+        'outer: while self.cursor.row < self.size.rows {
             for (i, c) in s.char_indices() {
                 match c {
                     '\n' => {
@@ -94,7 +94,7 @@ impl std::fmt::Write for TerminalFrame {
                     }
                     '\x1b' => {
                         s = self.current_style.update(&s[i + 1..]);
-                        continue;
+                        continue 'outer;
                     }
                     _ => {
                         self.push_char(c);
