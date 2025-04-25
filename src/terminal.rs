@@ -178,6 +178,7 @@ impl Terminal {
         self.input.read_input()
     }
 
+    // TODO: rename
     pub fn read_size(&mut self) -> std::io::Result<TerminalSize> {
         self.signal.read_exact(&mut [0])?;
         self.update_size()?;

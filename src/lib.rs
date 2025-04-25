@@ -1,4 +1,4 @@
-use std::os::fd::RawFd;
+use std::{io::ErrorKind, os::fd::RawFd};
 
 pub mod frame;
 mod geometry;
@@ -33,17 +33,31 @@ pub fn set_nonblocking(fd: RawFd) -> std::io::Result<()> {
     }
 }
 
+/// Handles the result of a non-blocking I/O operation by converting [`ErrorKind::WouldBlock`] errors to `Ok(None)`.
+///
+/// This utility function is designed to work with non-blocking I/O operations (typically used after
+/// calling [`set_nonblocking()`] on [`Terminal::input_fd()`] and [`Terminal::signal_fd()`]). When a non-blocking operation returns a
+/// [`ErrorKind::WouldBlock`] error, indicating that the operation would need to block to complete, this function
+/// converts it to `Ok(None)` for easier handling in caller code.
 pub fn try_nonblocking<T>(result: std::io::Result<T>) -> std::io::Result<Option<T>> {
     match result {
-        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
+        Err(e) if e.kind() == ErrorKind::WouldBlock => Ok(None),
         Err(e) => Err(e),
         Ok(v) => Ok(Some(v)),
     }
 }
 
+/// Handles the result of an I/O operation that might be interrupted by converting [`ErrorKind::Interrupted`] errors to `Ok(None)`.
+///
+/// This utility function manages system calls that can be interrupted by signals. When an I/O operation
+/// returns an [`ErrorKind::Interrupted`] error, indicating that a system call was interrupted by a signal
+/// before it could complete, this function converts it to `Ok(None)` for easier handling in caller code.
+///
+/// This is particularly useful in scenarios where you want to retry operations that were interrupted,
+/// rather than propagating the error.
 pub fn try_uninterrupted<T>(result: std::io::Result<T>) -> std::io::Result<Option<T>> {
     match result {
-        Err(e) if e.kind() == std::io::ErrorKind::Interrupted => Ok(None),
+        Err(e) if e.kind() == ErrorKind::Interrupted => Ok(None),
         Err(e) => Err(e),
         Ok(v) => Ok(Some(v)),
     }
