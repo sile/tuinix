@@ -92,7 +92,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 SIGNAL => {
                     // Handle terminal resize events
-                    while let Some(size) = try_nonblocking(terminal.read_size())? {
+                    while let Some(size) = try_nonblocking(terminal.wait_for_resize())? {
                         let mut frame = TerminalFrame::new(size);
 
                         frame.set_cursor(TerminalPosition::row_col(2, 2));

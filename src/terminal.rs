@@ -279,7 +279,7 @@ impl Terminal {
                     }
                 }
                 if libc::FD_ISSET(self.signal_fd(), &readfds) {
-                    return self.read_size().map(TerminalEvent::Resize).map(Some);
+                    return self.wait_for_resize().map(TerminalEvent::Resize).map(Some);
                 }
             }
         }
@@ -289,8 +289,10 @@ impl Terminal {
         self.input.read_input()
     }
 
-    // TODO: rename
-    pub fn read_size(&mut self) -> std::io::Result<TerminalSize> {
+    /// Waits for a terminal resize event to occur and returns the new terminal size.
+    ///
+    /// To make this method non-blocking, call `set_nonblocking(self.signal_fd())`.
+    pub fn wait_for_resize(&mut self) -> std::io::Result<TerminalSize> {
         self.signal.read_exact(&mut [0])?;
         self.update_size()?;
         Ok(self.size)
