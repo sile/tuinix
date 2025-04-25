@@ -152,6 +152,7 @@ impl Terminal {
     /// - Enabling raw mode (for direct character-by-character input)
     /// - Switching to the alternate screen buffer
     /// - Hiding the cursor
+    /// - Installing a SIGWINCH signal handler to detect terminal resize events
     /// - Installing a panic handler to restore terminal state on panic
     ///
     /// # Errors
@@ -180,10 +181,10 @@ impl Terminal {
 
         let mut termios = MaybeUninit::<libc::termios>::zeroed();
         check_libc_result(unsafe { libc::tcgetattr(stdin.as_raw_fd(), termios.as_mut_ptr()) })?;
+        let original_termios = unsafe { termios.assume_init() };
 
         let signal_fd = set_sigwinch_handler()?;
 
-        let original_termios = unsafe { termios.assume_init() };
         let mut this = Self {
             input: InputReader::new(stdin),
             output: BufWriter::new(stdout),
@@ -192,11 +193,11 @@ impl Terminal {
             size: TerminalSize::default(),
             last_frame: TerminalFrame::default(),
         };
+        this.update_size()?;
         this.enable_raw_mode()?;
         this.enable_alternate_screen()?;
-        this.output.flush()?;
-        this.update_size()?;
         this.hide_cursor()?;
+        this.output.flush()?;
 
         let default_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |panic_info| {
