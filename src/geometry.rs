@@ -1,22 +1,35 @@
+/// Dimensions of a terminal window or frame.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TerminalSize {
+    /// Number of rows (height) in the terminal.
     pub rows: usize,
+
+    /// Number of columns (width) in the terminal.
     pub cols: usize,
 }
 
+/// Position within a terminal window or frame.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TerminalPosition {
+    /// Row coordinate (vertical position, 0-indexed from the top).
     pub row: usize,
+
+    /// Column coordinate (horizontal position, 0-indexed from the left).
     pub col: usize,
 }
 
 impl TerminalPosition {
+    /// Origin position (0,0).
     pub const ZERO: Self = Self::row_col(0, 0);
 
+    /// Makes a new position with the specified row and column coordinates.
     pub const fn row_col(row: usize, col: usize) -> Self {
         Self { row, col }
     }
 
+    /// Makes a new position at the beginning of the specified row.
+    ///
+    /// This is a convenience constructor that sets the column to 0.
     pub const fn row(row: usize) -> Self {
         Self::row_col(row, 0)
     }
