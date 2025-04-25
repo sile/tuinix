@@ -23,6 +23,39 @@ unsafe extern "C" fn handle_sigwinch(_: libc::c_int) {
     }
 }
 
+/// Terminal interface for building TUI (Terminal User Interface) applications.
+///
+/// The [`Terminal`] struct provides a foundational layer for creating terminal-based
+/// user interfaces by managing:
+///
+/// - Raw terminal mode configuration
+/// - Alternate screen buffer
+/// - Terminal size detection and window resize events
+/// - Input event handling
+/// - Cursor positioning and visibility
+/// - Drawing frames with styled characters
+///
+/// Only one instance of [`Terminal`] can exist at a time, ensuring proper management
+/// of terminal state. The terminal is automatically restored to its original state
+/// when the [`Terminal`] instance is dropped.
+///
+/// # Example
+///
+/// ```no_run
+/// use tuinix::{Terminal, TerminalFrame, TerminalSize};
+///
+/// fn main() -> std::io::Result<()> {
+///     let mut terminal = Terminal::new()?;
+///     let size = terminal.size();
+///
+///     // Create and draw a frame
+///     let mut frame = TerminalFrame::new(size);
+///     // Add content to frame...
+///     terminal.draw(frame)?;
+///
+///     Ok(())
+/// }
+/// ```
 pub struct Terminal {
     input: InputReader<Stdin>,
     output: BufWriter<Stdout>,

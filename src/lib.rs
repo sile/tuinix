@@ -5,6 +5,7 @@ mod geometry;
 pub mod input;
 mod terminal;
 
+pub use frame::TerminalFrame;
 pub use geometry::{TerminalPosition, TerminalSize};
 pub use terminal::Terminal;
 
