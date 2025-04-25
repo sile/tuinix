@@ -214,7 +214,10 @@ impl Terminal {
         self.signal.as_raw_fd()
     }
 
-    pub fn poll_event(&mut self, timeout: Option<Duration>) -> std::io::Result<Option<Event>> {
+    pub fn poll_event(
+        &mut self,
+        timeout: Option<Duration>,
+    ) -> std::io::Result<Option<TerminalEvent>> {
         let start_time = Instant::now();
         loop {
             unsafe {
@@ -257,11 +260,11 @@ impl Terminal {
 
                 if libc::FD_ISSET(self.input_fd(), &readfds) {
                     if let Some(input) = self.read_input()? {
-                        return Ok(Some(Event::Input(input)));
+                        return Ok(Some(TerminalEvent::Input(input)));
                     }
                 }
                 if libc::FD_ISSET(self.signal_fd(), &readfds) {
-                    return self.read_size().map(Event::TerminalSize).map(Some);
+                    return self.read_size().map(TerminalEvent::TerminalSize).map(Some);
                 }
             }
         }
@@ -426,7 +429,7 @@ impl std::fmt::Debug for Terminal {
 }
 
 #[derive(Debug, Clone)]
-pub enum Event {
+pub enum TerminalEvent {
     TerminalSize(TerminalSize), // TODO: Signal
     Input(Input),
 }

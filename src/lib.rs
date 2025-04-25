@@ -7,7 +7,7 @@ mod terminal;
 
 pub use frame::TerminalFrame;
 pub use geometry::{TerminalPosition, TerminalSize};
-pub use terminal::Terminal;
+pub use terminal::{Terminal, TerminalEvent};
 
 /// Sets a file descriptor to non-blocking mode.
 ///
