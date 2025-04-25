@@ -119,7 +119,7 @@ static mut SIGWINCH_PIPE_FD: RawFd = 0;
 ///                 },
 ///                 Token(1) => {
 ///                     // Handle terminal resize without blocking
-///                     while let Some(size) = try_nonblocking(terminal.read_size())? {
+///                     while let Some(size) = try_nonblocking(terminal.wait_for_resize())? {
 ///                         // Terminal was resized, update UI
 ///                     }
 ///                 },
