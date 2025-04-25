@@ -89,7 +89,7 @@ impl std::fmt::Write for TerminalFrame {
             return Ok(());
         }
 
-        while let Some((i, c)) = s.char_indices().next() {
+        while let Some(c) = s.chars().next() {
             match c {
                 '\n' => {
                     self.cursor.row += 1;
@@ -97,14 +97,14 @@ impl std::fmt::Write for TerminalFrame {
                     if self.cursor.row >= self.size.rows {
                         break;
                     }
-                    s = &s[i..];
+                    s = &s[1..];
                 }
                 '\x1b' => {
-                    s = self.current_style.update(&s[i + 1..]);
+                    s = self.current_style.update(&s[1..]);
                 }
                 _ => {
                     self.push_char(c);
-                    s = &s[i..];
+                    s = &s[c.len_utf8()..];
                 }
             }
         }
