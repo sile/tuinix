@@ -285,15 +285,37 @@ impl Terminal {
         }
     }
 
+    /// Reads and processes the next input event from the terminal.
+    ///
+    /// This method attempts to read raw bytes from stdin and parse them into a
+    /// structured [`TerminalInput`] event.
+    ///
+    /// By default, this method blocks until input is available. To use it in non-blocking
+    /// mode, first call [`set_nonblocking()`](crate::set_nonblocking) on [`Terminal::input_fd()`].
+    ///
+    /// While [`Terminal::poll_event()`] is generally recommended for receiving terminal input events,
+    /// you may need to call this method directly when using external I/O polling crates like `mio`.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(Some(input))` if an input event was successfully read and parsed
+    /// - `Ok(None)` if not enough bytes were available to form a complete input event
+    /// - `Err(e)` if an I/O error occurred while reading from stdin
+    ///
+    /// # Errors
+    ///
+    /// This method returns an error if reading from stdin fails or encounters EOF.
     pub fn read_input(&mut self) -> std::io::Result<Option<TerminalInput>> {
         self.input.read_input()
     }
 
     /// Waits for a terminal resize event to occur and returns the new terminal size.
     ///
+    /// By default, this method blocks until input is available. To use it in non-blocking
+    /// mode, first call [`set_nonblocking()`](crate::set_nonblocking) on [`Terminal::signal_fd()`].
+    ///
     /// While [`Terminal::poll_event()`] is generally recommended for detecting terminal resize events,
     /// you may need to call this method directly when using external I/O polling crates like `mio`.
-    /// In such cases, first make this method non-blocking by calling `set_nonblocking(self.signal_fd())`.
     pub fn wait_for_resize(&mut self) -> std::io::Result<TerminalSize> {
         self.signal.read_exact(&mut [0])?;
         self.update_size()?;
