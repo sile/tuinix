@@ -217,6 +217,14 @@ impl Terminal {
         Ok(this)
     }
 
+    /// Returns the current terminal size.
+    ///
+    /// The size is updated when terminal resize events are detected through
+    /// [`Terminal::wait_for_resize()`] or [`Terminal::poll_event()`].
+    pub fn size(&self) -> TerminalSize {
+        self.size
+    }
+
     pub fn input_fd(&self) -> RawFd {
         self.input.inner().as_raw_fd()
     }
@@ -320,10 +328,6 @@ impl Terminal {
         self.signal.read_exact(&mut [0])?;
         self.update_size()?;
         Ok(self.size)
-    }
-
-    pub fn size(&self) -> TerminalSize {
-        self.size
     }
 
     fn hide_cursor(&mut self) -> std::io::Result<()> {
