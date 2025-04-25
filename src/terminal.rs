@@ -17,12 +17,6 @@ static TERMINAL_EXISTS: AtomicBool = AtomicBool::new(false);
 
 static mut SIGWINCH_PIPE_FD: RawFd = 0;
 
-unsafe extern "C" fn handle_sigwinch(_: libc::c_int) {
-    unsafe {
-        let _ = libc::write(SIGWINCH_PIPE_FD, [0].as_ptr().cast(), 1);
-    }
-}
-
 /// Terminal interface for building TUI (Terminal User Interface) applications.
 ///
 /// The [`Terminal`] struct provides a foundational layer for creating terminal-based
@@ -173,28 +167,13 @@ impl Terminal {
         let mut termios = MaybeUninit::<libc::termios>::zeroed();
         check_libc_result(unsafe { libc::tcgetattr(stdin.as_raw_fd(), termios.as_mut_ptr()) })?;
 
-        let mut pipefd = [0 as RawFd; 2];
-        check_libc_result(unsafe { libc::pipe(pipefd.as_mut_ptr()) })?;
-        unsafe {
-            SIGWINCH_PIPE_FD = pipefd[1];
-
-            let mut sigaction = MaybeUninit::<libc::sigaction>::zeroed().assume_init();
-            sigaction.sa_sigaction = handle_sigwinch as libc::sighandler_t;
-            sigaction.sa_flags = 0;
-
-            check_libc_result(libc::sigemptyset(&mut sigaction.sa_mask))?;
-            check_libc_result(libc::sigaction(
-                libc::SIGWINCH,
-                &sigaction,
-                std::ptr::null_mut(),
-            ))?;
-        }
+        let signal_fd = set_sigwinch_handler()?;
 
         let original_termios = unsafe { termios.assume_init() };
         let mut this = Self {
             input: InputReader::new(stdin),
             output: BufWriter::new(stdout),
-            signal: unsafe { File::from_raw_fd(pipefd[0]) },
+            signal: unsafe { File::from_raw_fd(signal_fd) },
             original_termios,
             size: TerminalSize::default(),
             last_frame: TerminalFrame::default(),
@@ -458,6 +437,33 @@ fn check_libc_result(result: libc::c_int) -> std::io::Result<()> {
     } else {
         Err(std::io::Error::last_os_error())
     }
+}
+
+unsafe extern "C" fn handle_sigwinch(_: libc::c_int) {
+    unsafe {
+        let _ = libc::write(SIGWINCH_PIPE_FD, [0].as_ptr().cast(), 1);
+    }
+}
+
+fn set_sigwinch_handler() -> std::io::Result<RawFd> {
+    let mut pipefd = [0 as RawFd; 2];
+    check_libc_result(unsafe { libc::pipe(pipefd.as_mut_ptr()) })?;
+    unsafe {
+        SIGWINCH_PIPE_FD = pipefd[1];
+
+        let mut sigaction = MaybeUninit::<libc::sigaction>::zeroed().assume_init();
+
+        sigaction.sa_sigaction = handle_sigwinch as libc::sighandler_t;
+        sigaction.sa_flags = 0;
+
+        check_libc_result(libc::sigemptyset(&mut sigaction.sa_mask))?;
+        check_libc_result(libc::sigaction(
+            libc::SIGWINCH,
+            &sigaction,
+            std::ptr::null_mut(),
+        ))?;
+    }
+    Ok(pipefd[0])
 }
 
 #[cfg(test)]
