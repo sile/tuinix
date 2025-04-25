@@ -291,7 +291,9 @@ impl Terminal {
 
     /// Waits for a terminal resize event to occur and returns the new terminal size.
     ///
-    /// To make this method non-blocking, call `set_nonblocking(self.signal_fd())`.
+    /// While [`Terminal::poll_event()`] is generally recommended for detecting terminal resize events,
+    /// you may need to call this method directly when using external I/O polling crates like `mio`.
+    /// In such cases, first make this method non-blocking by calling `set_nonblocking(self.signal_fd())`.
     pub fn wait_for_resize(&mut self) -> std::io::Result<TerminalSize> {
         self.signal.read_exact(&mut [0])?;
         self.update_size()?;
