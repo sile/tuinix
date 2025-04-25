@@ -8,9 +8,9 @@ use std::{
 };
 
 use crate::{
+    TerminalPosition, TerminalSize,
     frame::{TerminalFrame, TerminalStyle},
     input::{Input, InputReader},
-    TerminalPosition, TerminalSize,
 };
 
 static TERMINAL_EXISTS: AtomicBool = AtomicBool::new(false);
