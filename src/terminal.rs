@@ -225,14 +225,17 @@ impl Terminal {
         self.size
     }
 
+    /// Returns the file descriptor of the terminal input.
     pub fn input_fd(&self) -> RawFd {
         self.input.inner().as_raw_fd()
     }
 
+    /// Returns the file descriptor of the terminal output.
     pub fn output_fd(&self) -> RawFd {
         self.output.get_ref().as_raw_fd()
     }
 
+    /// Returns the file descriptor that receives terminal resize signal notifications.
     pub fn signal_fd(&self) -> RawFd {
         self.signal.as_raw_fd()
     }
