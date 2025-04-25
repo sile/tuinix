@@ -1,4 +1,4 @@
-/// Dimensions of a terminal window or frame.
+/// Dimensions of a terminal.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TerminalSize {
     /// Number of rows (height) in the terminal.
@@ -8,7 +8,14 @@ pub struct TerminalSize {
     pub cols: usize,
 }
 
-/// Position within a terminal window or frame.
+impl TerminalSize {
+    /// Returns `true` if the terminal has zero rows or zero columns.
+    pub const fn is_empty(self) -> bool {
+        self.rows == 0 || self.cols == 0
+    }
+}
+
+/// Position within a terminal.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TerminalPosition {
     /// Row coordinate (vertical position, 0-indexed from the top).
