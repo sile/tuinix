@@ -8,9 +8,9 @@ use std::{
 };
 
 use crate::{
-    TerminalPosition, TerminalSize,
     frame::{TerminalFrame, TerminalStyle},
     input::{Input, InputReader},
+    TerminalPosition, TerminalSize,
 };
 
 static TERMINAL_EXISTS: AtomicBool = AtomicBool::new(false);
@@ -39,10 +39,14 @@ unsafe extern "C" fn handle_sigwinch(_: libc::c_int) {
 /// of terminal state. The terminal is automatically restored to its original state
 /// when the [`Terminal`] instance is dropped.
 ///
-/// # Example
+/// # Basic Example
+///
+/// This example demonstrates the essential steps to initialize a terminal, create a frame,
+/// draw it to the screen, and handle input events with a timeout.
 ///
 /// ```no_run
 /// use tuinix::{Terminal, TerminalFrame, TerminalSize};
+/// use std::time::Duration;
 ///
 /// fn main() -> std::io::Result<()> {
 ///     let mut terminal = Terminal::new()?;
@@ -53,7 +57,84 @@ unsafe extern "C" fn handle_sigwinch(_: libc::c_int) {
 ///     // Add content to frame...
 ///     terminal.draw(frame)?;
 ///
+///     // Wait for events with timeout
+///     let timeout = Duration::from_millis(100);
+///     if let Some(event) = terminal.poll_event(Some(timeout))? {
+///         // Handle input or resize events
+///         println!("Received event: {:?}", event);
+///     }
+///
 ///     Ok(())
+/// }
+/// ```
+///
+/// # Non-blocking I/O Example
+///
+/// This example demonstrates how to use the terminal with non-blocking I/O operations
+/// through the `mio` crate. This approach allows handling terminal events without
+/// blocking the main thread, which is useful for responsive UIs or when integrating
+/// with other event sources.
+///
+/// ```no_run
+/// use std::time::Duration;
+///
+/// use mio::{Events, Interest, Poll, Token};
+/// use tuinix::{Terminal, TerminalFrame, set_nonblocking, try_nonblocking, try_uninterrupted};
+///
+/// fn main() -> std::io::Result<()> {
+///     // Initialize terminal
+///     let mut terminal = Terminal::new()?;
+///
+///     // Create mio Poll instance
+///     let mut poll = Poll::new()?;
+///     let mut events = Events::with_capacity(10);
+///
+///     // Get file descriptors and set to non-blocking mode
+///     let stdin_fd = terminal.input_fd();
+///     let signal_fd = terminal.signal_fd();
+///     set_nonblocking(stdin_fd)?;
+///     set_nonblocking(signal_fd)?;
+///
+///     // Register with mio poll
+///     poll.registry().register(
+///         &mut mio::unix::SourceFd(&stdin_fd),
+///         Token(0),
+///         Interest::READABLE
+///     )?;
+///     poll.registry().register(
+///         &mut mio::unix::SourceFd(&signal_fd),
+///         Token(1),
+///         Interest::READABLE
+///     )?;
+///
+///     // Event loop
+///     loop {
+///         // Wait for events with timeout
+///         let timeout = Duration::from_millis(100);
+///         if try_uninterrupted(poll.poll(&mut events, Some(timeout)))?.is_none() {
+///             continue;
+///         }
+///
+///         for event in events.iter() {
+///             match event.token() {
+///                 Token(0) => {
+///                     // Handle input without blocking
+///                     while let Some(input) = try_nonblocking(terminal.read_input())? {
+///                         // Process input event
+///                     }
+///                 },
+///                 Token(1) => {
+///                     // Handle terminal resize without blocking
+///                     while let Some(size) = try_nonblocking(terminal.read_size())? {
+///                         // Terminal was resized, update UI
+///                     }
+///                 },
+///                 _ => unreachable!(),
+///             }
+///         }
+///
+///         // Update display if needed
+///     }
 /// }
 /// ```
 pub struct Terminal {
