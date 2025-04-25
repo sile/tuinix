@@ -183,12 +183,10 @@ impl Terminal {
         check_libc_result(unsafe { libc::tcgetattr(stdin.as_raw_fd(), termios.as_mut_ptr()) })?;
         let original_termios = unsafe { termios.assume_init() };
 
-        let signal_fd = set_sigwinch_handler()?;
-
         let mut this = Self {
             input: InputReader::new(stdin),
             output: BufWriter::new(stdout),
-            signal: unsafe { File::from_raw_fd(signal_fd) },
+            signal: set_sigwinch_handler()?,
             original_termios,
             size: TerminalSize::default(),
             last_frame: TerminalFrame::default(),
@@ -466,6 +464,7 @@ impl Drop for Terminal {
         let _ = self.disable_alternate_screen();
         let _ = self.disable_raw_mode();
         let _ = self.output.flush();
+        unsafe { libc::close(SIGWINCH_PIPE_FD) };
         TERMINAL_EXISTS.store(false, Ordering::SeqCst);
     }
 }
@@ -496,7 +495,7 @@ unsafe extern "C" fn handle_sigwinch(_: libc::c_int) {
     }
 }
 
-fn set_sigwinch_handler() -> std::io::Result<RawFd> {
+fn set_sigwinch_handler() -> std::io::Result<File> {
     let mut pipefd = [0 as RawFd; 2];
     check_libc_result(unsafe { libc::pipe(pipefd.as_mut_ptr()) })?;
     unsafe {
@@ -513,8 +512,8 @@ fn set_sigwinch_handler() -> std::io::Result<RawFd> {
             &sigaction,
             std::ptr::null_mut(),
         ))?;
+        Ok(File::from_raw_fd(pipefd[0]))
     }
-    Ok(pipefd[0])
 }
 
 #[cfg(test)]
