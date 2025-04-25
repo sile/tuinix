@@ -1,7 +1,7 @@
 use std::io::Read;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum Input {
+pub enum TerminalInput {
     Key(KeyInput),
 }
 
@@ -52,7 +52,7 @@ impl<R: Read> InputReader<R> {
         &self.inner
     }
 
-    pub fn read_input(&mut self) -> std::io::Result<Option<Input>> {
+    pub fn read_input(&mut self) -> std::io::Result<Option<TerminalInput>> {
         let read_size = self.inner.read(&mut self.buf[self.buf_offset..])?;
         if read_size == 0 {
             return Err(std::io::ErrorKind::UnexpectedEof.into());
@@ -67,7 +67,7 @@ impl<R: Read> InputReader<R> {
         Ok(Some(input))
     }
 
-    fn parse_input(&self, bytes: &[u8]) -> std::io::Result<Option<(Input, usize)>> {
+    fn parse_input(&self, bytes: &[u8]) -> std::io::Result<Option<(TerminalInput, usize)>> {
         if bytes.is_empty() {
             return Ok(None);
         }
@@ -84,7 +84,7 @@ impl<R: Read> InputReader<R> {
                     c => KeyCode::Char((c + 0x60) as char),
                 };
                 return Ok(Some((
-                    Input::Key(KeyInput {
+                    TerminalInput::Key(KeyInput {
                         ctrl,
                         alt: false,
                         code,
@@ -95,7 +95,7 @@ impl<R: Read> InputReader<R> {
 
             // Regular ASCII characters
             return Ok(Some((
-                Input::Key(KeyInput {
+                TerminalInput::Key(KeyInput {
                     ctrl: false,
                     alt: false,
                     code: KeyCode::Char(bytes[0] as char),
@@ -109,7 +109,7 @@ impl<R: Read> InputReader<R> {
             // Escape key pressed alone
             0x1b if bytes.len() == 1 => {
                 return Ok(Some((
-                    Input::Key(KeyInput {
+                    TerminalInput::Key(KeyInput {
                         ctrl: false,
                         alt: false,
                         code: KeyCode::Escape,
@@ -134,7 +134,7 @@ impl<R: Read> InputReader<R> {
                 };
 
                 return Ok(Some((
-                    Input::Key(KeyInput {
+                    TerminalInput::Key(KeyInput {
                         ctrl: bytes[1] < 0x20,
                         alt: true,
                         code,
@@ -149,7 +149,7 @@ impl<R: Read> InputReader<R> {
                     // Arrow keys: ESC [ A, ESC [ B, ESC [ C, ESC [ D
                     b'A' => {
                         return Ok(Some((
-                            Input::Key(KeyInput {
+                            TerminalInput::Key(KeyInput {
                                 ctrl: false,
                                 alt: false,
                                 code: KeyCode::Up,
@@ -159,7 +159,7 @@ impl<R: Read> InputReader<R> {
                     }
                     b'B' => {
                         return Ok(Some((
-                            Input::Key(KeyInput {
+                            TerminalInput::Key(KeyInput {
                                 ctrl: false,
                                 alt: false,
                                 code: KeyCode::Down,
@@ -169,7 +169,7 @@ impl<R: Read> InputReader<R> {
                     }
                     b'C' => {
                         return Ok(Some((
-                            Input::Key(KeyInput {
+                            TerminalInput::Key(KeyInput {
                                 ctrl: false,
                                 alt: false,
                                 code: KeyCode::Right,
@@ -179,7 +179,7 @@ impl<R: Read> InputReader<R> {
                     }
                     b'D' => {
                         return Ok(Some((
-                            Input::Key(KeyInput {
+                            TerminalInput::Key(KeyInput {
                                 ctrl: false,
                                 alt: false,
                                 code: KeyCode::Left,
@@ -191,7 +191,7 @@ impl<R: Read> InputReader<R> {
                     // Home/End: ESC [ H, ESC [ F
                     b'H' => {
                         return Ok(Some((
-                            Input::Key(KeyInput {
+                            TerminalInput::Key(KeyInput {
                                 ctrl: false,
                                 alt: false,
                                 code: KeyCode::Home,
@@ -201,7 +201,7 @@ impl<R: Read> InputReader<R> {
                     }
                     b'F' => {
                         return Ok(Some((
-                            Input::Key(KeyInput {
+                            TerminalInput::Key(KeyInput {
                                 ctrl: false,
                                 alt: false,
                                 code: KeyCode::End,
@@ -223,7 +223,7 @@ impl<R: Read> InputReader<R> {
                                 _ => return Ok(None),         // Unknown sequence
                             };
                             return Ok(Some((
-                                Input::Key(KeyInput {
+                                TerminalInput::Key(KeyInput {
                                     ctrl: false,
                                     alt: false,
                                     code,
@@ -249,14 +249,14 @@ impl<R: Read> InputReader<R> {
                             let alt = modifier & 0x2 != 0;
                             let ctrl = modifier & 0x4 != 0;
 
-                            return Ok(Some((Input::Key(KeyInput { ctrl, alt, code }), 6)));
+                            return Ok(Some((TerminalInput::Key(KeyInput { ctrl, alt, code }), 6)));
                         }
                     }
 
                     // Shift+Tab
                     b'Z' => {
                         return Ok(Some((
-                            Input::Key(KeyInput {
+                            TerminalInput::Key(KeyInput {
                                 ctrl: false,
                                 alt: false,
                                 code: KeyCode::BackTab,
@@ -288,14 +288,14 @@ impl<R: Read> InputReader<R> {
                         _ => return Ok(None),
                     };
 
-                    return Ok(Some((Input::Key(KeyInput { ctrl, alt, code }), 6)));
+                    return Ok(Some((TerminalInput::Key(KeyInput { ctrl, alt, code }), 6)));
                 }
             }
 
             // Backspace
             0x7F => {
                 return Ok(Some((
-                    Input::Key(KeyInput {
+                    TerminalInput::Key(KeyInput {
                         ctrl: false,
                         alt: false,
                         code: KeyCode::Backspace,
@@ -322,7 +322,7 @@ impl<R: Read> InputReader<R> {
                 if let Ok(s) = std::str::from_utf8(&bytes[0..width]) {
                     if let Some(c) = s.chars().next() {
                         return Ok(Some((
-                            Input::Key(KeyInput {
+                            TerminalInput::Key(KeyInput {
                                 ctrl: false,
                                 alt: false,
                                 code: KeyCode::Char(c),

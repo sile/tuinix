@@ -4,7 +4,7 @@ use std::time::Duration;
 use tuinix::{
     Terminal, TerminalPosition,
     frame::TerminalFrame,
-    input::{Input, KeyCode, KeyInput},
+    input::{KeyCode, KeyInput, TerminalInput},
     set_nonblocking, try_nonblocking, try_uninterrupted,
 };
 
@@ -79,7 +79,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         write!(frame, "Received input: {:?}", input)?;
 
                         // Quit when 'q' is pressed
-                        if let Input::Key(KeyInput {
+                        if let TerminalInput::Key(KeyInput {
                             code: KeyCode::Char('q'),
                             ..
                         }) = input

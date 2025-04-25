@@ -10,7 +10,7 @@ use std::{
 use crate::{
     TerminalPosition, TerminalSize,
     frame::{TerminalFrame, TerminalStyle},
-    input::{Input, InputReader},
+    input::{InputReader, TerminalInput},
 };
 
 static TERMINAL_EXISTS: AtomicBool = AtomicBool::new(false);
@@ -279,13 +279,13 @@ impl Terminal {
                     }
                 }
                 if libc::FD_ISSET(self.signal_fd(), &readfds) {
-                    return self.read_size().map(TerminalEvent::TerminalSize).map(Some);
+                    return self.read_size().map(TerminalEvent::Resize).map(Some);
                 }
             }
         }
     }
 
-    pub fn read_input(&mut self) -> std::io::Result<Option<Input>> {
+    pub fn read_input(&mut self) -> std::io::Result<Option<TerminalInput>> {
         self.input.read_input()
     }
 
@@ -445,8 +445,8 @@ impl std::fmt::Debug for Terminal {
 
 #[derive(Debug, Clone)]
 pub enum TerminalEvent {
-    TerminalSize(TerminalSize), // TODO: Signal
-    Input(Input),
+    Resize(TerminalSize),
+    Input(TerminalInput),
 }
 
 fn check_libc_result(result: libc::c_int) -> std::io::Result<()> {
