@@ -1,6 +1,6 @@
 use std::{
     fs::File,
-    io::{BufWriter, IsTerminal, Read, Stdin, Stdout, Write},
+    io::{BufWriter, Error, ErrorKind, IsTerminal, Read, Stdin, Stdout, Write},
     mem::MaybeUninit,
     os::fd::{AsRawFd, FromRawFd, RawFd},
     sync::atomic::{AtomicBool, Ordering},
@@ -141,10 +141,30 @@ pub struct Terminal {
 }
 
 impl Terminal {
+    /// Creates a new terminal interface with raw mode, alternate screen, and hidden cursor.
+    ///
+    /// This function initializes a terminal for TUI (Terminal User Interface) applications
+    /// by:
+    ///
+    /// - Ensuring only one terminal instance exists at a time
+    /// - Verifying stdin/stdout are connected to a terminal
+    /// - Saving the original terminal state (restored on drop)
+    /// - Enabling raw mode (for direct character-by-character input)
+    /// - Switching to the alternate screen buffer
+    /// - Hiding the cursor
+    /// - Installing a panic handler to restore terminal state on panic
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Another [`Terminal`] instance already exists
+    /// - Standard input is not a terminal
+    /// - Standard output is not a terminal
+    /// - Terminal configuration fails
     pub fn new() -> std::io::Result<Self> {
         if TERMINAL_EXISTS.swap(true, Ordering::SeqCst) {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            return Err(Error::new(
+                ErrorKind::Other,
                 "Terminal instance already exists",
             ));
         }
@@ -152,16 +172,10 @@ impl Terminal {
         let stdin = std::io::stdin();
         let stdout = std::io::stdout();
         if !stdin.is_terminal() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "STDIN is not a terminal",
-            ));
+            return Err(Error::new(ErrorKind::Other, "STDIN is not a terminal"));
         }
         if !stdout.is_terminal() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "STDOUT is not a terminal",
-            ));
+            return Err(Error::new(ErrorKind::Other, "STDOUT is not a terminal"));
         }
 
         let mut termios = MaybeUninit::<libc::termios>::zeroed();
@@ -248,8 +262,8 @@ impl Terminal {
                     timeval_ptr,
                 );
                 if ret == -1 {
-                    let e = std::io::Error::last_os_error();
-                    if e.kind() == std::io::ErrorKind::Interrupted {
+                    let e = Error::last_os_error();
+                    if e.kind() == ErrorKind::Interrupted {
                         continue;
                     }
                     return Err(e);
@@ -438,7 +452,7 @@ fn check_libc_result(result: libc::c_int) -> std::io::Result<()> {
     if result == 0 {
         Ok(())
     } else {
-        Err(std::io::Error::last_os_error())
+        Err(Error::last_os_error())
     }
 }
 
