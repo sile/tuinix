@@ -238,6 +238,21 @@ impl Terminal {
         self.signal.as_raw_fd()
     }
 
+    /// Waits for and returns the next terminal event.
+    ///
+    /// This method efficiently waits for either input events or terminal resize events
+    /// using [`libc::select()`].
+    ///
+    /// If you want to use I/O polling mechanisms other than [`libc::select()`],
+    /// please use the following methods directly:
+    /// - [`Terminal::input_fd()`] and [`Terminal::read_input()`] for input events
+    /// - [`Terminal::signal_fd()`] and [`Terminal::wait_for_resize()`] for resize events
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(Some(TerminalEvent))` if either an input or resize event was received
+    /// - `Ok(None)` if the timeout expired without any event
+    /// - `Err(e)` if an I/O error occurred
     pub fn poll_event(
         &mut self,
         timeout: Option<Duration>,
@@ -331,44 +346,6 @@ impl Terminal {
         Ok(self.size)
     }
 
-    fn hide_cursor(&mut self) -> std::io::Result<()> {
-        write!(self.output, "\x1b[?25l")
-    }
-
-    fn show_cursor(&mut self) -> std::io::Result<()> {
-        write!(self.output, "\x1b[?25h")
-    }
-
-    fn move_cursor(&mut self, position: TerminalPosition) -> std::io::Result<()> {
-        write!(
-            self.output,
-            "\x1b[{};{}H",
-            position.row + 1,
-            position.col + 1
-        )
-    }
-
-    fn update_size(&mut self) -> std::io::Result<()> {
-        let mut winsize = MaybeUninit::<libc::winsize>::zeroed();
-        check_libc_result(unsafe {
-            libc::ioctl(self.output_fd(), libc::TIOCGWINSZ, winsize.as_mut_ptr())
-        })?;
-
-        let winsize = unsafe { winsize.assume_init() };
-        self.size.rows = winsize.ws_row as usize;
-        self.size.cols = winsize.ws_col as usize;
-
-        Ok(())
-    }
-
-    fn clear_all(&mut self) -> std::io::Result<()> {
-        write!(self.output, "\x1b[2J")
-    }
-
-    fn clear_line(&mut self) -> std::io::Result<()> {
-        write!(self.output, "\x1b[2K")
-    }
-
     pub fn draw(&mut self, frame: TerminalFrame) -> std::io::Result<()> {
         if self.last_frame.show_cursor() {
             self.hide_cursor()?;
@@ -415,6 +392,44 @@ impl Terminal {
         self.last_frame = frame;
 
         Ok(())
+    }
+
+    fn hide_cursor(&mut self) -> std::io::Result<()> {
+        write!(self.output, "\x1b[?25l")
+    }
+
+    fn show_cursor(&mut self) -> std::io::Result<()> {
+        write!(self.output, "\x1b[?25h")
+    }
+
+    fn move_cursor(&mut self, position: TerminalPosition) -> std::io::Result<()> {
+        write!(
+            self.output,
+            "\x1b[{};{}H",
+            position.row + 1,
+            position.col + 1
+        )
+    }
+
+    fn update_size(&mut self) -> std::io::Result<()> {
+        let mut winsize = MaybeUninit::<libc::winsize>::zeroed();
+        check_libc_result(unsafe {
+            libc::ioctl(self.output_fd(), libc::TIOCGWINSZ, winsize.as_mut_ptr())
+        })?;
+
+        let winsize = unsafe { winsize.assume_init() };
+        self.size.rows = winsize.ws_row as usize;
+        self.size.cols = winsize.ws_col as usize;
+
+        Ok(())
+    }
+
+    fn clear_all(&mut self) -> std::io::Result<()> {
+        write!(self.output, "\x1b[2J")
+    }
+
+    fn clear_line(&mut self) -> std::io::Result<()> {
+        write!(self.output, "\x1b[2K")
     }
 
     fn enable_alternate_screen(&mut self) -> std::io::Result<()> {
