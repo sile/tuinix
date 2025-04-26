@@ -392,11 +392,11 @@ impl Terminal {
             self.move_cursor(TerminalPosition::row(row))?;
             self.clear_line()?;
 
-            let mut last_style = TerminalStyle::NONE;
+            let mut last_style = TerminalStyle::RESET;
             let mut next_col = 0;
             for (TerminalPosition { col, .. }, ch) in frame.get_line(row) {
                 if last_style != ch.style {
-                    write!(self.output, "{}{}", TerminalStyle::NONE, ch.style)?;
+                    write!(self.output, "{}{}", TerminalStyle::RESET, ch.style)?;
                     last_style = ch.style;
                 }
 
@@ -409,8 +409,8 @@ impl Terminal {
                 )?;
                 next_col = col + ch.width;
             }
-            if last_style != TerminalStyle::NONE {
-                write!(self.output, "{}", TerminalStyle::NONE)?;
+            if last_style != TerminalStyle::RESET {
+                write!(self.output, "{}", TerminalStyle::RESET)?;
             }
         }
 

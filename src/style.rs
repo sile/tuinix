@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::fmt::{Debug, Display};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TerminalStyle {
@@ -14,7 +14,7 @@ pub struct TerminalStyle {
 }
 
 impl TerminalStyle {
-    pub const NONE: Self = Self {
+    pub const RESET: Self = Self {
         bold: false,
         italic: false,
         underline: false,
@@ -27,7 +27,7 @@ impl TerminalStyle {
     };
 
     pub const fn new() -> Self {
-        Self::NONE
+        Self::RESET
     }
 
     pub const fn bold(mut self) -> Self {
@@ -75,9 +75,12 @@ impl TerminalStyle {
         self
     }
 
-    // TODO: rename
-    pub fn with<T: Display>(self, text: T) -> String {
-        format!("{}{}{}", self, text, Self::NONE)
+    pub fn apply<T: Display>(self, text: T) -> String {
+        format!("{}{}{}", self, text, Self::RESET)
+    }
+
+    pub fn apply_debug<T: Debug>(self, text: T) -> String {
+        format!("{}{:?}{}", self, text, Self::RESET)
     }
 
     pub(crate) fn update<'a>(&mut self, s: &'a str) -> &'a str {
@@ -134,7 +137,7 @@ impl TerminalStyle {
 
 impl Display for TerminalStyle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if *self == TerminalStyle::NONE {
+        if *self == TerminalStyle::RESET {
             return write!(f, "\x1b[0m");
         }
 
