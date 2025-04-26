@@ -353,6 +353,7 @@ impl Terminal {
 
         if self.last_frame.size() != frame.size() {
             self.clear_all()?;
+            self.last_frame = TerminalFrame::default();
         }
 
         for row in 0..self.size.rows {
@@ -365,22 +366,24 @@ impl Terminal {
 
             let mut last_style = TerminalStyle::NONE;
             let mut next_col = 0;
-            for (TerminalPosition { col, .. }, c) in frame.get_line(row) {
-                if last_style != c.style {
-                    write!(self.output, "{}{}", TerminalStyle::NONE, c.style)?;
-                    last_style = c.style;
+            for (TerminalPosition { col, .. }, ch) in frame.get_line(row) {
+                if last_style != ch.style {
+                    write!(self.output, "{}{}", TerminalStyle::NONE, ch.style)?;
+                    last_style = ch.style;
                 }
 
                 write!(
                     self.output,
                     "{:spaces$}{}",
                     "",
-                    c.value,
+                    ch.value,
                     spaces = col - next_col
                 )?;
-                next_col = col + c.width;
+                next_col = col + ch.width;
             }
-            write!(self.output, "{}", TerminalStyle::NONE)?;
+            if last_style != TerminalStyle::NONE {
+                write!(self.output, "{}", TerminalStyle::NONE)?;
+            }
         }
 
         if frame.show_cursor() {
