@@ -521,9 +521,13 @@ impl std::fmt::Debug for Terminal {
     }
 }
 
-#[derive(Debug, Clone)]
+/// Terminal event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum TerminalEvent {
+    /// Terminal resize event.
     Resize(TerminalSize),
+
+    /// User input event.
     Input(TerminalInput),
 }
 
