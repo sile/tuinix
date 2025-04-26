@@ -132,192 +132,142 @@ fn parse_input(bytes: &[u8]) -> std::io::Result<Option<(Option<TerminalInput>, u
 
     // Special keys and escape sequences
     match bytes[0] {
-        // Escape key pressed alone
-        0x1b if bytes.len() == 1 => {
-            return Ok(None); // Need more bytes to determine if it's ESC or Alt+key
-        }
-
-        // Alt + character
-        0x1b if bytes.len() >= 2 && bytes[1] < 0x80 && bytes[1] != 0x1b && bytes[1] != 0x5b => {
-            let c = bytes[1] as char;
-            let code = if bytes[1] < 0x20 {
-                // Control characters with Alt
-                match bytes[1] {
-                    0x0D => KeyCode::Enter,
-                    0x09 => KeyCode::Tab,
-                    0x08 => KeyCode::Backspace,
-                    c => KeyCode::Char((c + 0x60) as char),
-                }
-            } else {
-                KeyCode::Char(c)
-            };
-
-            return Ok(Some((
-                Some(TerminalInput::Key(KeyInput {
-                    ctrl: bytes[1] < 0x20,
-                    alt: true,
-                    code,
-                })),
-                2,
-            )));
-        }
-
-        // Handle lone Escape key (after delay)
-        0x1b if bytes.len() >= 2 => {
-            // If the next character is ESC again or anything that doesn't
-            // start a known escape sequence, interpret the first ESC as a standalone key
-            if bytes[1] != b'[' && bytes[1] != b'O' {
-                return Ok(Some((
-                    Some(TerminalInput::Key(KeyInput {
-                        ctrl: false,
-                        alt: false,
-                        code: KeyCode::Escape,
-                    })),
-                    1,
-                )));
+        // Escape key or start of escape sequence
+        0x1b => {
+            // For a standalone ESC press, we need to wait and see if more bytes follow
+            if bytes.len() == 1 {
+                return Ok(None); // Need more bytes
             }
-        }
 
-        // Escape sequences starting with ESC [
-        0x1b if bytes.len() >= 3 && bytes[1] == b'[' => {
-            // Try to find escape sequences for arrow keys with modifiers
-            if bytes.len() >= 6
-                && bytes[2] == b'1'
-                && bytes[3] == b';'
-                && bytes[5] >= b'A'
-                && bytes[5] <= b'D'
-            {
-                let modifier = bytes[4] - b'0';
-                let alt = modifier & 0x2 != 0;
-                let ctrl = modifier & 0x4 != 0;
-
-                let code = match bytes[5] {
-                    b'A' => KeyCode::Up,
-                    b'B' => KeyCode::Down,
-                    b'C' => KeyCode::Right,
-                    b'D' => KeyCode::Left,
-                    _ => {
-                        // Unknown sequence, discard these bytes
-                        return Ok(Some((None, 6)));
+            // Alt + character (ESC followed by a regular character)
+            if bytes[1] < 0x80 && bytes[1] != 0x1b && bytes[1] != 0x5b && bytes[1] != 0x4f {
+                let c = bytes[1] as char;
+                let code = if bytes[1] < 0x20 {
+                    // Control characters with Alt
+                    match bytes[1] {
+                        0x0D => KeyCode::Enter,
+                        0x09 => KeyCode::Tab,
+                        0x08 => KeyCode::Backspace,
+                        c => KeyCode::Char((c + 0x60) as char),
                     }
+                } else {
+                    KeyCode::Char(c)
                 };
 
                 return Ok(Some((
-                    Some(TerminalInput::Key(KeyInput { ctrl, alt, code })),
-                    6,
+                    Some(TerminalInput::Key(KeyInput {
+                        ctrl: bytes[1] < 0x20,
+                        alt: true,
+                        code,
+                    })),
+                    2,
                 )));
             }
 
-            // Then handle the other cases
-            match bytes[2] {
+            // ESC [ sequences (most function keys, arrow keys, etc.)
+            if bytes[1] == b'[' {
+                // Need at least 3 bytes for the basic arrow keys (ESC [ A)
+                if bytes.len() < 3 {
+                    return Ok(None); // Need more bytes
+                }
+
                 // Arrow keys: ESC [ A, ESC [ B, ESC [ C, ESC [ D
-                b'A' => {
-                    return Ok(Some((
-                        Some(TerminalInput::Key(KeyInput {
-                            ctrl: false,
-                            alt: false,
-                            code: KeyCode::Up,
-                        })),
-                        3,
-                    )));
-                }
-                b'B' => {
-                    return Ok(Some((
-                        Some(TerminalInput::Key(KeyInput {
-                            ctrl: false,
-                            alt: false,
-                            code: KeyCode::Down,
-                        })),
-                        3,
-                    )));
-                }
-                b'C' => {
-                    return Ok(Some((
-                        Some(TerminalInput::Key(KeyInput {
-                            ctrl: false,
-                            alt: false,
-                            code: KeyCode::Right,
-                        })),
-                        3,
-                    )));
-                }
-                b'D' => {
-                    return Ok(Some((
-                        Some(TerminalInput::Key(KeyInput {
-                            ctrl: false,
-                            alt: false,
-                            code: KeyCode::Left,
-                        })),
-                        3,
-                    )));
-                }
-
-                // Home/End: ESC [ H, ESC [ F
-                b'H' => {
-                    return Ok(Some((
-                        Some(TerminalInput::Key(KeyInput {
-                            ctrl: false,
-                            alt: false,
-                            code: KeyCode::Home,
-                        })),
-                        3,
-                    )));
-                }
-                b'F' => {
-                    return Ok(Some((
-                        Some(TerminalInput::Key(KeyInput {
-                            ctrl: false,
-                            alt: false,
-                            code: KeyCode::End,
-                        })),
-                        3,
-                    )));
-                }
-
-                // Multi-byte sequences for special keys
-                b'1' | b'2' | b'3' | b'4' | b'5' | b'6' if bytes.len() >= 4 => {
-                    if bytes[3] == b'~' {
-                        let code = match bytes[2] {
-                            b'1' | b'7' => KeyCode::Home, // Home
-                            b'2' => KeyCode::Insert,      // Insert
-                            b'3' => KeyCode::Delete,      // Delete
-                            b'4' | b'8' => KeyCode::End,  // End
-                            b'5' => KeyCode::PageUp,      // Page Up
-                            b'6' => KeyCode::PageDown,    // Page Down
-                            _ => {
-                                // Unknown sequence, discard these bytes
-                                return Ok(Some((None, 4)));
-                            }
-                        };
+                match bytes[2] {
+                    b'A' => {
                         return Ok(Some((
                             Some(TerminalInput::Key(KeyInput {
                                 ctrl: false,
                                 alt: false,
-                                code,
+                                code: KeyCode::Up,
                             })),
-                            4,
+                            3,
+                        )));
+                    }
+                    b'B' => {
+                        return Ok(Some((
+                            Some(TerminalInput::Key(KeyInput {
+                                ctrl: false,
+                                alt: false,
+                                code: KeyCode::Down,
+                            })),
+                            3,
+                        )));
+                    }
+                    b'C' => {
+                        return Ok(Some((
+                            Some(TerminalInput::Key(KeyInput {
+                                ctrl: false,
+                                alt: false,
+                                code: KeyCode::Right,
+                            })),
+                            3,
+                        )));
+                    }
+                    b'D' => {
+                        return Ok(Some((
+                            Some(TerminalInput::Key(KeyInput {
+                                ctrl: false,
+                                alt: false,
+                                code: KeyCode::Left,
+                            })),
+                            3,
                         )));
                     }
 
-                    // Handle modifiers in sequences like ESC [ 1 ; 5 ~
-                    if bytes.len() >= 6 && bytes[3] == b';' && bytes[5] == b'~' {
-                        let code = match bytes[2] {
-                            b'1' | b'7' => KeyCode::Home,
-                            b'2' => KeyCode::Insert,
-                            b'3' => KeyCode::Delete,
-                            b'4' | b'8' => KeyCode::End,
-                            b'5' => KeyCode::PageUp,
-                            b'6' => KeyCode::PageDown,
+                    // Home/End: ESC [ H, ESC [ F
+                    b'H' => {
+                        return Ok(Some((
+                            Some(TerminalInput::Key(KeyInput {
+                                ctrl: false,
+                                alt: false,
+                                code: KeyCode::Home,
+                            })),
+                            3,
+                        )));
+                    }
+                    b'F' => {
+                        return Ok(Some((
+                            Some(TerminalInput::Key(KeyInput {
+                                ctrl: false,
+                                alt: false,
+                                code: KeyCode::End,
+                            })),
+                            3,
+                        )));
+                    }
+
+                    // Shift+Tab: ESC [ Z
+                    b'Z' => {
+                        return Ok(Some((
+                            Some(TerminalInput::Key(KeyInput {
+                                ctrl: false,
+                                alt: false,
+                                code: KeyCode::BackTab,
+                            })),
+                            3,
+                        )));
+                    }
+
+                    // Arrow keys with modifiers: ESC [ 1 ; modifier ch
+                    b'1' if bytes.len() >= 6
+                        && bytes[3] == b';'
+                        && bytes[5] >= b'A'
+                        && bytes[5] <= b'D' =>
+                    {
+                        let modifier = bytes[4] - b'0';
+                        let alt = modifier & 0x2 != 0;
+                        let ctrl = modifier & 0x4 != 0;
+
+                        let code = match bytes[5] {
+                            b'A' => KeyCode::Up,
+                            b'B' => KeyCode::Down,
+                            b'C' => KeyCode::Right,
+                            b'D' => KeyCode::Left,
                             _ => {
                                 // Unknown sequence, discard these bytes
                                 return Ok(Some((None, 6)));
                             }
                         };
-
-                        // Parse modifier
-                        let modifier = bytes[4] - b'0';
-                        let alt = modifier & 0x2 != 0;
-                        let ctrl = modifier & 0x4 != 0;
 
                         return Ok(Some((
                             Some(TerminalInput::Key(KeyInput { ctrl, alt, code })),
@@ -325,35 +275,165 @@ fn parse_input(bytes: &[u8]) -> std::io::Result<Option<(Option<TerminalInput>, u
                         )));
                     }
 
-                    // Not enough bytes yet for the full sequence
-                    if bytes.len() < 6 {
-                        return Ok(None);
-                    }
+                    // Multi-byte sequences for special keys
+                    b'1' | b'2' | b'3' | b'4' | b'5' | b'6' => {
+                        if bytes.len() < 4 {
+                            return Ok(None); // Need more bytes
+                        }
 
-                    // Unknown sequence, discard the bytes we've examined so far
-                    return Ok(Some((None, 3)));
-                }
+                        if bytes[3] == b'~' {
+                            let code = match bytes[2] {
+                                b'1' | b'7' => KeyCode::Home, // Home
+                                b'2' => KeyCode::Insert,      // Insert
+                                b'3' => KeyCode::Delete,      // Delete
+                                b'4' | b'8' => KeyCode::End,  // End
+                                b'5' => KeyCode::PageUp,      // Page Up
+                                b'6' => KeyCode::PageDown,    // Page Down
+                                _ => {
+                                    // Unknown sequence, discard these bytes
+                                    return Ok(Some((None, 4)));
+                                }
+                            };
+                            return Ok(Some((
+                                Some(TerminalInput::Key(KeyInput {
+                                    ctrl: false,
+                                    alt: false,
+                                    code,
+                                })),
+                                4,
+                            )));
+                        }
 
-                // Shift+Tab
-                b'Z' => {
-                    return Ok(Some((
-                        Some(TerminalInput::Key(KeyInput {
-                            ctrl: false,
-                            alt: false,
-                            code: KeyCode::BackTab,
-                        })),
-                        3,
-                    )));
-                }
+                        // Handle modifiers in sequences like ESC [ 1 ; 5 ~
+                        if bytes.len() >= 6 && bytes[3] == b';' && bytes[5] == b'~' {
+                            let code = match bytes[2] {
+                                b'1' | b'7' => KeyCode::Home,
+                                b'2' => KeyCode::Insert,
+                                b'3' => KeyCode::Delete,
+                                b'4' | b'8' => KeyCode::End,
+                                b'5' => KeyCode::PageUp,
+                                b'6' => KeyCode::PageDown,
+                                _ => {
+                                    // Unknown sequence, discard these bytes
+                                    return Ok(Some((None, 6)));
+                                }
+                            };
 
-                _ => {
-                    // Unknown escape sequence, discard the first 3 bytes
-                    if bytes.len() >= 3 {
+                            // Parse modifier
+                            let modifier = bytes[4] - b'0';
+                            let alt = modifier & 0x2 != 0;
+                            let ctrl = modifier & 0x4 != 0;
+
+                            return Ok(Some((
+                                Some(TerminalInput::Key(KeyInput { ctrl, alt, code })),
+                                6,
+                            )));
+                        }
+
+                        // Not enough bytes yet for the full sequence
+                        if bytes.len() < 6 {
+                            return Ok(None);
+                        }
+
+                        // Unknown sequence, discard the bytes we've examined so far
                         return Ok(Some((None, 3)));
                     }
-                    return Ok(None); // Need more bytes
+
+                    _ => {
+                        // Unknown escape sequence, discard the first 3 bytes
+                        if bytes.len() >= 3 {
+                            return Ok(Some((None, 3)));
+                        }
+                        return Ok(None); // Need more bytes
+                    }
                 }
             }
+
+            // ESC O sequences (function keys on some terminals)
+            if bytes[1] == b'O' {
+                // Need at least 3 bytes for these sequences
+                if bytes.len() < 3 {
+                    return Ok(None); // Need more bytes
+                }
+
+                // Some terminals send ESC O A, ESC O B, etc. for arrow keys
+                match bytes[2] {
+                    b'A' => {
+                        return Ok(Some((
+                            Some(TerminalInput::Key(KeyInput {
+                                ctrl: false,
+                                alt: false,
+                                code: KeyCode::Up,
+                            })),
+                            3,
+                        )));
+                    }
+                    b'B' => {
+                        return Ok(Some((
+                            Some(TerminalInput::Key(KeyInput {
+                                ctrl: false,
+                                alt: false,
+                                code: KeyCode::Down,
+                            })),
+                            3,
+                        )));
+                    }
+                    b'C' => {
+                        return Ok(Some((
+                            Some(TerminalInput::Key(KeyInput {
+                                ctrl: false,
+                                alt: false,
+                                code: KeyCode::Right,
+                            })),
+                            3,
+                        )));
+                    }
+                    b'D' => {
+                        return Ok(Some((
+                            Some(TerminalInput::Key(KeyInput {
+                                ctrl: false,
+                                alt: false,
+                                code: KeyCode::Left,
+                            })),
+                            3,
+                        )));
+                    }
+                    b'H' => {
+                        return Ok(Some((
+                            Some(TerminalInput::Key(KeyInput {
+                                ctrl: false,
+                                alt: false,
+                                code: KeyCode::Home,
+                            })),
+                            3,
+                        )));
+                    }
+                    b'F' => {
+                        return Ok(Some((
+                            Some(TerminalInput::Key(KeyInput {
+                                ctrl: false,
+                                alt: false,
+                                code: KeyCode::End,
+                            })),
+                            3,
+                        )));
+                    }
+                    _ => return Ok(Some((None, 3))), // Unknown ESC O sequence
+                }
+            }
+
+            // If we get here, it's either a standalone ESC key or an unknown sequence
+            // Wait at least 50ms before treating it as a standalone ESC
+            // But since we can't do timing here, we'll just interpret it as ESC if
+            // it doesn't match any known start of a sequence
+            return Ok(Some((
+                Some(TerminalInput::Key(KeyInput {
+                    ctrl: false,
+                    alt: false,
+                    code: KeyCode::Escape,
+                })),
+                1,
+            )));
         }
 
         // Backspace
@@ -405,7 +485,4 @@ fn parse_input(bytes: &[u8]) -> std::io::Result<Option<(Option<TerminalInput>, u
             return Ok(Some((None, 1)));
         }
     }
-
-    // If we need more bytes to determine the sequence
-    Ok(None)
 }
