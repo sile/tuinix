@@ -97,6 +97,7 @@ impl std::fmt::Write for TerminalFrame {
                     if self.cursor.row >= self.size.rows {
                         break;
                     }
+                    // TODO(?): Add TerminalStyle::RESET
                     s = &s[1..];
                 }
                 '\x1b' => {
