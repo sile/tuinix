@@ -1,11 +1,11 @@
 use std::{io::ErrorKind, os::fd::RawFd};
 
-pub mod frame;
+mod frame;
 mod geometry;
 pub mod input;
 mod terminal;
 
-pub use frame::TerminalFrame;
+pub use frame::{Rgb, TerminalChar, TerminalFrame, TerminalStyle};
 pub use geometry::{TerminalPosition, TerminalSize};
 pub use terminal::{Terminal, TerminalEvent};
 
