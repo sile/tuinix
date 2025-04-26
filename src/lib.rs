@@ -3,10 +3,12 @@ use std::{io::ErrorKind, os::fd::RawFd};
 mod frame;
 mod geometry;
 pub mod input;
+mod style;
 mod terminal;
 
-pub use frame::{Rgb, TerminalFrame, TerminalStyle};
+pub use frame::TerminalFrame;
 pub use geometry::{TerminalPosition, TerminalSize};
+pub use style::{Rgb, TerminalStyle};
 pub use terminal::{Terminal, TerminalEvent};
 
 /// Sets a file descriptor to non-blocking mode.

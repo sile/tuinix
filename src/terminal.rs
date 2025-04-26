@@ -8,8 +8,7 @@ use std::{
 };
 
 use crate::{
-    TerminalPosition, TerminalSize,
-    frame::{TerminalFrame, TerminalStyle},
+    TerminalFrame, TerminalPosition, TerminalSize, TerminalStyle,
     input::{InputReader, TerminalInput},
 };
 
@@ -359,7 +358,7 @@ impl Terminal {
     ///
     /// ```no_run
     /// use std::fmt::Write;
-    /// use tuinix::{Terminal, TerminalPosition, frame::TerminalFrame};
+    /// use tuinix::{Terminal, TerminalPosition, TerminalFrame};
     ///
     /// let mut terminal = Terminal::new()?;
     /// let mut frame = TerminalFrame::new(terminal.size());
