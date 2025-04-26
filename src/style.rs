@@ -167,10 +167,38 @@ impl TerminalStyle {
         self
     }
 
+    /// Applies this style to the provided text.
+    ///
+    /// This method wraps the provided text with the current style and a reset sequence,
+    /// returning a formatted string that will display with the specified styling in
+    /// compatible terminals.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use tuinix::{Rgb, TerminalStyle};
+    ///
+    /// // Apply style to text
+    /// let styled_text = TerminalStyle::new()
+    ///     .bold()
+    ///     .fg_color(Rgb::BLUE)
+    ///     .apply("Important message");
+    ///
+    /// // The result contains ANSI escape sequences that will display
+    /// // "Important message" in bold blue text in the terminal
+    /// ```
+    ///
+    /// This is equivalent to using the format macro with explicit style and reset:
+    /// ```
+    /// # use tuinix::{Rgb, TerminalStyle};
+    /// let style = TerminalStyle::new().bold().fg_color(Rgb::BLUE);
+    /// let styled_text = format!("{}{}{}", style, "Important message", TerminalStyle::RESET);
+    /// ```
     pub fn apply<T: Display>(self, text: T) -> String {
         format!("{}{}{}", self, text, Self::RESET)
     }
 
+    /// Similar to [`TerminalStyle::apply()`], but formats the given text using the [`Debug`] trait representation.
     pub fn apply_debug<T: Debug>(self, text: T) -> String {
         format!("{}{:?}{}", self, text, Self::RESET)
     }
