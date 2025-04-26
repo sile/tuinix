@@ -1,15 +1,81 @@
 use std::fmt::{Debug, Display};
 
+/// Styling options for terminal text output.
+///
+/// [`TerminalStyle`] allows you to modify the appearance of text in terminal output
+/// using ANSI escape sequences. It supports standard terminal formatting options
+/// including bold, italic, underline, colors, and more.
+///
+/// # Examples
+///
+/// ```
+/// use tuinix::{Rgb, TerminalStyle};
+///
+/// // Create styled text
+/// let styled = TerminalStyle::new()
+///     .bold()
+///     .fg_color(Rgb::RED)
+///     .apply("This is bold red text");
+///
+/// // Apply multiple styles
+/// let complex = TerminalStyle::new()
+///     .underline()
+///     .italic()
+///     .bg_color(Rgb::BLUE)
+///     .apply("Underlined italic text with blue background");
+/// ```
+///
+/// The styling is applied by wrapping the text with the appropriate ANSI escape
+/// sequences. All styles are automatically reset at the end of the text.
+///
+/// You can also format styled text directly using the `Display` trait:
+///
+/// ```
+/// use tuinix::{Rgb, TerminalStyle};
+///
+/// // Format styled text directly with format!
+/// let style = TerminalStyle::new().bold().fg_color(Rgb::GREEN);
+/// let formatted = format!("{}{}{}", style, "Direct formatting", TerminalStyle::RESET);
+///
+/// // This approach gives more flexibility for complex formatting
+/// let warning_style = TerminalStyle::new().bold().fg_color(Rgb::YELLOW);
+/// let error_style = TerminalStyle::new().bold().fg_color(Rgb::RED);
+///
+/// let message = format!(
+///     "{}WARNING:{} This operation {}might be dangerous{}!",
+///     warning_style,
+///     TerminalStyle::RESET,
+///     error_style,
+///     TerminalStyle::RESET
+/// );
+/// ```
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TerminalStyle {
+    /// Whether the text should be displayed in bold.
     pub bold: bool,
+
+    /// Whether the text should be displayed in italic.
     pub italic: bool,
+
+    /// Whether the text should be underlined.
     pub underline: bool,
+
+    /// Whether the text should blink.
     pub blink: bool,
+
+    /// Whether the foreground and background colors should be swapped.
     pub reverse: bool,
+
+    /// Whether the text should be displayed with reduced intensity.
     pub dim: bool,
+
+    /// Whether the text should have a line through it.
     pub strikethrough: bool,
+
+    /// The foreground (text) color, if specified.
     pub fg_color: Option<Rgb>,
+
+    /// The background color, if specified.
     pub bg_color: Option<Rgb>,
 }
 
