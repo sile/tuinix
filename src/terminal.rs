@@ -137,6 +137,7 @@ pub struct Terminal {
     original_termios: libc::termios,
     size: TerminalSize,
     last_frame: TerminalFrame,
+    cursor: Option<TerminalPosition>,
 }
 
 impl Terminal {
@@ -189,6 +190,7 @@ impl Terminal {
             original_termios,
             size: TerminalSize::default(),
             last_frame: TerminalFrame::default(),
+            cursor: None,
         };
         this.update_size()?;
         this.enable_raw_mode()?;
@@ -345,6 +347,33 @@ impl Terminal {
         Ok(self.size)
     }
 
+    /// Sets the cursor position to be displayed after drawing a frame.
+    ///
+    /// This method allows controlling where the cursor appears on the terminal after
+    /// calling [`Terminal::draw()`]. Setting a position makes the cursor visible at
+    /// that location, while passing `None` hides the cursor.
+    ///
+    /// The cursor position is only applied after drawing a frame, so it won't take
+    /// effect until the next call to [`Terminal::draw()`].
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use tuinix::{Terminal, TerminalPosition};
+    ///
+    /// let mut terminal = Terminal::new()?;
+    ///
+    /// // Show cursor at row 5, column 10
+    /// terminal.set_cursor(Some(TerminalPosition::row_col(5, 10)));
+    ///
+    /// // Hide cursor
+    /// terminal.set_cursor(None);
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
+    pub fn set_cursor(&mut self, position: Option<TerminalPosition>) {
+        self.cursor = position;
+    }
+
     /// Draws a frame to the terminal screen.
     ///
     /// This method efficiently renders a terminal frame by:
@@ -367,17 +396,15 @@ impl Terminal {
     /// frame.set_cursor(TerminalPosition::row_col(1, 0));
     /// write!(frame, "Hello, terminal world!")?;
     ///
-    /// // Make the cursor visible at the current position
-    /// frame.set_show_cursor(true);
+    /// // Display the cursor at the beginning of the next line
+    /// terminal.set_cursor(Some(TerminalPosition::row(2)));
     ///
     /// // Render the frame to the terminal
     /// terminal.draw(frame)?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn draw(&mut self, frame: TerminalFrame) -> std::io::Result<()> {
-        if self.last_frame.show_cursor() {
-            self.hide_cursor()?;
-        }
+        self.hide_cursor()?;
 
         if self.last_frame.size() != frame.size() {
             self.clear_all()?;
@@ -414,8 +441,8 @@ impl Terminal {
             }
         }
 
-        if frame.show_cursor() {
-            self.move_cursor(frame.cursor())?;
+        if let Some(position) = self.cursor {
+            self.move_cursor(position)?;
             self.show_cursor()?;
         }
 
