@@ -346,6 +346,35 @@ impl Terminal {
         Ok(self.size)
     }
 
+    /// Draws a frame to the terminal screen.
+    ///
+    /// This method efficiently renders a terminal frame by:
+    /// - Only redrawing lines that differ from the previous frame
+    /// - Managing cursor visibility based on frame settings
+    ///
+    /// The frame is saved internally, allowing subsequent calls to only update
+    /// changed portions of the screen for better performance.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::fmt::Write;
+    /// use tuinix::{Terminal, TerminalPosition, frame::TerminalFrame};
+    ///
+    /// let mut terminal = Terminal::new()?;
+    /// let mut frame = TerminalFrame::new(terminal.size());
+    ///
+    /// // Position the cursor and write some text
+    /// frame.set_cursor(TerminalPosition::row_col(1, 0));
+    /// write!(frame, "Hello, terminal world!")?;
+    ///
+    /// // Make the cursor visible at the current position
+    /// frame.set_show_cursor(true);
+    ///
+    /// // Render the frame to the terminal
+    /// terminal.draw(frame)?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn draw(&mut self, frame: TerminalFrame) -> std::io::Result<()> {
         if self.last_frame.show_cursor() {
             self.hide_cursor()?;
