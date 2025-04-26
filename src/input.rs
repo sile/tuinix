@@ -1,34 +1,59 @@
 use std::io::Read;
 
+/// User input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum TerminalInput {
+    /// Keyboard input.
     Key(KeyInput),
 }
 
+/// Keyboard input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct KeyInput {
+    /// Indicates whether the Ctrl modifier key was pressed during the input.
     pub ctrl: bool,
+
+    /// Indicates whether the Alt modifier key was pressed during the input.
     pub alt: bool,
+
+    /// Key code representing which key was pressed.
     pub code: KeyCode,
 }
 
+/// Key code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum KeyCode {
+    /// Enter key.
     Enter,
+    /// Escape key.
     Escape,
+    /// Backspace key.
     Backspace,
+    /// Tab key.
     Tab,
+    /// BackTab key.
     BackTab,
+    /// Delete key.
     Delete,
+    /// Insert key.
     Insert,
+    /// Up arrow key.
     Up,
+    /// Down arrow key.
     Down,
+    /// Left arrow key.
     Left,
+    /// Right arrow key.
     Right,
+    /// Home key.
     Home,
+    /// End key.
     End,
+    /// Page Up key.
     PageUp,
+    /// Page Down key.
     PageDown,
+    /// Character key.
     Char(char),
 }
 
