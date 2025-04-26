@@ -405,8 +405,8 @@ impl Terminal {
         self.hide_cursor()?;
 
         if self.last_frame.size() != frame.size() {
-            self.clear_all()?;
-            self.last_frame = TerminalFrame::new(self.size());
+            write!(self.output, "\x1b[2J")?; // Clear screen
+            self.last_frame = TerminalFrame::new(frame.size());
         }
 
         let move_cursor = |output: &mut BufWriter<_>, position: TerminalPosition| {
@@ -414,9 +414,9 @@ impl Terminal {
         };
 
         for (row, (line, old_line)) in frame.lines().zip(self.last_frame.lines()).enumerate() {
-            if line == old_line {
-                continue;
-            }
+            // if line == old_line {
+            //     continue;
+            // }
 
             move_cursor(&mut self.output, TerminalPosition::row(row))?;
             writeln!(self.output, "\x1b[K{}", line.1)?;
@@ -452,10 +452,6 @@ impl Terminal {
         self.size.cols = winsize.ws_col as usize;
 
         Ok(())
-    }
-
-    fn clear_all(&mut self) -> std::io::Result<()> {
-        write!(self.output, "\x1b[2J")
     }
 
     fn enable_alternate_screen(&mut self) -> std::io::Result<()> {

@@ -26,28 +26,6 @@ impl TerminalFrame {
     }
 
     // TODO: merge or draw_frame
-
-    // fn push_char(&mut self, mut c: char) {
-    //     if self.cursor.col >= self.size.cols {
-    //         return;
-    //     }
-
-    //     let width = if let Some(width) = c.width() {
-    //         width
-    //     } else {
-    //         // control char - use replacement character (tofu)
-    //         c = '�';
-    //         1
-    //     };
-
-    //     let c = TerminalChar {
-    //         value: c,
-    //         width,
-    //         style: self.current_style,
-    //     };
-    //     self.chars.insert(self.cursor, c);
-    //     self.cursor.col += width;
-    // }
 }
 
 impl std::fmt::Write for TerminalFrame {
@@ -64,6 +42,8 @@ impl std::fmt::Write for TerminalFrame {
                     return Ok(());
                 }
             }
+
+            // TODO: consider cols
 
             self.data.push(c);
         }

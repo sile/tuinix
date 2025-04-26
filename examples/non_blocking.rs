@@ -75,7 +75,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                         writeln!(frame)?;
                         writeln!(frame, "  Received input: {:?}", input)?;
-                        writeln!(frame, "  Received input: {:?}", input)?;
 
                         // Quit when 'q' is pressed
                         if let TerminalInput::Key(KeyInput {
