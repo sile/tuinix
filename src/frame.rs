@@ -56,33 +56,25 @@ impl TerminalFrame {
 }
 
 impl std::fmt::Write for TerminalFrame {
-    fn write_str(&mut self, mut s: &str) -> std::fmt::Result {
-        // if self.cursor.row >= self.size.rows {
-        //     return Ok(());
-        // }
+    fn write_str(&mut self, s: &str) -> std::fmt::Result {
+        if self.tail.row >= self.size.rows {
+            return Ok(());
+        }
 
-        // while let Some(c) = s.chars().next() {
-        //     match c {
-        //         '\n' => {
-        //             self.cursor.row += 1;
-        //             self.cursor.col = 0;
-        //             if self.cursor.row >= self.size.rows {
-        //                 break;
-        //             }
-        //             // TODO(?): Add TerminalStyle::RESET
-        //             s = &s[1..];
-        //         }
-        //         '\x1b' => {
-        //             //s = self.current_style.update(&s[1..]);
-        //             todo!()
-        //         }
-        //         _ => {
-        //             self.push_char(c);
-        //             s = &s[c.len_utf8()..];
-        //         }
-        //     }
-        // }
-        // Ok(())
-        todo!()
+        for c in s.chars() {
+            if c == '\n' {
+                // TODO: padding if need
+
+                self.tail.row += 1;
+                self.tail.col = 0;
+                if self.tail.row >= self.size.rows {
+                    return Ok(());
+                }
+            }
+
+            self.data.push(c);
+        }
+
+        Ok(())
     }
 }
