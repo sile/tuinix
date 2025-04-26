@@ -1,4 +1,4 @@
-use crate::{TerminalPosition, TerminalSize, TerminalStyle};
+use crate::{TerminalPosition, TerminalSize};
 
 #[derive(Debug, Default, Clone)]
 pub struct TerminalFrame {
@@ -20,9 +20,11 @@ impl TerminalFrame {
         self.size
     }
 
-    pub(crate) fn lines(&self) -> impl '_ + Iterator<Item = (TerminalStyle, &str)> {
-        // TDOO: style
-        self.data.lines().map(|line| (TerminalStyle::new(), line))
+    pub(crate) fn lines(&self) -> impl '_ + Iterator<Item = &str> {
+        self.data
+            .lines()
+            .chain(std::iter::repeat(""))
+            .take(self.size.rows)
     }
 
     // TODO: merge or draw_frame

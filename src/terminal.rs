@@ -414,12 +414,12 @@ impl Terminal {
         };
 
         for (row, (line, old_line)) in frame.lines().zip(self.last_frame.lines()).enumerate() {
-            // if line == old_line {
-            //     continue;
-            // }
+            if line == old_line {
+                continue;
+            }
 
             move_cursor(&mut self.output, TerminalPosition::row(row))?;
-            write!(self.output, "\x1b[K{}", line.1)?;
+            write!(self.output, "\x1b[K{}", line)?;
         }
 
         if let Some(position) = self.cursor {
