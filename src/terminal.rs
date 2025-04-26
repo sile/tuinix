@@ -419,7 +419,7 @@ impl Terminal {
             // }
 
             move_cursor(&mut self.output, TerminalPosition::row(row))?;
-            writeln!(self.output, "\x1b[K{}", line.1)?;
+            write!(self.output, "\x1b[K{}", line.1)?;
         }
 
         if let Some(position) = self.cursor {
