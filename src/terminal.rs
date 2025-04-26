@@ -8,7 +8,7 @@ use std::{
 };
 
 use crate::{
-    TerminalFrame, TerminalPosition, TerminalSize, TerminalStyle,
+    TerminalFrame, TerminalPosition, TerminalSize,
     input::{InputReader, TerminalInput},
 };
 
@@ -376,9 +376,8 @@ impl Terminal {
 
     /// Draws a frame to the terminal screen.
     ///
-    /// This method efficiently renders a terminal frame by:
-    /// - Only redrawing lines that differ from the previous frame
-    /// - Managing cursor visibility based on frame settings
+    /// This method efficiently renders a terminal frame by
+    /// only redrawing lines that differ from the previous frame.
     ///
     /// The frame is saved internally, allowing subsequent calls to only update
     /// changed portions of the screen for better performance.
@@ -412,33 +411,14 @@ impl Terminal {
         }
 
         for row in 0..self.size.rows {
-            if frame.get_line(row).eq(self.last_frame.get_line(row)) {
+            if frame.get_line(row) == self.last_frame.get_line(row) {
                 continue;
             }
 
             self.move_cursor(TerminalPosition::row(row))?;
             self.clear_line()?;
-
-            let mut last_style = TerminalStyle::RESET;
-            let mut next_col = 0;
-            for (TerminalPosition { col, .. }, ch) in frame.get_line(row) {
-                if last_style != ch.style {
-                    write!(self.output, "{}{}", TerminalStyle::RESET, ch.style)?;
-                    last_style = ch.style;
-                }
-
-                write!(
-                    self.output,
-                    "{:spaces$}{}",
-                    "",
-                    ch.value,
-                    spaces = col - next_col
-                )?;
-                next_col = col + ch.width;
-            }
-            if last_style != TerminalStyle::RESET {
-                write!(self.output, "{}", TerminalStyle::RESET)?;
-            }
+            let (_, line) = frame.get_line(row);
+            writeln!(self.output, "{}", line)?;
         }
 
         if let Some(position) = self.cursor {
