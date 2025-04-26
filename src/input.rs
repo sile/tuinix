@@ -426,26 +426,26 @@ fn parse_input(bytes: &[u8]) -> std::io::Result<Option<(Option<TerminalInput>, u
             // Wait at least 50ms before treating it as a standalone ESC
             // But since we can't do timing here, we'll just interpret it as ESC if
             // it doesn't match any known start of a sequence
-            return Ok(Some((
+            Ok(Some((
                 Some(TerminalInput::Key(KeyInput {
                     ctrl: false,
                     alt: false,
                     code: KeyCode::Escape,
                 })),
                 1,
-            )));
+            )))
         }
 
         // Backspace
         0x7F => {
-            return Ok(Some((
+            Ok(Some((
                 Some(TerminalInput::Key(KeyInput {
                     ctrl: false,
                     alt: false,
                     code: KeyCode::Backspace,
                 })),
                 1,
-            )));
+            )))
         }
 
         // Handle UTF-8 characters
@@ -477,12 +477,12 @@ fn parse_input(bytes: &[u8]) -> std::io::Result<Option<(Option<TerminalInput>, u
             }
 
             // Invalid UTF-8 sequence, discard the first byte
-            return Ok(Some((None, 1)));
+            Ok(Some((None, 1)))
         }
 
         _ => {
             // Unknown byte, discard it
-            return Ok(Some((None, 1)));
+            Ok(Some((None, 1)))
         }
     }
 }
