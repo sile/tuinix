@@ -1,12 +1,11 @@
 use std::fmt::Write;
 
-use tuinix::{Terminal, TerminalFrame, TerminalPosition, TerminalStyle};
+use tuinix::{Terminal, TerminalFrame, TerminalStyle};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut terminal = Terminal::new()?;
 
     let mut frame = TerminalFrame::new(terminal.size());
-    frame.set_cursor(TerminalPosition::row_col(2, 2));
     write!(frame, "Hello World: {:?}", terminal.size())?;
     terminal.draw(frame)?;
 
@@ -14,7 +13,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let event = terminal.poll_event(Some(std::time::Duration::from_millis(1000)))?;
         if let Some(event) = event {
             let mut frame = TerminalFrame::new(terminal.size());
-            frame.set_cursor(TerminalPosition::row_col(2, 2));
             write!(
                 frame,
                 "{}Hello World:{} {:?}",

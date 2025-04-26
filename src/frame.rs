@@ -21,13 +21,8 @@ impl TerminalFrame {
     }
 
     pub(crate) fn lines(&self) -> impl '_ + Iterator<Item = (TerminalStyle, &str)> {
-        // let start = TerminalPosition { row, col: 0 };
-        // let end = TerminalPosition {
-        //     row: row + 1,
-        //     col: 0,
-        // };
-        // self.chars.range(start..end).map(|(p, c)| (*p, *c))
-        std::iter::empty()
+        // TDOO: style
+        self.data.lines().map(|line| (TerminalStyle::new(), line))
     }
 
     // TODO: merge or draw_frame
@@ -63,8 +58,6 @@ impl std::fmt::Write for TerminalFrame {
 
         for c in s.chars() {
             if c == '\n' {
-                // TODO: padding if need
-
                 self.tail.row += 1;
                 self.tail.col = 0;
                 if self.tail.row >= self.size.rows {

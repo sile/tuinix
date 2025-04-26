@@ -391,12 +391,11 @@ impl Terminal {
     /// let mut terminal = Terminal::new()?;
     /// let mut frame = TerminalFrame::new(terminal.size());
     ///
-    /// // Position the cursor and write some text
-    /// frame.set_cursor(TerminalPosition::row_col(1, 0));
-    /// write!(frame, "Hello, terminal world!")?;
+    /// // Write some text
+    /// writeln!(frame, "Hello, terminal world!")?;
     ///
     /// // Display the cursor at the beginning of the next line
-    /// terminal.set_cursor(Some(TerminalPosition::row(2)));
+    /// terminal.set_cursor(Some(TerminalPosition::row(1)));
     ///
     /// // Render the frame to the terminal
     /// terminal.draw(frame)?;
@@ -420,7 +419,7 @@ impl Terminal {
             }
 
             move_cursor(&mut self.output, TerminalPosition::row(row))?;
-            writeln!(self.output, "{}", line.1)?;
+            writeln!(self.output, "\x1b[K{}", line.1)?;
         }
 
         if let Some(position) = self.cursor {

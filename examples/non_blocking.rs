@@ -2,8 +2,8 @@ use mio::{Events, Interest, Poll, Token};
 use std::fmt::Write;
 use std::time::Duration;
 use tuinix::{
-    KeyCode, KeyInput, Terminal, TerminalFrame, TerminalInput, TerminalPosition, set_nonblocking,
-    try_nonblocking, try_uninterrupted,
+    KeyCode, KeyInput, Terminal, TerminalFrame, TerminalInput, set_nonblocking, try_nonblocking,
+    try_uninterrupted,
 };
 
 const STDIN: Token = Token(0);
@@ -15,14 +15,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Set up initial display
     let mut frame = TerminalFrame::new(terminal.size());
-    frame.set_cursor(TerminalPosition::row_col(2, 2));
-    write!(frame, "Non-blocking Terminal Example (press 'q' to quit)")?;
+    writeln!(frame)?;
+    writeln!(frame, "  Non-blocking Terminal Example (press 'q' to quit)")?;
 
-    frame.set_cursor(TerminalPosition::row_col(4, 2));
-    write!(frame, "Terminal size: {:?}", terminal.size())?;
+    writeln!(frame)?;
+    writeln!(frame, "  Terminal size: {:?}", terminal.size())?;
 
-    frame.set_cursor(TerminalPosition::row_col(6, 2));
-    write!(frame, "Waiting for input events...")?;
+    writeln!(frame)?;
+    writeln!(frame, "  Waiting for input events...")?;
 
     terminal.draw(frame)?;
 
@@ -67,14 +67,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                         let mut frame = TerminalFrame::new(terminal.size());
 
-                        frame.set_cursor(TerminalPosition::row_col(2, 2));
-                        write!(frame, "Non-blocking Terminal Example (press 'q' to quit)")?;
+                        writeln!(frame)?;
+                        writeln!(frame, "  Non-blocking Terminal Example (press 'q' to quit)")?;
 
-                        frame.set_cursor(TerminalPosition::row_col(4, 2));
-                        write!(frame, "Terminal size: {:?}", terminal.size())?;
+                        writeln!(frame)?;
+                        writeln!(frame, "  Terminal size: {:?}", terminal.size())?;
 
-                        frame.set_cursor(TerminalPosition::row_col(6, 2));
-                        write!(frame, "Received input: {:?}", input)?;
+                        writeln!(frame)?;
+                        writeln!(frame, "  Received input: {:?}", input)?;
+                        writeln!(frame, "  Received input: {:?}", input)?;
 
                         // Quit when 'q' is pressed
                         if let TerminalInput::Key(KeyInput {
@@ -93,14 +94,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     while let Some(size) = try_nonblocking(terminal.wait_for_resize())? {
                         let mut frame = TerminalFrame::new(size);
 
-                        frame.set_cursor(TerminalPosition::row_col(2, 2));
-                        write!(frame, "Non-blocking Terminal Example (press 'q' to quit)")?;
+                        writeln!(frame)?;
+                        writeln!(frame, "  Non-blocking Terminal Example (press 'q' to quit)")?;
 
-                        frame.set_cursor(TerminalPosition::row_col(4, 2));
-                        write!(frame, "Terminal size: {:?} (resized)", size)?;
+                        writeln!(frame)?;
+                        writeln!(frame, "  Terminal size: {:?} (resized)", size)?;
 
-                        frame.set_cursor(TerminalPosition::row_col(6, 2));
-                        write!(frame, "Waiting for input events...")?;
+                        writeln!(frame)?;
+                        writeln!(frame, "  Waiting for input events...")?;
 
                         terminal.draw(frame)?;
                     }
@@ -113,14 +114,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if events.is_empty() {
             let mut frame = TerminalFrame::new(terminal.size());
 
-            frame.set_cursor(TerminalPosition::row_col(2, 2));
-            write!(frame, "Non-blocking Terminal Example (press 'q' to quit)")?;
+            writeln!(frame)?;
+            writeln!(frame, "  Non-blocking Terminal Example (press 'q' to quit)")?;
 
-            frame.set_cursor(TerminalPosition::row_col(4, 2));
-            write!(frame, "Terminal size: {:?}", terminal.size())?;
+            writeln!(frame)?;
+            writeln!(frame, "  Terminal size: {:?}", terminal.size())?;
 
-            frame.set_cursor(TerminalPosition::row_col(6, 2));
-            write!(frame, "Tick... (waiting for events)")?;
+            writeln!(frame)?;
+            writeln!(frame, "  Tick... (waiting for events)")?;
 
             terminal.draw(frame)?;
         }
