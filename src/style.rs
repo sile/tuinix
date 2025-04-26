@@ -80,6 +80,8 @@ pub struct TerminalStyle {
 }
 
 impl TerminalStyle {
+    /// An alias of [`TerminalStyle::new()`] that
+    /// can be used to reset all terminal styling.
     pub const RESET: Self = Self {
         bold: false,
         italic: false,
@@ -92,50 +94,74 @@ impl TerminalStyle {
         bg_color: None,
     };
 
+    /// Makes a new terminal style with all formatting options disabled.
+    ///
+    /// This returns a style instance equivalent to [`TerminalStyle::RESET`],
+    /// which can be used as a starting point to build more complex styles
+    /// through the builder methods.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use tuinix::{Rgb, TerminalStyle};
+    ///
+    /// let style = TerminalStyle::new()
+    ///     .bold()
+    ///     .fg_color(Rgb::GREEN);
+    /// ```
     pub const fn new() -> Self {
         Self::RESET
     }
 
+    /// Sets the text to be displayed in bold style.
     pub const fn bold(mut self) -> Self {
         self.bold = true;
         self
     }
 
+    /// Sets the text to be displayed in italic style.
     pub const fn italic(mut self) -> Self {
         self.italic = true;
         self
     }
 
+    /// Sets the text to be underlined.
     pub const fn underline(mut self) -> Self {
         self.underline = true;
         self
     }
 
+    /// Sets the text to blink.
     pub const fn blink(mut self) -> Self {
         self.blink = true;
         self
     }
 
+    /// Swaps foreground and background colors of the text.
     pub const fn reverse(mut self) -> Self {
         self.reverse = true;
         self
     }
 
+    /// Sets the text to be displayed with reduced intensity.
     pub const fn dim(mut self) -> Self {
         self.dim = true;
         self
     }
 
+    /// Sets the text to have a line through it.
     pub const fn strikethrough(mut self) -> Self {
         self.strikethrough = true;
         self
     }
 
+    /// Sets the foreground (text) color.
     pub const fn fg_color(mut self, color: Rgb) -> Self {
         self.fg_color = Some(color);
         self
     }
 
+    /// Sets the background color behind the text.
     pub const fn bg_color(mut self, color: Rgb) -> Self {
         self.bg_color = Some(color);
         self
