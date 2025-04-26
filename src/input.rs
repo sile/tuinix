@@ -180,6 +180,35 @@ fn parse_input(bytes: &[u8]) -> std::io::Result<Option<(Option<TerminalInput>, u
 
         // Escape sequences starting with ESC [
         0x1b if bytes.len() >= 3 && bytes[1] == b'[' => {
+            // Try to find escape sequences for arrow keys with modifiers
+            if bytes.len() >= 6
+                && bytes[2] == b'1'
+                && bytes[3] == b';'
+                && bytes[5] >= b'A'
+                && bytes[5] <= b'D'
+            {
+                let modifier = bytes[4] - b'0';
+                let alt = modifier & 0x2 != 0;
+                let ctrl = modifier & 0x4 != 0;
+
+                let code = match bytes[5] {
+                    b'A' => KeyCode::Up,
+                    b'B' => KeyCode::Down,
+                    b'C' => KeyCode::Right,
+                    b'D' => KeyCode::Left,
+                    _ => {
+                        // Unknown sequence, discard these bytes
+                        return Ok(Some((None, 6)));
+                    }
+                };
+
+                return Ok(Some((
+                    Some(TerminalInput::Key(KeyInput { ctrl, alt, code })),
+                    6,
+                )));
+            }
+
+            // Then handle the other cases
             match bytes[2] {
                 // Arrow keys: ESC [ A, ESC [ B, ESC [ C, ESC [ D
                 b'A' => {
@@ -324,39 +353,6 @@ fn parse_input(bytes: &[u8]) -> std::io::Result<Option<(Option<TerminalInput>, u
                     }
                     return Ok(None); // Need more bytes
                 }
-            }
-
-            // Try to find escape sequences for arrow keys with modifiers
-            if bytes.len() >= 6
-                && bytes[2] == b'1'
-                && bytes[3] == b';'
-                && bytes[5] >= b'A'
-                && bytes[5] <= b'D'
-            {
-                let modifier = bytes[4] - b'0';
-                let alt = modifier & 0x2 != 0;
-                let ctrl = modifier & 0x4 != 0;
-
-                let code = match bytes[5] {
-                    b'A' => KeyCode::Up,
-                    b'B' => KeyCode::Down,
-                    b'C' => KeyCode::Right,
-                    b'D' => KeyCode::Left,
-                    _ => {
-                        // Unknown sequence, discard these bytes
-                        return Ok(Some((None, 6)));
-                    }
-                };
-
-                return Ok(Some((
-                    Some(TerminalInput::Key(KeyInput { ctrl, alt, code })),
-                    6,
-                )));
-            }
-
-            // If we reached here but there are enough bytes, it's an unknown sequence
-            if bytes.len() >= 3 {
-                return Ok(Some((None, 3)));
             }
         }
 
