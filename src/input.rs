@@ -437,16 +437,14 @@ fn parse_input(bytes: &[u8]) -> std::io::Result<Option<(Option<TerminalInput>, u
         }
 
         // Backspace
-        0x7F => {
-            Ok(Some((
-                Some(TerminalInput::Key(KeyInput {
-                    ctrl: false,
-                    alt: false,
-                    code: KeyCode::Backspace,
-                })),
-                1,
-            )))
-        }
+        0x7F => Ok(Some((
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: false,
+                code: KeyCode::Backspace,
+            })),
+            1,
+        ))),
 
         // Handle UTF-8 characters
         _ if bytes[0] >= 0x80 => {
