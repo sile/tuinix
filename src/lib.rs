@@ -2,12 +2,13 @@ use std::{io::ErrorKind, os::fd::RawFd};
 
 mod frame;
 mod geometry;
-pub mod input;
+mod input;
 mod style;
 mod terminal;
 
 pub use frame::TerminalFrame;
 pub use geometry::{TerminalPosition, TerminalSize};
+pub use input::{KeyCode, KeyInput, TerminalInput};
 pub use style::{Rgb, TerminalStyle};
 pub use terminal::{Terminal, TerminalEvent};
 

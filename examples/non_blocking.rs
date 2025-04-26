@@ -2,9 +2,8 @@ use mio::{Events, Interest, Poll, Token};
 use std::fmt::Write;
 use std::time::Duration;
 use tuinix::{
-    Terminal, TerminalFrame, TerminalPosition,
-    input::{KeyCode, KeyInput, TerminalInput},
-    set_nonblocking, try_nonblocking, try_uninterrupted,
+    KeyCode, KeyInput, Terminal, TerminalFrame, TerminalInput, TerminalPosition, set_nonblocking,
+    try_nonblocking, try_uninterrupted,
 };
 
 const STDIN: Token = Token(0);
