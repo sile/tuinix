@@ -202,57 +202,6 @@ impl TerminalStyle {
     pub fn apply_debug<T: Debug>(self, text: T) -> String {
         format!("{}{:?}{}", self, text, Self::RESET)
     }
-
-    pub(crate) fn update<'a>(&mut self, s: &'a str) -> &'a str {
-        let s = s
-            .strip_prefix('[')
-            .expect("Expected '[' after escape character '\\x1b' for valid ANSI escape sequence");
-        let (s, remaining) = s
-            .split_once('m')
-            .expect("Expected 'm' terminator for ANSI escape sequence");
-        match s {
-            "0" => *self = TerminalStyle::default(),
-            "1" => self.bold = true,
-            "2" => self.dim = true,
-            "3" => self.italic = true,
-            "4" => self.underline = true,
-            "5" => self.blink = true,
-            "7" => self.reverse = true,
-            "9" => self.strikethrough = true,
-            _ => {
-                let (fg, s) = if let Some(s) = s.strip_prefix("38;2;") {
-                    (true, s)
-                } else if let Some(s) = s.strip_prefix("48;2;") {
-                    (false, s)
-                } else {
-                    panic!(
-                        "Unsupported ANSI color format - expected 38;2; (foreground) or 48;2; (background) TrueColor sequence"
-                    );
-                };
-
-                let (r, s) = s.split_once(';').expect(
-                    "Invalid RGB format in ANSI color - expected ';' separator after red component",
-                );
-                let (g, b) = s.split_once(';').expect("Invalid RGB format in ANSI color - expected ';' separator after green component");
-                let r = r
-                    .parse()
-                    .expect("Invalid red color value in ANSI RGB sequence - expected u8 value");
-                let g = g
-                    .parse()
-                    .expect("Invalid green color value in ANSI RGB sequence - expected u8 value");
-                let b = b
-                    .parse()
-                    .expect("Invalid blue color value in ANSI RGB sequence - expected u8 value");
-                if fg {
-                    self.fg_color = Some(Rgb { r, g, b });
-                } else {
-                    self.bg_color = Some(Rgb { r, g, b });
-                }
-            }
-        }
-
-        remaining
-    }
 }
 
 impl Display for TerminalStyle {

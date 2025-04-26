@@ -37,6 +37,7 @@ impl TerminalFrame {
         self.cursor
     }
 
+    // TODO: move to Terminal?
     pub fn set_show_cursor(&mut self, b: bool) {
         self.show_cursor = b;
     }
@@ -101,7 +102,8 @@ impl std::fmt::Write for TerminalFrame {
                     s = &s[1..];
                 }
                 '\x1b' => {
-                    s = self.current_style.update(&s[1..]);
+                    //s = self.current_style.update(&s[1..]);
+                    todo!()
                 }
                 _ => {
                     self.push_char(c);
