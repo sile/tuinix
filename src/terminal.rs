@@ -407,22 +407,24 @@ impl Terminal {
 
         if self.last_frame.size() != frame.size() {
             self.clear_all()?;
-            self.last_frame = TerminalFrame::default();
+            self.last_frame = TerminalFrame::new(self.size());
         }
 
-        for row in 0..self.size.rows {
-            if frame.get_line(row) == self.last_frame.get_line(row) {
+        let move_cursor = |output: &mut BufWriter<_>, position: TerminalPosition| {
+            write!(output, "\x1b[{};{}H", position.row + 1, position.col + 1)
+        };
+
+        for (row, (line, old_line)) in frame.lines().zip(self.last_frame.lines()).enumerate() {
+            if line == old_line {
                 continue;
             }
 
-            self.move_cursor(TerminalPosition::row(row))?;
-            self.clear_line()?;
-            let (_, line) = frame.get_line(row);
-            writeln!(self.output, "{}", line)?;
+            move_cursor(&mut self.output, TerminalPosition::row(row))?;
+            writeln!(self.output, "{}", line.1)?;
         }
 
         if let Some(position) = self.cursor {
-            self.move_cursor(position)?;
+            move_cursor(&mut self.output, position)?;
             self.show_cursor()?;
         }
 
@@ -440,15 +442,6 @@ impl Terminal {
         write!(self.output, "\x1b[?25h")
     }
 
-    fn move_cursor(&mut self, position: TerminalPosition) -> std::io::Result<()> {
-        write!(
-            self.output,
-            "\x1b[{};{}H",
-            position.row + 1,
-            position.col + 1
-        )
-    }
-
     fn update_size(&mut self) -> std::io::Result<()> {
         let mut winsize = MaybeUninit::<libc::winsize>::zeroed();
         check_libc_result(unsafe {
@@ -464,10 +457,6 @@ impl Terminal {
 
     fn clear_all(&mut self) -> std::io::Result<()> {
         write!(self.output, "\x1b[2J")
-    }
-
-    fn clear_line(&mut self) -> std::io::Result<()> {
-        write!(self.output, "\x1b[2K")
     }
 
     fn enable_alternate_screen(&mut self) -> std::io::Result<()> {

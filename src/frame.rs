@@ -20,14 +20,14 @@ impl TerminalFrame {
         self.size
     }
 
-    pub(crate) fn get_line(&self, row: usize) -> (TerminalStyle, &str) {
+    pub(crate) fn lines(&self) -> impl '_ + Iterator<Item = (TerminalStyle, &str)> {
         // let start = TerminalPosition { row, col: 0 };
         // let end = TerminalPosition {
         //     row: row + 1,
         //     col: 0,
         // };
         // self.chars.range(start..end).map(|(p, c)| (*p, *c))
-        todo!()
+        std::iter::empty()
     }
 
     // TODO: merge or draw_frame
