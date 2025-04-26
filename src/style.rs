@@ -26,10 +26,54 @@ impl TerminalStyle {
         bg_color: None,
     };
 
-    pub const BOLD: Self = Self {
-        bold: true,
-        ..Self::NONE
-    };
+    pub const fn new() -> Self {
+        Self::NONE
+    }
+
+    pub const fn bold(mut self) -> Self {
+        self.bold = true;
+        self
+    }
+
+    pub const fn italic(mut self) -> Self {
+        self.italic = true;
+        self
+    }
+
+    pub const fn underline(mut self) -> Self {
+        self.underline = true;
+        self
+    }
+
+    pub const fn blink(mut self) -> Self {
+        self.blink = true;
+        self
+    }
+
+    pub const fn reverse(mut self) -> Self {
+        self.reverse = true;
+        self
+    }
+
+    pub const fn dim(mut self) -> Self {
+        self.dim = true;
+        self
+    }
+
+    pub const fn strikethrough(mut self) -> Self {
+        self.strikethrough = true;
+        self
+    }
+
+    pub const fn fg_color(mut self, color: Rgb) -> Self {
+        self.fg_color = Some(color);
+        self
+    }
+
+    pub const fn bg_color(mut self, color: Rgb) -> Self {
+        self.bg_color = Some(color);
+        self
+    }
 
     // TODO: rename
     pub fn with<T: Display>(self, text: T) -> String {
