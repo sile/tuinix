@@ -46,7 +46,7 @@ impl TerminalFrame {
         self.show_cursor
     }
 
-    pub fn get_line(
+    pub(crate) fn get_line(
         &self,
         row: usize,
     ) -> impl '_ + Iterator<Item = (TerminalPosition, TerminalChar)> {
@@ -119,7 +119,6 @@ pub struct TerminalChar {
     pub style: TerminalStyle,
 }
 
-// TODO: attrs?
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TerminalStyle {
     pub bold: bool,
@@ -145,6 +144,16 @@ impl TerminalStyle {
         fg_color: None,
         bg_color: None,
     };
+
+    pub const BOLD: Self = Self {
+        bold: true,
+        ..Self::NONE
+    };
+
+    // TODO: rename
+    pub fn with<T: Display>(self, text: T) -> String {
+        format!("{}{}{}", self, text, Self::NONE)
+    }
 
     fn update<'a>(&mut self, s: &'a str) -> &'a str {
         let s = s

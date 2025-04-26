@@ -1,6 +1,6 @@
 use std::fmt::Write;
 
-use tuinix::{Terminal, TerminalPosition, frame::TerminalFrame};
+use tuinix::{Terminal, TerminalFrame, TerminalPosition};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut terminal = Terminal::new()?;

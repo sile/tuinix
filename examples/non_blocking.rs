@@ -2,8 +2,7 @@ use mio::{Events, Interest, Poll, Token};
 use std::fmt::Write;
 use std::time::Duration;
 use tuinix::{
-    Terminal, TerminalPosition,
-    frame::TerminalFrame,
+    Terminal, TerminalFrame, TerminalPosition,
     input::{KeyCode, KeyInput, TerminalInput},
     set_nonblocking, try_nonblocking, try_uninterrupted,
 };
