@@ -514,6 +514,7 @@ impl Drop for Terminal {
     fn drop(&mut self) {
         let _ = self.disable_alternate_screen();
         let _ = self.disable_raw_mode();
+        let _ = self.show_cursor();
         let _ = self.output.flush();
         unsafe { libc::close(SIGWINCH_PIPE_FD) };
         TERMINAL_EXISTS.store(false, Ordering::SeqCst);
