@@ -131,10 +131,44 @@ impl std::fmt::Write for TerminalFrame {
     }
 }
 
+/// Trait for measuring the display width of characters in a terminal.
+///
+/// This trait provides a way to determine how much horizontal space a character
+/// will occupy when rendered in a terminal.
+///
+/// # Limitations
+///
+/// - Tab characters (`\t`): The width of a tab depends on the current cursor position
+///   and tab stop settings, not just the character itself. Since this trait only
+///   takes a single character as input without position context, it cannot
+///   accurately determine the visual width of tab characters.
+/// - Zero-width combining characters: Characters like accents and diacritical marks
+///   that modify previous characters (e.g., `é` can be represented as `e` followed
+///   by the combining acute accent `\u{0301}`) have no width on their own but change
+///   the appearance of preceding characters. The current interface cannot properly
+///   handle these because it examines each character in isolation without
+///   considering adjacent characters.
 pub trait MeasureCharWidth {
+    /// Measures the display width of a character.
+    ///
+    /// Returns the number of columns the character will occupy in the terminal.
     fn measure_char_width(&self, c: char) -> usize;
 }
 
+/// A character width measurer that assumes most characters have a fixed width of 1 column.
+///
+/// This simple implementation of [`MeasureCharWidth`] assigns:
+/// - Width of 0 to all control characters (they don't take visual space)
+/// - Width of 1 to all other characters
+///
+/// # Limitations
+///
+/// This measurer doesn't correctly handle:
+/// - Wide characters like CJK (Chinese, Japanese, Korean) that take 2 columns
+/// - Emojis and other complex Unicode characters
+///
+/// For better support of these characters, consider implementing a more
+/// sophisticated width measurer based on Unicode width calculation libraries.
 #[derive(Debug, Default, Clone)]
 pub struct FixedCharWidthMeasurer;
 
