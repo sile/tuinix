@@ -1,3 +1,5 @@
+use std::ops::{Add, AddAssign, Sub, SubAssign};
+
 /// Dimensions of a terminal.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TerminalSize {
@@ -12,6 +14,10 @@ impl TerminalSize {
     /// Returns `true` if the terminal has zero rows or zero columns.
     pub const fn is_empty(self) -> bool {
         self.rows == 0 || self.cols == 0
+    }
+
+    pub const fn contains(self, position: TerminalPosition) -> bool {
+        position.row < self.rows && position.col < self.cols
     }
 }
 
@@ -39,5 +45,39 @@ impl TerminalPosition {
     /// This is a convenience constructor that sets the column to 0.
     pub const fn row(row: usize) -> Self {
         Self::row_col(row, 0)
+    }
+}
+
+impl Add for TerminalPosition {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self::Output {
+        Self {
+            row: self.row + other.row,
+            col: self.col + other.col,
+        }
+    }
+}
+
+impl AddAssign for TerminalPosition {
+    fn add_assign(&mut self, other: Self) {
+        *self = *self + other;
+    }
+}
+
+impl Sub for TerminalPosition {
+    type Output = Self;
+
+    fn sub(self, other: Self) -> Self::Output {
+        Self {
+            row: self.row.saturating_sub(other.row),
+            col: self.col.saturating_sub(other.col),
+        }
+    }
+}
+
+impl SubAssign for TerminalPosition {
+    fn sub_assign(&mut self, other: Self) {
+        *self = *self - other;
     }
 }

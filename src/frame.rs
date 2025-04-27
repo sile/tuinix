@@ -53,7 +53,14 @@ impl<M: MeasureCharWidth> TerminalFrame<M> {
             })
     }
 
-    // TODO: merge or draw_frame
+    pub fn draw(&mut self, position: TerminalPosition, frame: &Self) {
+        for (src_pos, style, value) in frame.chars() {
+            let target_pos = position + src_pos;
+            if self.size.contains(target_pos) {
+                self.data.insert(target_pos, TerminalChar { style, value });
+            }
+        }
+    }
 }
 
 impl std::fmt::Write for TerminalFrame {
