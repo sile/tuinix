@@ -59,12 +59,14 @@ pub struct TerminalFrame<M = FixedCharWidthMeasurer> {
 }
 
 impl<M: MeasureCharWidth + Default> TerminalFrame<M> {
+    /// Makes a new frame with the given size and a default measurer.
     pub fn new(size: TerminalSize) -> Self {
         Self::with_measurer(size, M::default())
     }
 }
 
 impl<M: MeasureCharWidth> TerminalFrame<M> {
+    /// Makes a new frame with the given size and measurer.
     pub fn with_measurer(size: TerminalSize, measurer: M) -> Self {
         Self {
             size,
@@ -81,6 +83,34 @@ impl<M: MeasureCharWidth> TerminalFrame<M> {
         self.size
     }
 
+    /// Draws the contents of another frame onto this frame at the specified position.
+    ///
+    /// This method copies all the characters from the source frame and positions them
+    /// relative to the provided position on this frame. Characters that would fall outside
+    /// the bounds of this frame are ignored.
+    ///
+    /// The method performs several important tasks:
+    /// - Properly handles character collision and overlapping
+    /// - Removes any characters that would be partially overlapped by wide characters
+    /// - Updates the cursor position of this frame to reflect new content
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::fmt::Write;
+    /// use tuinix::{TerminalFrame, TerminalPosition, TerminalSize};
+    ///
+    /// // Create a main frame
+    /// let mut main_frame = TerminalFrame::new(TerminalSize { rows: 24, cols: 80 });
+    ///
+    /// // Create a smaller frame to be drawn onto the main frame
+    /// let mut sub_frame = TerminalFrame::new(TerminalSize { rows: 5, cols: 20 });
+    /// write!(sub_frame, "This is a sub-frame")?;
+    ///
+    /// // Draw the sub-frame at position (2, 10) on the main frame
+    /// main_frame.draw(TerminalPosition::row_col(2, 10), &sub_frame);
+    /// # Ok::<(), std::fmt::Error>(())
+    /// ```
     pub fn draw(&mut self, position: TerminalPosition, frame: &Self) {
         for (src_pos, c) in frame.chars() {
             let target_pos = position + src_pos;
