@@ -76,7 +76,7 @@
 //!
 //! For integration with external event loop libraries like `mio`, see the [nonblocking.rs] example.
 //!
-//! [nonblocking.rs]: https://github.com/sile/tuinix/examples/nonblocking.rs
+//! [nonblocking.rs]: https://github.com/sile/tuinix/blob/main/examples/nonblocking.rs
 #![warn(missing_docs)]
 use std::{io::ErrorKind, os::fd::RawFd};
 
