@@ -26,12 +26,10 @@ impl TerminalFrame {
         self.size
     }
 
-    pub(crate) fn lines(&self) -> impl '_ + Iterator<Item = &str> {
-        // self.data
-        //     .lines()
-        //     .chain(std::iter::repeat(""))
-        //     .take(self.size.rows)
-        std::iter::empty()
+    pub(crate) fn chars(
+        &self,
+    ) -> impl '_ + Iterator<Item = (TerminalPosition, TerminalStyle, char)> {
+        self.data.iter().map(|(pos, ch)| (*pos, ch.style, ch.value))
     }
 
     // TODO: merge or draw_frame
