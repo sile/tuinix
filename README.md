@@ -20,6 +20,9 @@ A Rust library for building terminal user interface (TUI) applications on Unix s
 
 ## Basic Example
 
+This example demonstrates basic terminal UI functionality including initializing the terminal,
+drawing styled text, processing keyboard events, and handling terminal resizing.
+
 ```rust
 use std::{fmt::Write, time::Duration};
 
