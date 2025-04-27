@@ -30,6 +30,7 @@ impl<M: MeasureCharWidth> TerminalFrame<M> {
         }
     }
 
+    /// Returns the size of this frame.
     pub fn size(&self) -> TerminalSize {
         self.size
     }
