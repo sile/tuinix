@@ -21,9 +21,9 @@ A Rust library for building terminal user interface (TUI) applications on Unix s
 ## Basic Example
 
 ```rust
-use std::fmt::Write;
-use std::time::Duration;
-use tuinix::{Terminal, TerminalFrame, TerminalEvent, TerminalInput, TerminalStyle, TerminalColor};
+use std::{fmt::Write, time::Duration};
+
+use tuinix::{Terminal, TerminalColor, TerminalEvent, TerminalFrame, TerminalInput, TerminalStyle};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize terminal
@@ -33,12 +33,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut frame = TerminalFrame::new(terminal.size());
 
     // Add styled content to the frame
-    let title_style = TerminalStyle::new()
-        .bold()
-        .fg_color(TerminalColor::GREEN);
+    let title_style = TerminalStyle::new().bold().fg_color(TerminalColor::GREEN);
 
-    writeln!(frame, "{}Welcome to tuinix!{}", title_style, TerminalStyle::RESET)?;
-    writeln!(frame, "\nPress 'q' to quit")?;
+    writeln!(
+        frame,
+        "{}Welcome to tuinix!{}",
+        title_style,
+        TerminalStyle::RESET
+    )?;
+    writeln!(frame, "\nPress any key ('q' to quit)")?;
 
     // Draw the frame to the terminal
     terminal.draw(frame)?;
@@ -53,11 +56,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if let tuinix::KeyCode::Char('q') = input.code {
                     break;
                 }
+
+                // Display the input
+                let mut frame = TerminalFrame::new(terminal.size());
+                writeln!(frame, "Key pressed: {:?}", input)?;
+                writeln!(frame, "\nPress any key ('q' to quit)")?;
+                terminal.draw(frame)?;
             }
             Some(TerminalEvent::Resize(size)) => {
                 // Terminal was resized, update UI if needed
                 let mut frame = TerminalFrame::new(size);
                 writeln!(frame, "Terminal resized to {}x{}", size.cols, size.rows)?;
+                writeln!(frame, "\nPress any key ('q' to quit)")?;
                 terminal.draw(frame)?;
             }
             None => {
@@ -70,72 +80,4 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-## Non-blocking I/O with External Event Loops
-
-`tuinix` can be integrated with external event loop libraries like `mio`:
-
-```rust
-use std::fmt::Write;
-use std::time::Duration;
-use mio::{Events, Interest, Poll, Token};
-use tuinix::{Terminal, TerminalFrame, TerminalInput, set_nonblocking, try_nonblocking};
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize terminal
-    let mut terminal = Terminal::new()?;
-
-    // Create mio Poll instance
-    let mut poll = Poll::new()?;
-    let mut events = Events::with_capacity(10);
-
-    // Get file descriptors and set to non-blocking mode
-    let stdin_fd = terminal.input_fd();
-    let signal_fd = terminal.signal_fd();
-    set_nonblocking(stdin_fd)?;
-    set_nonblocking(signal_fd)?;
-
-    // Register with mio poll
-    poll.registry().register(
-        &mut mio::unix::SourceFd(&stdin_fd),
-        Token(0),
-        Interest::READABLE
-    )?;
-    poll.registry().register(
-        &mut mio::unix::SourceFd(&signal_fd),
-        Token(1),
-        Interest::READABLE
-    )?;
-
-    // Event loop
-    let mut frame = TerminalFrame::new(terminal.size());
-    writeln!(frame, "Press 'q' to quit")?;
-    terminal.draw(frame)?;
-
-    loop {
-        poll.poll(&mut events, Some(Duration::from_millis(100)))?;
-
-        for event in events.iter() {
-            match event.token() {
-                Token(0) => {
-                    // Handle input without blocking
-                    if let Some(Some(input)) = try_nonblocking(terminal.read_input())? {
-                        let TerminalInput::Key(input) = input;
-                        if let tuinix::KeyCode::Char('q') = input.code {
-                            return Ok(());
-                        }
-                    }
-                },
-                Token(1) => {
-                    // Handle terminal resize without blocking
-                    if let Some(size) = try_nonblocking(terminal.wait_for_resize())? {
-                        let mut frame = TerminalFrame::new(size);
-                        writeln!(frame, "Terminal resized to {}x{}", size.cols, size.rows)?;
-                        terminal.draw(frame)?;
-                    }
-                },
-                _ => unreachable!(),
-            }
-        }
-    }
-}
-```
+For integration with external event loop libraries like `mio`, see the [nonblocking.rs](examples/nonblocking.rs) example.
