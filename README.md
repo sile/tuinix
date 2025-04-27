@@ -3,10 +3,10 @@ tuinix
 
 [![Crates.io](https://img.shields.io/crates/v/tuinix.svg)](https://crates.io/crates/tuinix)
 [![Documentation](https://docs.rs/tuinix/badge.svg)](https://docs.rs/tuinix)
-[![Actions Status](https://github.com/sile/tuinix/workflows/CI/badge.svg)](https://github.com/sile/tuinix/actions
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Actions Status](https://github.com/sile/tuinix/workflows/CI/badge.svg)](https://github.com/sile/tuinix/actions)
+![License](https://img.shields.io/crates/l/tuinix)
 
-A library for building terminal user interface (TUI) applications on Unix systems with minimum dependencies.
+A Rust library for building terminal user interface (TUI) applications on Unix systems with minimum dependencies.
 
 ## Overview
 
@@ -17,15 +17,6 @@ A library for building terminal user interface (TUI) applications on Unix system
 - Drawing styled text with ANSI colors
 - Handling terminal resize events
 - Creating efficient terminal frames with differential updates
-
-## Installation
-
-Add to your `Cargo.toml`:
-
-```toml
-[dependencies]
-tuinix = "0.1.0"
-```
 
 ## Basic Example
 
@@ -148,12 +139,3 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 ```
-
-## Features
-
-- **Lightweight**: Minimal dependencies (only `libc` is required)
-- **Terminal Management**: Control terminal state with ease
-- **Input Handling**: Process keyboard input events
-- **Styled Text**: Supports ANSI colors and text formatting
-- **Resize Events**: Gracefully handle terminal resize events
-- **Efficient Updates**: Optimize terminal rendering with differential updates

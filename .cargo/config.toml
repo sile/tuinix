@@ -1,2 +1,2 @@
 [alias]
-dev = "run --example hello"
+dev = "run --example basic"
