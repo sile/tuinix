@@ -2,6 +2,52 @@ use std::collections::BTreeMap;
 
 use crate::{TerminalPosition, TerminalSize, TerminalStyle};
 
+/// A frame buffer representing the terminal display state.
+///
+/// [`TerminalFrame`] manages a collection of styled characters with their positions,
+/// providing efficient drawing operations for terminal-based user interfaces.
+/// It maintains character positions, styles, and widths to accurately represent
+/// what will be displayed on the terminal.
+///
+/// This struct serves as the primary drawing surface for terminal UIs, allowing
+/// you to:
+/// - Write text with different styles using the `write!()` macro
+/// - Compose multiple frames together
+/// - Draw frames to the terminal using `Terminal::draw()`
+///
+/// # Writing to a Frame
+///
+/// [`TerminalFrame`] implements the [`std::fmt::Write`] trait, which allows using
+/// the `write!()` and `writeln!()` macros to add content to the frame with styling.
+///
+/// # Drawing Frames
+///
+/// After creating and populating a [`TerminalFrame`], use [`Terminal::draw()`] to
+/// efficiently render the frame to the terminal screen. The terminal implementation
+/// optimizes by only updating changed portions of the screen.
+///
+/// # Examples
+///
+/// ```
+/// use std::fmt::Write;
+/// use tuinix::{TerminalFrame, TerminalSize, TerminalStyle};
+///
+/// // Create a new frame with specified dimensions
+/// let size = TerminalSize { rows: 24, cols: 80 };
+/// let mut frame = TerminalFrame::new(size);
+///
+/// // Write text to the frame
+/// writeln!(frame, "Hello, world!")?;
+///
+/// // Use styling
+/// let bold = TerminalStyle::new().bold();
+/// let reset = TerminalStyle::new();
+/// writeln!(frame, "{bold}This text is bold{reset}")?;
+///
+/// // To render this frame to the terminal:
+/// // terminal.draw(frame)?;
+/// # Ok::<_, std::fmt::Error>(())
+/// ```
 #[derive(Debug, Default, Clone)]
 pub struct TerminalFrame<M = FixedCharWidthMeasurer> {
     size: TerminalSize,

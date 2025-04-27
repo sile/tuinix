@@ -12,23 +12,61 @@ use std::{
 /// # Examples
 ///
 /// ```
-/// use tuinix::{Rgb, TerminalStyle};
+/// use std::fmt::Write;
+/// use tuinix::{Rgb, TerminalFrame, TerminalSize, TerminalStyle};
 ///
-/// // Format styled text directly with format!
+/// // Create a new frame to write styled text
+/// let size = TerminalSize { rows: 24, cols: 80 };
+/// let mut frame = TerminalFrame::new(size);
+///
+/// // Apply styling with the builder pattern
 /// let style = TerminalStyle::new().bold().fg_color(Rgb::GREEN);
-/// let formatted = format!("{}{}{}", style, "Direct formatting", TerminalStyle::RESET);
+/// write!(frame, "{}Direct formatting{}", style, TerminalStyle::RESET).unwrap();
 ///
-/// // This approach gives more flexibility for complex formatting
+/// // More complex example with multiple styles
 /// let warning_style = TerminalStyle::new().bold().fg_color(Rgb::YELLOW);
 /// let error_style = TerminalStyle::new().bold().fg_color(Rgb::RED);
 ///
-/// let message = format!(
+/// writeln!(frame, "").unwrap(); // Add a new line
+/// write!(
+///     frame,
 ///     "{}WARNING:{} This operation {}might be dangerous{}!",
 ///     warning_style,
 ///     TerminalStyle::RESET,
 ///     error_style,
 ///     TerminalStyle::RESET
-/// );
+/// ).unwrap();
+/// ```
+///
+/// # Style Application
+///
+/// When applying styles, each new style overrides any previous style completely.
+/// This means that applying a style like `underline()` after `bold()` won't result
+/// in text that is both bold and underlined - only the underline will be applied.
+///
+/// ```
+/// use std::fmt::Write;
+/// use tuinix::{TerminalFrame, TerminalSize, TerminalStyle};
+///
+/// let size = TerminalSize { rows: 24, cols: 80 };
+/// let mut frame = TerminalFrame::new(size);
+///
+/// // This will produce text that is ONLY underlined, not bold+underlined
+/// let bold = TerminalStyle::new().bold();
+/// let underline = TerminalStyle::new().underline();
+///
+/// write!(frame, "{}This is bold{}", bold, TerminalStyle::RESET).unwrap();
+/// write!(frame, " but {}this is only underlined{} (not bold).",
+///     underline,
+///     TerminalStyle::RESET
+/// ).unwrap();
+///
+/// // To apply multiple styles, combine them in a single TerminalStyle instance
+/// let bold_and_underlined = TerminalStyle::new().bold().underline();
+/// write!(frame, " {}This is both bold and underlined{}",
+///     bold_and_underlined,
+///     TerminalStyle::RESET
+/// ).unwrap();
 /// ```
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TerminalStyle {
@@ -191,41 +229,45 @@ impl FromStr for TerminalStyle {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut this = Self::default();
-        let error = || "invalid or unsupported ANSI escape sequence".to_string();
+        let error = || format!("invalid or unsupported ANSI escape sequence: {:?}", s);
+        let is_delimiter = |s: &&str| s.starts_with(&[';', 'm']);
 
         let mut s = s.strip_prefix("\x1b[0").ok_or_else(error)?;
-        if let Some(s0) = s.strip_prefix(";1") {
+        if let Some(s0) = s.strip_prefix(";1").filter(is_delimiter) {
             this.bold = true;
             s = s0;
         }
-        if let Some(s0) = s.strip_prefix(";2") {
+        if let Some(s0) = s.strip_prefix(";2").filter(is_delimiter) {
             this.dim = true;
             s = s0;
         }
-        if let Some(s0) = s.strip_prefix(";3") {
+        if let Some(s0) = s.strip_prefix(";3").filter(is_delimiter) {
             this.italic = true;
             s = s0;
         }
-        if let Some(s0) = s.strip_prefix(";4") {
+        if let Some(s0) = s.strip_prefix(";4").filter(is_delimiter) {
             this.underline = true;
             s = s0;
         }
-        if let Some(s0) = s.strip_prefix(";5") {
+        if let Some(s0) = s.strip_prefix(";5").filter(is_delimiter) {
             this.blink = true;
             s = s0;
         }
-        if let Some(s0) = s.strip_prefix(";7") {
+        if let Some(s0) = s.strip_prefix(";7").filter(is_delimiter) {
             this.reverse = true;
             s = s0;
         }
-        if let Some(s0) = s.strip_prefix(";9") {
+        if let Some(s0) = s.strip_prefix(";9").filter(is_delimiter) {
             this.strikethrough = true;
             s = s0;
         }
         if let Some(s0) = s.strip_prefix(";38;2;") {
             let (r, s0) = s0.split_once(';').ok_or_else(error)?;
             let (g, s0) = s0.split_once(';').ok_or_else(error)?;
-            let (b, s0) = s0.split_once(';').ok_or_else(error)?;
+            let (b, s0) = s0
+                .split_once(';')
+                .or_else(|| s0.strip_suffix('m').map(|prefix| (prefix, "m")))
+                .ok_or_else(error)?;
             let r = r.parse().map_err(|_| error())?;
             let g = g.parse().map_err(|_| error())?;
             let b = b.parse().map_err(|_| error())?;
@@ -235,7 +277,10 @@ impl FromStr for TerminalStyle {
         if let Some(s0) = s.strip_prefix(";48;2;") {
             let (r, s0) = s0.split_once(';').ok_or_else(error)?;
             let (g, s0) = s0.split_once(';').ok_or_else(error)?;
-            let (b, s0) = s0.split_once(';').ok_or_else(error)?;
+            let (b, s0) = s0
+                .split_once(';')
+                .or_else(|| s0.strip_suffix('m').map(|prefix| (prefix, "m")))
+                .ok_or_else(error)?;
             let r = r.parse().map_err(|_| error())?;
             let g = g.parse().map_err(|_| error())?;
             let b = b.parse().map_err(|_| error())?;
@@ -316,5 +361,17 @@ impl Rgb {
     /// Makes a new [`Rgb`] instance.
     pub const fn new(r: u8, g: u8, b: u8) -> Self {
         Self { r, g, b }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_style() {
+        let style: TerminalStyle = "\x1b[0;1;38;2;0;255;0m".parse().expect("invalid");
+        assert!(style.bold);
+        assert_eq!(style.fg_color, Some(Rgb::GREEN));
     }
 }
