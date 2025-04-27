@@ -1,4 +1,4 @@
-//! A terminal user interface (TUI) library for Unix systems with a focus on simplicity and efficiency.
+//! A library for building terminal user interface (TUI) applications on Unix systems with minimum dependencies.
 //!
 //! `tuinix` provides a lightweight foundation for building terminal-based user interfaces with minimal
 //! dependencies (only `libc` is required). The library offers a clean API for:
