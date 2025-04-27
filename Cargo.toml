@@ -5,7 +5,6 @@ edition = "2024"
 
 [dependencies]
 libc = "0.2.172"
-unicode-width = "0.2.0" # TODO: remove
 
 [dev-dependencies]
 mio = { version = "1.0.3", features = ["os-ext", "os-poll"] }

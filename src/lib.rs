@@ -6,7 +6,7 @@ mod input;
 mod style;
 mod terminal;
 
-pub use frame::TerminalFrame;
+pub use frame::{FixedTerminalCharWidth, TerminalCharWidth, TerminalFrame};
 pub use geometry::{TerminalPosition, TerminalSize};
 pub use input::{KeyCode, KeyInput, TerminalInput};
 pub use style::{Rgb, TerminalStyle};

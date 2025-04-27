@@ -98,6 +98,19 @@ impl std::fmt::Write for TerminalFrame {
     }
 }
 
+pub trait TerminalCharWidth {
+    fn terminal_char_width(&self, c: char) -> usize;
+}
+
+#[derive(Debug, Clone)]
+pub struct FixedTerminalCharWidth;
+
+impl TerminalCharWidth for FixedTerminalCharWidth {
+    fn terminal_char_width(&self, c: char) -> usize {
+        if c.is_control() { 0 } else { 1 }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct TerminalChar {
     style: TerminalStyle,

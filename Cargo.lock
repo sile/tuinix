@@ -32,14 +32,7 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "mio",
- "unicode-width",
 ]
-
-[[package]]
-name = "unicode-width"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1fc81956842c57dac11422a97c3b8195a1ff727f06e85c84ed2e8aa277c9a0fd"
 
 [[package]]
 name = "wasi"
