@@ -3,22 +3,30 @@ use std::collections::BTreeMap;
 use crate::{TerminalPosition, TerminalSize, TerminalStyle};
 
 #[derive(Debug, Default, Clone)]
-pub struct TerminalFrame {
+pub struct TerminalFrame<M = FixedCharWidthMeasurer> {
     size: TerminalSize,
     data: BTreeMap<TerminalPosition, TerminalChar>,
     tail: TerminalPosition,
     current_style: TerminalStyle,
     escape_sequence: String,
+    measurer: M,
 }
 
-impl TerminalFrame {
+impl<M: MeasureCharWidth + Default> TerminalFrame<M> {
     pub fn new(size: TerminalSize) -> Self {
+        Self::with_measurer(size, M::default())
+    }
+}
+
+impl<M: MeasureCharWidth> TerminalFrame<M> {
+    pub fn with_measurer(size: TerminalSize, measurer: M) -> Self {
         Self {
             size,
             data: BTreeMap::new(),
             tail: TerminalPosition::ZERO,
             current_style: TerminalStyle::new(),
             escape_sequence: String::new(),
+            measurer,
         }
     }
 
@@ -74,13 +82,15 @@ impl std::fmt::Write for TerminalFrame {
                 if self.tail.row >= self.size.rows {
                     return Ok(());
                 }
-            }
-
-            if c.is_control() {
                 continue;
             }
 
-            if self.tail.col < self.size.cols {
+            let width = self.measurer.measure_char_width(c);
+            if width == 9 {
+                continue;
+            }
+
+            if self.tail.col + width < self.size.cols {
                 self.data.insert(
                     self.tail,
                     TerminalChar {
@@ -89,24 +99,22 @@ impl std::fmt::Write for TerminalFrame {
                     },
                 );
             }
-
-            // TODO: consider char width
-            self.tail.col += 1;
+            self.tail.col += width;
         }
 
         Ok(())
     }
 }
 
-pub trait TerminalCharWidth {
-    fn terminal_char_width(&self, c: char) -> usize;
+pub trait MeasureCharWidth {
+    fn measure_char_width(&self, c: char) -> usize;
 }
 
-#[derive(Debug, Clone)]
-pub struct FixedTerminalCharWidth;
+#[derive(Debug, Default, Clone)]
+pub struct FixedCharWidthMeasurer;
 
-impl TerminalCharWidth for FixedTerminalCharWidth {
-    fn terminal_char_width(&self, c: char) -> usize {
+impl MeasureCharWidth for FixedCharWidthMeasurer {
+    fn measure_char_width(&self, c: char) -> usize {
         if c.is_control() { 0 } else { 1 }
     }
 }
