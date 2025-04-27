@@ -15,27 +15,25 @@ use std::{
 /// use std::fmt::Write;
 /// use tuinix::{Rgb, TerminalFrame, TerminalSize, TerminalStyle};
 ///
-/// // Create a new frame to write styled text
-/// let size = TerminalSize { rows: 24, cols: 80 };
+/// // Create a basic terminal frame
+/// let size = TerminalSize { rows: 10, cols: 40 };
 /// let mut frame = TerminalFrame::new(size);
 ///
-/// // Apply styling with the builder pattern
-/// let style = TerminalStyle::new().bold().fg_color(Rgb::GREEN);
-/// write!(frame, "{}Direct formatting{}", style, TerminalStyle::RESET).unwrap();
+/// // Create a simple green, bold text style
+/// let style = TerminalStyle::new()
+///     .bold()
+///     .fg_color(Rgb::GREEN);
 ///
-/// // More complex example with multiple styles
-/// let warning_style = TerminalStyle::new().bold().fg_color(Rgb::YELLOW);
-/// let error_style = TerminalStyle::new().bold().fg_color(Rgb::RED);
+/// // Write styled text to the frame
+/// writeln!(frame, "{}This text is bold and green{}", style, TerminalStyle::RESET)?;
 ///
-/// writeln!(frame, "").unwrap(); // Add a new line
-/// write!(
-///     frame,
-///     "{}WARNING:{} This operation {}might be dangerous{}!",
-///     warning_style,
-///     TerminalStyle::RESET,
-///     error_style,
-///     TerminalStyle::RESET
-/// ).unwrap();
+/// // Create another style for highlighting
+/// let highlight = TerminalStyle::new()
+///     .bg_color(Rgb::YELLOW)
+///     .fg_color(Rgb::BLACK);
+///
+/// writeln!(frame, "{}Important information{}", highlight, TerminalStyle::RESET)?;
+/// # Ok::<(), std::fmt::Error>(())
 /// ```
 ///
 /// # Style Application
@@ -55,18 +53,13 @@ use std::{
 /// let bold = TerminalStyle::new().bold();
 /// let underline = TerminalStyle::new().underline();
 ///
-/// write!(frame, "{}This is bold{}", bold, TerminalStyle::RESET).unwrap();
-/// write!(frame, " but {}this is only underlined{} (not bold).",
-///     underline,
-///     TerminalStyle::RESET
-/// ).unwrap();
+/// writeln!(frame, "{}This is bold.", bold)?;
+/// writeln!(frame, "{}This is only underlined (not bold).", underline)?;
 ///
 /// // To apply multiple styles, combine them in a single TerminalStyle instance
 /// let bold_and_underlined = TerminalStyle::new().bold().underline();
-/// write!(frame, " {}This is both bold and underlined{}",
-///     bold_and_underlined,
-///     TerminalStyle::RESET
-/// ).unwrap();
+/// writeln!(frame, " {}This is both bold and underlined.", bold_and_underlined)?;
+/// # Ok::<(), std::fmt::Error>(())
 /// ```
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TerminalStyle {
@@ -265,8 +258,9 @@ impl FromStr for TerminalStyle {
             let (r, s0) = s0.split_once(';').ok_or_else(error)?;
             let (g, s0) = s0.split_once(';').ok_or_else(error)?;
             let (b, s0) = s0
-                .split_once(';')
-                .or_else(|| s0.strip_suffix('m').map(|prefix| (prefix, "m")))
+                .match_indices(&[';', 'm'])
+                .next()
+                .map(|(i, _)| s0.split_at(i))
                 .ok_or_else(error)?;
             let r = r.parse().map_err(|_| error())?;
             let g = g.parse().map_err(|_| error())?;
@@ -278,8 +272,9 @@ impl FromStr for TerminalStyle {
             let (r, s0) = s0.split_once(';').ok_or_else(error)?;
             let (g, s0) = s0.split_once(';').ok_or_else(error)?;
             let (b, s0) = s0
-                .split_once(';')
-                .or_else(|| s0.strip_suffix('m').map(|prefix| (prefix, "m")))
+                .match_indices(&[';', 'm'])
+                .next()
+                .map(|(i, _)| s0.split_at(i))
                 .ok_or_else(error)?;
             let r = r.parse().map_err(|_| error())?;
             let g = g.parse().map_err(|_| error())?;
@@ -373,5 +368,11 @@ mod tests {
         let style: TerminalStyle = "\x1b[0;1;38;2;0;255;0m".parse().expect("invalid");
         assert!(style.bold);
         assert_eq!(style.fg_color, Some(Rgb::GREEN));
+
+        let style: TerminalStyle = "\x1b[0;38;2;0;0;0;48;2;255;255;0m"
+            .parse()
+            .expect("invalid");
+        assert_eq!(style.fg_color, Some(Rgb::BLACK));
+        assert_eq!(style.bg_color, Some(Rgb::YELLOW));
     }
 }
