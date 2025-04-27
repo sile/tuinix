@@ -421,17 +421,17 @@ impl Terminal {
                 skipped = true;
                 continue;
             }
-            let (position, style, ch) = new;
+            let (position, c) = new;
 
             if skipped || last_row != position.row {
                 move_cursor(&mut self.output, position)?;
             }
-            if Some(style) != last_style {
-                write!(self.output, "{}", style)?;
+            if Some(c.style) != last_style {
+                write!(self.output, "{}", c.style)?;
             }
-            write!(self.output, "{}", ch)?;
+            write!(self.output, "{}", c.value)?;
 
-            last_style = Some(style);
+            last_style = Some(c.style);
             last_row = position.row;
             skipped = false;
         }

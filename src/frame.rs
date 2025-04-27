@@ -34,30 +34,33 @@ impl<M: MeasureCharWidth> TerminalFrame<M> {
         self.size
     }
 
-    pub(crate) fn chars(
-        &self,
-    ) -> impl '_ + Iterator<Item = (TerminalPosition, TerminalStyle, char)> {
+    pub(crate) fn chars(&self) -> impl '_ + Iterator<Item = (TerminalPosition, TerminalChar)> {
         let mut last_style = TerminalStyle::new();
         (0..self.size.rows)
             .flat_map(|row| (0..self.size.cols).map(move |col| TerminalPosition::row_col(row, col)))
             .map(move |pos| {
-                if let Some(c) = self.data.get(&pos) {
+                if let Some(c) = self.data.get(&pos).copied() {
                     last_style = c.style;
-                    (pos, c.style, c.value)
+                    (pos, c)
                 } else {
                     if pos >= self.tail {
                         last_style = self.current_style;
                     }
-                    (pos, last_style, ' ')
+                    let c = TerminalChar {
+                        style: last_style,
+                        width: 1,
+                        value: ' ',
+                    };
+                    (pos, c)
                 }
             })
     }
 
     pub fn draw(&mut self, position: TerminalPosition, frame: &Self) {
-        for (src_pos, style, value) in frame.chars() {
+        for (src_pos, c) in frame.chars() {
             let target_pos = position + src_pos;
             if self.size.contains(target_pos) {
-                self.data.insert(target_pos, TerminalChar { style, value });
+                self.data.insert(target_pos, c);
             }
         }
     }
@@ -102,6 +105,7 @@ impl std::fmt::Write for TerminalFrame {
                     self.tail,
                     TerminalChar {
                         style: self.current_style,
+                        width,
                         value: c,
                     },
                 );
@@ -126,8 +130,9 @@ impl MeasureCharWidth for FixedCharWidthMeasurer {
     }
 }
 
-#[derive(Debug, Clone)]
-struct TerminalChar {
-    style: TerminalStyle,
-    value: char,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TerminalChar {
+    pub style: TerminalStyle,
+    pub width: usize,
+    pub value: char,
 }
