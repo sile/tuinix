@@ -194,6 +194,7 @@ impl TerminalStyle {
     /// let style = TerminalStyle::new().bold().fg_color(Rgb::BLUE);
     /// let styled_text = format!("{}{}{}", style, "Important message", TerminalStyle::RESET);
     /// ```
+    // TODO: delete?
     pub fn apply<T: Display>(self, text: T) -> String {
         format!("{}{}{}", self, text, Self::RESET)
     }
@@ -206,65 +207,41 @@ impl TerminalStyle {
 
 impl Display for TerminalStyle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if *self == TerminalStyle::RESET {
-            return write!(f, "\x1b[0m");
-        }
-
-        write!(f, "\x1b[")?;
-
-        let mut first = true;
-        let mut write_separator = |f: &mut std::fmt::Formatter<'_>| -> std::fmt::Result {
-            if first {
-                first = false;
-                Ok(())
-            } else {
-                write!(f, ";")
-            }
-        };
+        write!(f, "\x1b[0;")?;
 
         if self.bold {
-            write_separator(f)?;
-            write!(f, "1")?;
+            write!(f, ";1")?;
         }
         if self.dim {
-            write_separator(f)?;
-            write!(f, "2")?;
+            write!(f, ";2")?;
         }
         if self.italic {
-            write_separator(f)?;
-            write!(f, "3")?;
+            write!(f, ";3")?;
         }
         if self.underline {
-            write_separator(f)?;
-            write!(f, "4")?;
+            write!(f, ";4")?;
         }
         if self.blink {
-            write_separator(f)?;
-            write!(f, "5")?;
+            write!(f, ";5")?;
         }
         if self.reverse {
-            write_separator(f)?;
-            write!(f, "7")?;
+            write!(f, ";7")?;
         }
         if self.strikethrough {
-            write_separator(f)?;
-            write!(f, "9")?;
+            write!(f, ";9")?;
         }
-
         if let Some(color) = self.fg_color {
-            write_separator(f)?;
-            write!(f, "38;2;{};{};{}", color.r, color.g, color.b)?;
+            write!(f, ";38;2;{};{};{}", color.r, color.g, color.b)?;
         }
-
         if let Some(color) = self.bg_color {
-            write_separator(f)?;
-            write!(f, "48;2;{};{};{}", color.r, color.g, color.b)?;
+            write!(f, ";48;2;{};{};{}", color.r, color.g, color.b)?;
         }
 
         write!(f, "m")
     }
 }
 
+// TODO: TerminalColor?
 /// RGB color.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Rgb {
