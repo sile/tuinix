@@ -222,7 +222,7 @@ impl FromStr for TerminalStyle {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut this = Self::default();
         let error = || format!("invalid or unsupported ANSI escape sequence: {:?}", s);
-        let is_delimiter = |s: &&str| s.starts_with(&[';', 'm']);
+        let is_delimiter = |s: &&str| s.starts_with([';', 'm']);
 
         let mut s = s.strip_prefix("\x1b[0").ok_or_else(error)?;
         if let Some(s0) = s.strip_prefix(";1").filter(is_delimiter) {
