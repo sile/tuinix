@@ -1,8 +1,8 @@
 use mio::{Events, Interest, Poll, Token};
 use std::{fmt::Write, time::Duration};
 use tuinix::{
-    set_nonblocking, try_nonblocking, try_uninterrupted, KeyCode, Terminal, TerminalColor,
-    TerminalFrame, TerminalInput, TerminalStyle,
+    KeyCode, Terminal, TerminalColor, TerminalFrame, TerminalInput, TerminalStyle, set_nonblocking,
+    try_nonblocking, try_uninterrupted,
 };
 
 // Define tokens for our event sources
