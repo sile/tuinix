@@ -83,6 +83,27 @@ impl<M: MeasureCharWidth> TerminalFrame<M> {
         self.size
     }
 
+    /// Returns the current cursor position in the frame.
+    ///
+    /// This represents where the next character would be written when using
+    /// `write!()` or `writeln!()` macros on this frame.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::fmt::Write;
+    /// use tuinix::{TerminalFrame, TerminalPosition, TerminalSize};
+    ///
+    /// let mut frame = TerminalFrame::new(TerminalSize { rows: 10, cols: 20 });
+    /// write!(frame, "Hello")?;
+    ///
+    /// assert_eq!(frame.cursor_position().col, 5);
+    /// # Ok::<(), std::fmt::Error>(())
+    /// ```
+    pub fn cursor(&self) -> TerminalPosition {
+        self.tail
+    }
+
     /// Draws the contents of another frame onto this frame at the specified position.
     ///
     /// This method copies all the characters from the source frame and positions them
@@ -92,7 +113,6 @@ impl<M: MeasureCharWidth> TerminalFrame<M> {
     /// The method performs several important tasks:
     /// - Properly handles character collision and overlapping
     /// - Removes any characters that would be partially overlapped by wide characters
-    /// - Updates the cursor position of this frame to reflect new content
     ///
     /// # Examples
     ///
@@ -128,8 +148,6 @@ impl<M: MeasureCharWidth> TerminalFrame<M> {
                 self.data.remove(&(target_pos + TerminalPosition::col(i)));
             }
             self.data.insert(target_pos, c);
-
-            self.tail = self.tail.max(target_pos + TerminalPosition::col(c.width));
         }
     }
 
