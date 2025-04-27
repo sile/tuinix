@@ -1,130 +1,98 @@
 use mio::{Events, Interest, Poll, Token};
-use std::fmt::Write;
-use std::time::Duration;
+use std::{fmt::Write, time::Duration};
 use tuinix::{
-    KeyCode, KeyInput, Terminal, TerminalFrame, TerminalInput, set_nonblocking, try_nonblocking,
-    try_uninterrupted,
+    set_nonblocking, try_nonblocking, try_uninterrupted, KeyCode, Terminal, TerminalColor,
+    TerminalFrame, TerminalInput, TerminalStyle,
 };
 
-const STDIN: Token = Token(0);
-const SIGNAL: Token = Token(1);
+// Define tokens for our event sources
+const STDIN_TOKEN: Token = Token(0);
+const SIGNAL_TOKEN: Token = Token(1);
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize the terminal
+    // Initialize terminal
     let mut terminal = Terminal::new()?;
 
-    // Set up initial display
-    let mut frame = TerminalFrame::new(terminal.size());
-    writeln!(frame)?;
-    writeln!(frame, "  Non-blocking Terminal Example (press 'q' to quit)")?;
-
-    writeln!(frame)?;
-    writeln!(frame, "  Terminal size: {:?}", terminal.size())?;
-
-    writeln!(frame)?;
-    writeln!(frame, "  Waiting for input events...")?;
-
-    terminal.draw(frame)?;
-
-    // Set up mio poll
+    // Set up mio polling
     let mut poll = Poll::new()?;
     let mut events = Events::with_capacity(10);
 
-    // Get file descriptors from terminal
+    // Get the file descriptors we need to monitor
     let stdin_fd = terminal.input_fd();
     let signal_fd = terminal.signal_fd();
 
-    // Set fds to non-blocking mode
+    // Set both file descriptors to non-blocking mode
     set_nonblocking(stdin_fd)?;
     set_nonblocking(signal_fd)?;
 
-    // Register sources with mio
-    let mut stdin_source = mio::unix::SourceFd(&stdin_fd);
-    let mut signal_source = mio::unix::SourceFd(&signal_fd);
+    // Register the file descriptors with mio
+    poll.registry().register(
+        &mut mio::unix::SourceFd(&stdin_fd),
+        STDIN_TOKEN,
+        Interest::READABLE,
+    )?;
+    poll.registry().register(
+        &mut mio::unix::SourceFd(&signal_fd),
+        SIGNAL_TOKEN,
+        Interest::READABLE,
+    )?;
 
-    poll.registry()
-        .register(&mut stdin_source, STDIN, Interest::READABLE)?;
+    // Draw initial frame
+    let mut frame = TerminalFrame::new(terminal.size());
 
-    poll.registry()
-        .register(&mut signal_source, SIGNAL, Interest::READABLE)?;
+    // Add styled content to the frame
+    let title_style = TerminalStyle::new().bold().fg_color(TerminalColor::GREEN);
 
-    // Main event loop
-    'main: loop {
+    writeln!(
+        frame,
+        "{}Welcome to tuinix!{}",
+        title_style,
+        TerminalStyle::RESET
+    )?;
+    writeln!(frame, "\nPress any key ('q' to quit)")?;
+
+    // Draw the frame to the terminal
+    terminal.draw(frame)?;
+
+    // Event loop
+    loop {
         // Wait for events with a timeout
-        if try_uninterrupted(poll.poll(&mut events, Some(Duration::from_millis(1000))))?.is_none() {
+        if try_uninterrupted(poll.poll(&mut events, Some(Duration::from_millis(100))))?.is_none() {
             continue;
         }
 
-        // Process events
         for event in events.iter() {
             match event.token() {
-                STDIN => {
-                    // Handle input events
-                    while let Some(input) = try_nonblocking(terminal.read_input())? {
-                        let Some(input) = input else {
-                            continue;
-                        };
+                STDIN_TOKEN => {
+                    // Handle keyboard input
+                    if let Some(Some(input)) = try_nonblocking(terminal.read_input())? {
+                        match input {
+                            TerminalInput::Key(key_input) => {
+                                // Check if 'q' was pressed
+                                if let KeyCode::Char('q') = key_input.code {
+                                    return Ok(());
+                                }
 
-                        let mut frame = TerminalFrame::new(terminal.size());
-
-                        writeln!(frame)?;
-                        writeln!(frame, "  Non-blocking Terminal Example (press 'q' to quit)")?;
-
-                        writeln!(frame)?;
-                        writeln!(frame, "  Terminal size: {:?}", terminal.size())?;
-
-                        writeln!(frame)?;
-                        writeln!(frame, "  Received input: {:?}", input)?;
-
-                        // Quit when 'q' is pressed
-                        if let TerminalInput::Key(KeyInput {
-                            code: KeyCode::Char('q'),
-                            ..
-                        }) = input
-                        {
-                            break 'main;
+                                // Display the input
+                                let mut frame = TerminalFrame::new(terminal.size());
+                                writeln!(frame, "Key pressed: {:?}", key_input)?;
+                                writeln!(frame, "\nPress any key ('q' to quit)")?;
+                                terminal.draw(frame)?;
+                            }
                         }
-
-                        terminal.draw(frame)?;
                     }
                 }
-                SIGNAL => {
-                    // Handle terminal resize events
-                    while let Some(size) = try_nonblocking(terminal.wait_for_resize())? {
+                SIGNAL_TOKEN => {
+                    // Handle terminal resize event
+                    if let Some(size) = try_nonblocking(terminal.wait_for_resize())? {
                         let mut frame = TerminalFrame::new(size);
-
-                        writeln!(frame)?;
-                        writeln!(frame, "  Non-blocking Terminal Example (press 'q' to quit)")?;
-
-                        writeln!(frame)?;
-                        writeln!(frame, "  Terminal size: {:?} (resized)", size)?;
-
-                        writeln!(frame)?;
-                        writeln!(frame, "  Waiting for input events...")?;
-
+                        writeln!(frame, "Terminal resized to {}x{}", size.cols, size.rows)?;
+                        writeln!(frame, "\nPress any key ('q' to quit)")?;
                         terminal.draw(frame)?;
                     }
                 }
                 _ => unreachable!("Unexpected token"),
             }
         }
-
-        // If no events occurred, this could be a timeout
-        if events.is_empty() {
-            let mut frame = TerminalFrame::new(terminal.size());
-
-            writeln!(frame)?;
-            writeln!(frame, "  Non-blocking Terminal Example (press 'q' to quit)")?;
-
-            writeln!(frame)?;
-            writeln!(frame, "  Terminal size: {:?}", terminal.size())?;
-
-            writeln!(frame)?;
-            writeln!(frame, "  Tick... (waiting for events)")?;
-
-            terminal.draw(frame)?;
-        }
     }
-
-    Ok(())
 }
