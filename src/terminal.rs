@@ -5,7 +5,6 @@ use std::{
     os::fd::{AsRawFd, FromRawFd, RawFd},
     sync::atomic::{AtomicBool, Ordering},
     time::{Duration, Instant},
-    usize,
 };
 
 use crate::{

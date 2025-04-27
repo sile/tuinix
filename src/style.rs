@@ -249,7 +249,7 @@ impl FromStr for TerminalStyle {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut this = Self::default();
-        let error = || format!("invalid or unsupported ANSI escape sequence");
+        let error = || "invalid or unsupported ANSI escape sequence".to_string();
 
         let mut s = s.strip_prefix("\x1b[0").ok_or_else(error)?;
         if let Some(s0) = s.strip_prefix(";1") {
