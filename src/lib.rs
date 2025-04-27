@@ -11,7 +11,7 @@ mod terminal;
 pub use frame::{FixedCharWidthMeasurer, MeasureCharWidth, TerminalFrame};
 pub use geometry::{TerminalPosition, TerminalSize};
 pub use input::{KeyCode, KeyInput, TerminalInput};
-pub use style::{Rgb, TerminalStyle};
+pub use style::{TerminalColor, TerminalStyle};
 pub use terminal::{Terminal, TerminalEvent};
 
 /// Sets a file descriptor to non-blocking mode.

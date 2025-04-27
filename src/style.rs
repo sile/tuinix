@@ -13,7 +13,7 @@ use std::{
 ///
 /// ```
 /// use std::fmt::Write;
-/// use tuinix::{Rgb, TerminalFrame, TerminalSize, TerminalStyle};
+/// use tuinix::{TerminalColor, TerminalFrame, TerminalSize, TerminalStyle};
 ///
 /// // Create a basic terminal frame
 /// let size = TerminalSize { rows: 10, cols: 40 };
@@ -22,15 +22,15 @@ use std::{
 /// // Create a simple green, bold text style
 /// let style = TerminalStyle::new()
 ///     .bold()
-///     .fg_color(Rgb::GREEN);
+///     .fg_color(TerminalColor::GREEN);
 ///
 /// // Write styled text to the frame
 /// writeln!(frame, "{}This text is bold and green{}", style, TerminalStyle::RESET)?;
 ///
 /// // Create another style for highlighting
 /// let highlight = TerminalStyle::new()
-///     .bg_color(Rgb::YELLOW)
-///     .fg_color(Rgb::BLACK);
+///     .bg_color(TerminalColor::YELLOW)
+///     .fg_color(TerminalColor::BLACK);
 ///
 /// writeln!(frame, "{}Important information{}", highlight, TerminalStyle::RESET)?;
 /// # Ok::<(), std::fmt::Error>(())
@@ -85,16 +85,15 @@ pub struct TerminalStyle {
     pub strikethrough: bool,
 
     /// The foreground (text) color, if specified.
-    pub fg_color: Option<Rgb>,
+    pub fg_color: Option<TerminalColor>,
 
     /// The background color, if specified.
-    pub bg_color: Option<Rgb>,
+    pub bg_color: Option<TerminalColor>,
 }
 
 impl TerminalStyle {
     /// An alias of [`TerminalStyle::new()`] that
     /// can be used to reset all terminal styling.
-    // TODO: rename or move to top-level
     pub const RESET: Self = Self {
         bold: false,
         italic: false,
@@ -116,11 +115,11 @@ impl TerminalStyle {
     /// # Examples
     ///
     /// ```
-    /// use tuinix::{Rgb, TerminalStyle};
+    /// use tuinix::{TerminalColor, TerminalStyle};
     ///
     /// let style = TerminalStyle::new()
     ///     .bold()
-    ///     .fg_color(Rgb::GREEN);
+    ///     .fg_color(TerminalColor::GREEN);
     /// ```
     pub const fn new() -> Self {
         Self::RESET
@@ -169,13 +168,13 @@ impl TerminalStyle {
     }
 
     /// Sets the foreground (text) color.
-    pub const fn fg_color(mut self, color: Rgb) -> Self {
+    pub const fn fg_color(mut self, color: TerminalColor) -> Self {
         self.fg_color = Some(color);
         self
     }
 
     /// Sets the background color behind the text.
-    pub const fn bg_color(mut self, color: Rgb) -> Self {
+    pub const fn bg_color(mut self, color: TerminalColor) -> Self {
         self.bg_color = Some(color);
         self
     }
@@ -265,7 +264,7 @@ impl FromStr for TerminalStyle {
             let r = r.parse().map_err(|_| error())?;
             let g = g.parse().map_err(|_| error())?;
             let b = b.parse().map_err(|_| error())?;
-            this.fg_color = Some(Rgb::new(r, g, b));
+            this.fg_color = Some(TerminalColor::new(r, g, b));
             s = s0;
         }
         if let Some(s0) = s.strip_prefix(";48;2;") {
@@ -279,7 +278,7 @@ impl FromStr for TerminalStyle {
             let r = r.parse().map_err(|_| error())?;
             let g = g.parse().map_err(|_| error())?;
             let b = b.parse().map_err(|_| error())?;
-            this.bg_color = Some(Rgb::new(r, g, b));
+            this.bg_color = Some(TerminalColor::new(r, g, b));
             s = s0;
         }
 
@@ -290,10 +289,9 @@ impl FromStr for TerminalStyle {
     }
 }
 
-// TODO: TerminalColor?
-/// RGB color.
+/// Terminal color (RGB).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Rgb {
+pub struct TerminalColor {
     /// Red component.
     pub r: u8,
 
@@ -304,7 +302,7 @@ pub struct Rgb {
     pub b: u8,
 }
 
-impl Rgb {
+impl TerminalColor {
     /// ANSI black color (RGB: 0, 0, 0).
     pub const BLACK: Self = Self::new(0, 0, 0);
 
@@ -353,7 +351,7 @@ impl Rgb {
     /// ANSI bright white color (RGB: 255, 255, 255).
     pub const BRIGHT_WHITE: Self = Self::new(255, 255, 255);
 
-    /// Makes a new [`Rgb`] instance.
+    /// Makes a new [`TerminalColor`] instance.
     pub const fn new(r: u8, g: u8, b: u8) -> Self {
         Self { r, g, b }
     }
@@ -367,12 +365,12 @@ mod tests {
     fn parse_style() {
         let style: TerminalStyle = "\x1b[0;1;38;2;0;255;0m".parse().expect("invalid");
         assert!(style.bold);
-        assert_eq!(style.fg_color, Some(Rgb::GREEN));
+        assert_eq!(style.fg_color, Some(TerminalColor::GREEN));
 
         let style: TerminalStyle = "\x1b[0;38;2;0;0;0;48;2;255;255;0m"
             .parse()
             .expect("invalid");
-        assert_eq!(style.fg_color, Some(Rgb::BLACK));
-        assert_eq!(style.bg_color, Some(Rgb::YELLOW));
+        assert_eq!(style.fg_color, Some(TerminalColor::BLACK));
+        assert_eq!(style.bg_color, Some(TerminalColor::YELLOW));
     }
 }

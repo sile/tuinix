@@ -22,7 +22,7 @@ use crate::{TerminalPosition, TerminalSize, TerminalStyle};
 ///
 /// # Drawing Frames
 ///
-/// After creating and populating a [`TerminalFrame`], use [`Terminal::draw()`] to
+/// After creating and populating a [`TerminalFrame`], use [`Terminal::draw()`](crate::Terminal::draw) to
 /// efficiently render the frame to the terminal screen. The terminal implementation
 /// optimizes by only updating changed portions of the screen.
 ///
@@ -97,7 +97,7 @@ impl<M: MeasureCharWidth> TerminalFrame<M> {
     /// let mut frame = TerminalFrame::new(TerminalSize { rows: 10, cols: 20 });
     /// write!(frame, "Hello")?;
     ///
-    /// assert_eq!(frame.cursor_position().col, 5);
+    /// assert_eq!(frame.cursor().col, 5);
     /// # Ok::<(), std::fmt::Error>(())
     /// ```
     pub fn cursor(&self) -> TerminalPosition {
