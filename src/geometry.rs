@@ -46,6 +46,10 @@ impl TerminalPosition {
     pub const fn row(row: usize) -> Self {
         Self::row_col(row, 0)
     }
+
+    pub const fn col(col: usize) -> Self {
+        Self::row_col(0, col)
+    }
 }
 
 impl Add for TerminalPosition {

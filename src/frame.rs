@@ -34,6 +34,28 @@ impl<M: MeasureCharWidth> TerminalFrame<M> {
         self.size
     }
 
+    pub fn draw(&mut self, position: TerminalPosition, frame: &Self) {
+        for (src_pos, c) in frame.chars() {
+            let target_pos = position + src_pos;
+            if !self.size.contains(target_pos) {
+                continue;
+            }
+
+            if let Some((&prev_pos, prev_c)) = self.data.range(..target_pos).next_back() {
+                let end_pos = prev_pos + TerminalPosition::col(prev_c.width);
+                if target_pos < end_pos {
+                    self.data.remove(&prev_pos);
+                }
+            }
+            for i in 0..c.width {
+                self.data.remove(&(target_pos + TerminalPosition::col(i)));
+            }
+            self.data.insert(target_pos, c);
+
+            self.tail = self.tail.max(target_pos + TerminalPosition::col(c.width));
+        }
+    }
+
     pub(crate) fn chars(&self) -> impl '_ + Iterator<Item = (TerminalPosition, TerminalChar)> {
         let mut last_style = TerminalStyle::new();
         (0..self.size.rows)
@@ -54,15 +76,6 @@ impl<M: MeasureCharWidth> TerminalFrame<M> {
                     (pos, c)
                 }
             })
-    }
-
-    pub fn draw(&mut self, position: TerminalPosition, frame: &Self) {
-        for (src_pos, c) in frame.chars() {
-            let target_pos = position + src_pos;
-            if self.size.contains(target_pos) {
-                self.data.insert(target_pos, c);
-            }
-        }
     }
 }
 
