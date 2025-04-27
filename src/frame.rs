@@ -37,6 +37,9 @@ impl TerminalFrame {
                     last_style = c.style;
                     (pos, c.style, c.value)
                 } else {
+                    if pos >= self.tail {
+                        last_style = self.current_style;
+                    }
                     (pos, last_style, ' ')
                 }
             })
