@@ -5,6 +5,7 @@ use std::{
     os::fd::{AsRawFd, FromRawFd, RawFd},
     sync::atomic::{AtomicBool, Ordering},
     time::{Duration, Instant},
+    usize,
 };
 
 use crate::{
@@ -413,13 +414,27 @@ impl Terminal {
             write!(output, "\x1b[{};{}H", position.row + 1, position.col + 1)
         };
 
-        for (row, (line, old_line)) in frame.lines().zip(self.last_frame.lines()).enumerate() {
-            if line == old_line {
+        let mut skipped = false;
+        let mut last_style = None;
+        let mut last_row = usize::MAX;
+        for (new, old) in frame.chars().zip(self.last_frame.chars()) {
+            if new == old {
+                skipped = true;
                 continue;
             }
+            let (position, style, ch) = new;
 
-            move_cursor(&mut self.output, TerminalPosition::row(row))?;
-            write!(self.output, "\x1b[K{}", line)?;
+            if skipped || last_row != position.row {
+                move_cursor(&mut self.output, position)?;
+            }
+            if Some(style) != last_style {
+                write!(self.output, "{}", style)?;
+            }
+            write!(self.output, "{}", ch)?;
+
+            last_style = Some(style);
+            last_row = position.row;
+            skipped = false;
         }
 
         if let Some(position) = self.cursor {

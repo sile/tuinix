@@ -29,16 +29,17 @@ impl TerminalFrame {
     pub(crate) fn chars(
         &self,
     ) -> impl '_ + Iterator<Item = (TerminalPosition, TerminalStyle, char)> {
+        let mut last_style = TerminalStyle::new();
         (0..self.size.rows)
             .flat_map(|row| (0..self.size.cols).map(move |col| TerminalPosition::row_col(row, col)))
-            .map(|pos| {
+            .map(move |pos| {
                 if let Some(c) = self.data.get(&pos) {
+                    last_style = c.style;
                     (pos, c.style, c.value)
                 } else {
+                    (pos, last_style, ' ')
                 }
-            });
-
-        self.data.iter().map(|(pos, ch)| (*pos, ch.style, ch.value))
+            })
     }
 
     // TODO: merge or draw_frame
