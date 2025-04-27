@@ -15,10 +15,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut frame = TerminalFrame::new(terminal.size());
             write!(
                 frame,
-                "{}Hello World:{} {:?}",
+                "{}Hello World:{} {}{:?}{}",
                 TerminalStyle::new().bold().underline(),
                 TerminalStyle::RESET,
+                TerminalStyle::new().reverse(),
                 event,
+                TerminalStyle::RESET,
             )?;
             terminal.draw(frame)?;
         }

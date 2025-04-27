@@ -1,4 +1,7 @@
-use std::fmt::{Debug, Display};
+use std::{
+    fmt::{Debug, Display},
+    str::FromStr,
+};
 
 /// Styling options for terminal text output.
 ///
@@ -207,7 +210,7 @@ impl TerminalStyle {
 
 impl Display for TerminalStyle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "\x1b[0;")?;
+        write!(f, "\x1b[0")?;
 
         if self.bold {
             write!(f, ";1")?;
@@ -238,6 +241,70 @@ impl Display for TerminalStyle {
         }
 
         write!(f, "m")
+    }
+}
+
+impl FromStr for TerminalStyle {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut this = Self::default();
+        let error = || format!("invalid or unsupported ANSI escape sequence");
+
+        let mut s = s.strip_prefix("\x1b[0").ok_or_else(error)?;
+        if let Some(s0) = s.strip_prefix(";1") {
+            this.bold = true;
+            s = s0;
+        }
+        if let Some(s0) = s.strip_prefix(";2") {
+            this.dim = true;
+            s = s0;
+        }
+        if let Some(s0) = s.strip_prefix(";3") {
+            this.italic = true;
+            s = s0;
+        }
+        if let Some(s0) = s.strip_prefix(";4") {
+            this.underline = true;
+            s = s0;
+        }
+        if let Some(s0) = s.strip_prefix(";5") {
+            this.blink = true;
+            s = s0;
+        }
+        if let Some(s0) = s.strip_prefix(";7") {
+            this.reverse = true;
+            s = s0;
+        }
+        if let Some(s0) = s.strip_prefix(";9") {
+            this.strikethrough = true;
+            s = s0;
+        }
+        if let Some(s0) = s.strip_prefix(";38;2;") {
+            let (r, s0) = s0.split_once(';').ok_or_else(error)?;
+            let (g, s0) = s0.split_once(';').ok_or_else(error)?;
+            let (b, s0) = s0.split_once(';').ok_or_else(error)?;
+            let r = r.parse().map_err(|_| error())?;
+            let g = g.parse().map_err(|_| error())?;
+            let b = b.parse().map_err(|_| error())?;
+            this.fg_color = Some(Rgb::new(r, g, b));
+            s = s0;
+        }
+        if let Some(s0) = s.strip_prefix(";48;2;") {
+            let (r, s0) = s0.split_once(';').ok_or_else(error)?;
+            let (g, s0) = s0.split_once(';').ok_or_else(error)?;
+            let (b, s0) = s0.split_once(';').ok_or_else(error)?;
+            let r = r.parse().map_err(|_| error())?;
+            let g = g.parse().map_err(|_| error())?;
+            let b = b.parse().map_err(|_| error())?;
+            this.bg_color = Some(Rgb::new(r, g, b));
+            s = s0;
+        }
+
+        if s != "m" {
+            return Err(error());
+        }
+        Ok(this)
     }
 }
 
