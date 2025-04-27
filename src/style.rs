@@ -14,28 +14,6 @@ use std::{
 /// ```
 /// use tuinix::{Rgb, TerminalStyle};
 ///
-/// // Create styled text
-/// let styled = TerminalStyle::new()
-///     .bold()
-///     .fg_color(Rgb::RED)
-///     .apply("This is bold red text");
-///
-/// // Apply multiple styles
-/// let complex = TerminalStyle::new()
-///     .underline()
-///     .italic()
-///     .bg_color(Rgb::BLUE)
-///     .apply("Underlined italic text with blue background");
-/// ```
-///
-/// The styling is applied by wrapping the text with the appropriate ANSI escape
-/// sequences. All styles are automatically reset at the end of the text.
-///
-/// You can also format styled text directly using the `Display` trait:
-///
-/// ```
-/// use tuinix::{Rgb, TerminalStyle};
-///
 /// // Format styled text directly with format!
 /// let style = TerminalStyle::new().bold().fg_color(Rgb::GREEN);
 /// let formatted = format!("{}{}{}", style, "Direct formatting", TerminalStyle::RESET);
@@ -85,6 +63,7 @@ pub struct TerminalStyle {
 impl TerminalStyle {
     /// An alias of [`TerminalStyle::new()`] that
     /// can be used to reset all terminal styling.
+    // TODO: rename
     pub const RESET: Self = Self {
         bold: false,
         italic: false,
@@ -168,43 +147,6 @@ impl TerminalStyle {
     pub const fn bg_color(mut self, color: Rgb) -> Self {
         self.bg_color = Some(color);
         self
-    }
-
-    /// Applies this style to the provided text.
-    ///
-    /// This method wraps the provided text with the current style and a reset sequence,
-    /// returning a formatted string that will display with the specified styling in
-    /// compatible terminals.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use tuinix::{Rgb, TerminalStyle};
-    ///
-    /// // Apply style to text
-    /// let styled_text = TerminalStyle::new()
-    ///     .bold()
-    ///     .fg_color(Rgb::BLUE)
-    ///     .apply("Important message");
-    ///
-    /// // The result contains ANSI escape sequences that will display
-    /// // "Important message" in bold blue text in the terminal
-    /// ```
-    ///
-    /// This is equivalent to using the format macro with explicit style and reset:
-    /// ```
-    /// # use tuinix::{Rgb, TerminalStyle};
-    /// let style = TerminalStyle::new().bold().fg_color(Rgb::BLUE);
-    /// let styled_text = format!("{}{}{}", style, "Important message", TerminalStyle::RESET);
-    /// ```
-    // TODO: delete?
-    pub fn apply<T: Display>(self, text: T) -> String {
-        format!("{}{}{}", self, text, Self::RESET)
-    }
-
-    /// Similar to [`TerminalStyle::apply()`], but formats the given text using the [`Debug`] trait representation.
-    pub fn apply_debug<T: Debug>(self, text: T) -> String {
-        format!("{}{:?}{}", self, text, Self::RESET)
     }
 }
 
