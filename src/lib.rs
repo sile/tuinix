@@ -1,3 +1,5 @@
+//! TODO
+#![warn(missing_docs)]
 use std::{io::ErrorKind, os::fd::RawFd};
 
 mod frame;

@@ -63,7 +63,7 @@ pub struct TerminalStyle {
 impl TerminalStyle {
     /// An alias of [`TerminalStyle::new()`] that
     /// can be used to reset all terminal styling.
-    // TODO: rename
+    // TODO: rename or move to top-level
     pub const RESET: Self = Self {
         bold: false,
         italic: false,

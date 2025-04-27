@@ -1,6 +1,9 @@
 use std::ops::{Add, AddAssign, Sub, SubAssign};
 
-/// Dimensions of a terminal.
+/// Dimensions of a [`Terminal`](crate::Terminal) or [`TerminalFrame`](create::TerminalFrame).
+///
+/// This structure stores the number of rows (height) and columns (width) that define
+/// the size of a terminal display area.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TerminalSize {
     /// Number of rows (height) in the terminal.
@@ -16,6 +19,7 @@ impl TerminalSize {
         self.rows == 0 || self.cols == 0
     }
 
+    /// Returns `true` if the given position falls within the boundaries of this terminal size.
     pub const fn contains(self, position: TerminalPosition) -> bool {
         position.row < self.rows && position.col < self.cols
     }
@@ -47,6 +51,7 @@ impl TerminalPosition {
         Self::row_col(row, 0)
     }
 
+    /// Makes a new position with the specified column at the first row.
     pub const fn col(col: usize) -> Self {
         Self::row_col(0, col)
     }
