@@ -61,13 +61,13 @@ pub struct TerminalFrame<W = FixedCharWidthEstimator> {
 impl TerminalFrame<FixedCharWidthEstimator> {
     /// Makes a new frame with the given size and [`FixedCharWidthEstimator`].
     pub fn new(size: TerminalSize) -> Self {
-        Self::with_char_width_measurer(size, FixedCharWidthEstimator)
+        Self::with_char_width_estimator(size, FixedCharWidthEstimator)
     }
 }
 
 impl<W> TerminalFrame<W> {
     /// Makes a new frame with the given size and char width estimator.
-    pub fn with_char_width_measurer(size: TerminalSize, char_width_estimator: W) -> Self {
+    pub fn with_char_width_estimator(size: TerminalSize, char_width_estimator: W) -> Self {
         Self {
             size,
             data: BTreeMap::new(),
