@@ -49,32 +49,32 @@ use crate::{TerminalPosition, TerminalSize, TerminalStyle};
 /// # Ok::<_, std::fmt::Error>(())
 /// ```
 #[derive(Debug, Default, Clone)]
-pub struct TerminalFrame<M = FixedCharWidthMeasurer> {
+pub struct TerminalFrame<W = FixedCharWidthEstimator> {
     size: TerminalSize,
     data: BTreeMap<TerminalPosition, TerminalChar>,
     tail: TerminalPosition,
     current_style: TerminalStyle,
     escape_sequence: String,
-    measurer: M,
+    char_width_estimator: W,
 }
 
-impl<M: MeasureCharWidth + Default> TerminalFrame<M> {
-    /// Makes a new frame with the given size and a default measurer.
+impl<W: Default> TerminalFrame<W> {
+    /// Makes a new frame with the given size and a default char width estimator.
     pub fn new(size: TerminalSize) -> Self {
-        Self::with_measurer(size, M::default())
+        Self::with_char_width_measurer(size, W::default())
     }
 }
 
-impl<M: MeasureCharWidth> TerminalFrame<M> {
-    /// Makes a new frame with the given size and measurer.
-    pub fn with_measurer(size: TerminalSize, measurer: M) -> Self {
+impl<W> TerminalFrame<W> {
+    /// Makes a new frame with the given size and char width estimator.
+    pub fn with_char_width_measurer(size: TerminalSize, char_width_estimator: W) -> Self {
         Self {
             size,
             data: BTreeMap::new(),
             tail: TerminalPosition::ZERO,
             current_style: TerminalStyle::new(),
             escape_sequence: String::new(),
-            measurer,
+            char_width_estimator,
         }
     }
 
@@ -172,9 +172,20 @@ impl<M: MeasureCharWidth> TerminalFrame<M> {
                 }
             })
     }
+
+    pub(crate) fn finish(self) -> TerminalFrame<FixedCharWidthEstimator> {
+        TerminalFrame {
+            size: self.size,
+            data: self.data,
+            tail: self.tail,
+            current_style: self.current_style,
+            escape_sequence: self.escape_sequence,
+            char_width_estimator: FixedCharWidthEstimator,
+        }
+    }
 }
 
-impl std::fmt::Write for TerminalFrame {
+impl<W: EstimateCharWidth> std::fmt::Write for TerminalFrame<W> {
     fn write_str(&mut self, s: &str) -> std::fmt::Result {
         for c in s.chars() {
             if !self.escape_sequence.is_empty() {
@@ -196,7 +207,7 @@ impl std::fmt::Write for TerminalFrame {
                 continue;
             }
 
-            let width = self.measurer.measure_char_width(c);
+            let width = self.char_width_estimator.estimate_char_width(c);
             if width == 0 {
                 continue;
             }
@@ -218,7 +229,7 @@ impl std::fmt::Write for TerminalFrame {
     }
 }
 
-/// Trait for measuring the display width of characters in a terminal.
+/// Trait for estimating the display width of characters in a terminal.
 ///
 /// This trait provides a way to determine how much horizontal space a character
 /// will occupy when rendered in a terminal.
@@ -235,32 +246,32 @@ impl std::fmt::Write for TerminalFrame {
 ///   the appearance of preceding characters. The current interface cannot properly
 ///   handle these because it examines each character in isolation without
 ///   considering adjacent characters.
-pub trait MeasureCharWidth {
-    /// Measures the display width of a character.
+pub trait EstimateCharWidth {
+    /// Estimates the display width of a character.
     ///
     /// Returns the number of columns the character will occupy in the terminal.
-    fn measure_char_width(&self, c: char) -> usize;
+    fn estimate_char_width(&self, c: char) -> usize;
 }
 
-/// A character width measurer that assumes most characters have a fixed width of 1 column.
+/// A character width estimator that assumes most characters have a fixed width of 1 column.
 ///
-/// This simple implementation of [`MeasureCharWidth`] assigns:
+/// This simple implementation of [`EstimateCharWidth`] assigns:
 /// - Width of 0 to all control characters (they don't take visual space)
 /// - Width of 1 to all other characters
 ///
 /// # Limitations
 ///
-/// This measurer doesn't correctly handle:
+/// This estimator doesn't correctly handle:
 /// - Wide characters like CJK (Chinese, Japanese, Korean) that take 2 columns
 /// - Emojis and other complex Unicode characters
 ///
 /// For better support of these characters, consider implementing a more
-/// sophisticated width measurer based on Unicode width calculation libraries.
+/// sophisticated width estimator based on Unicode width calculation libraries.
 #[derive(Debug, Default, Clone)]
-pub struct FixedCharWidthMeasurer;
+pub struct FixedCharWidthEstimator;
 
-impl MeasureCharWidth for FixedCharWidthMeasurer {
-    fn measure_char_width(&self, c: char) -> usize {
+impl EstimateCharWidth for FixedCharWidthEstimator {
+    fn estimate_char_width(&self, c: char) -> usize {
         if c.is_control() { 0 } else { 1 }
     }
 }

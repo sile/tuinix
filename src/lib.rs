@@ -86,7 +86,7 @@ mod input;
 mod style;
 mod terminal;
 
-pub use frame::{FixedCharWidthMeasurer, MeasureCharWidth, TerminalFrame};
+pub use frame::{EstimateCharWidth, FixedCharWidthEstimator, TerminalFrame};
 pub use geometry::{TerminalPosition, TerminalSize};
 pub use input::{KeyCode, KeyInput, TerminalInput};
 pub use style::{TerminalColor, TerminalStyle};
