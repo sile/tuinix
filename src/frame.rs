@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, num::NonZeroUsize};
 
 use crate::{TerminalPosition, TerminalSize, TerminalStyle};
 
@@ -139,12 +139,12 @@ impl<W> TerminalFrame<W> {
             }
 
             if let Some((&prev_pos, prev_c)) = self.data.range(..target_pos).next_back() {
-                let end_pos = prev_pos + TerminalPosition::col(prev_c.width);
+                let end_pos = prev_pos + TerminalPosition::col(prev_c.width.get());
                 if target_pos < end_pos {
                     self.data.remove(&prev_pos);
                 }
             }
-            for i in 0..c.width {
+            for i in 0..c.width.get() {
                 self.data.remove(&(target_pos + TerminalPosition::col(i)));
             }
             self.data.insert(target_pos, c);
@@ -152,23 +152,26 @@ impl<W> TerminalFrame<W> {
     }
 
     pub(crate) fn chars(&self) -> impl '_ + Iterator<Item = (TerminalPosition, TerminalChar)> {
-        let mut last_style = TerminalStyle::new();
+        let mut next_pos = TerminalPosition::ZERO;
         (0..self.size.rows)
             .flat_map(|row| (0..self.size.cols).map(move |col| TerminalPosition::row_col(row, col)))
-            .map(move |pos| {
+            .filter_map(move |pos| {
+                if pos < next_pos {
+                    return None;
+                }
+
+                next_pos = pos;
                 if let Some(c) = self.data.get(&pos).copied() {
-                    last_style = c.style;
-                    (pos, c)
+                    next_pos.col += c.width.get();
+                    Some((pos, c))
                 } else {
-                    if pos >= self.tail {
-                        last_style = self.current_style;
-                    }
+                    next_pos.col += 1;
                     let c = TerminalChar {
-                        style: last_style,
-                        width: 1,
+                        style: TerminalStyle::new(),
+                        width: NonZeroUsize::MIN,
                         value: ' ',
                     };
-                    (pos, c)
+                    Some((pos, c))
                 }
             })
     }
@@ -207,12 +210,12 @@ impl<W: EstimateCharWidth> std::fmt::Write for TerminalFrame<W> {
                 continue;
             }
 
-            let width = self.char_width_estimator.estimate_char_width(c);
-            if width == 0 {
+            let Some(width) = NonZeroUsize::new(self.char_width_estimator.estimate_char_width(c))
+            else {
                 continue;
-            }
+            };
 
-            if self.tail.row < self.size.rows && self.tail.col + width <= self.size.cols {
+            if self.tail.row < self.size.rows && self.tail.col + width.get() <= self.size.cols {
                 self.data.insert(
                     self.tail,
                     TerminalChar {
@@ -222,7 +225,7 @@ impl<W: EstimateCharWidth> std::fmt::Write for TerminalFrame<W> {
                     },
                 );
             }
-            self.tail.col += width;
+            self.tail.col += width.get();
         }
 
         Ok(())
@@ -279,7 +282,7 @@ impl EstimateCharWidth for FixedCharWidthEstimator {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TerminalChar {
     pub style: TerminalStyle,
-    pub width: usize,
+    pub width: NonZeroUsize,
     pub value: char,
 }
 
@@ -315,13 +318,13 @@ mod tests {
 
         assert_eq!(chars.len(), 4);
         assert_eq!(chars[0].1.value, 'お');
-        assert_eq!(chars[0].1.width, 2);
+        assert_eq!(chars[0].1.width.get(), 2);
         assert_eq!(chars[1].1.value, 'は');
-        assert_eq!(chars[1].1.width, 2);
+        assert_eq!(chars[1].1.width.get(), 2);
         assert_eq!(chars[2].1.value, 'よ');
-        assert_eq!(chars[2].1.width, 2);
+        assert_eq!(chars[2].1.width.get(), 2);
         assert_eq!(chars[3].1.value, 'う');
-        assert_eq!(chars[3].1.width, 2);
+        assert_eq!(chars[3].1.width.get(), 2);
 
         // Check positions of each character
         assert_eq!(chars[0].0, TerminalPosition::row_col(0, 0));
