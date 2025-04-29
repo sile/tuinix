@@ -94,19 +94,16 @@ impl<R: Read> InputReader<R> {
     }
 
     pub(crate) fn read_input_from_buf(&mut self) -> std::io::Result<Option<TerminalInput>> {
-        let Some((input, consumed_size)) = parse_input(&self.buf[..self.buf_offset])? else {
-            return Ok(None);
-        };
+        let (input, consumed_size) = parse_input(&self.buf[..self.buf_offset])?;
         self.buf.copy_within(consumed_size..self.buf_offset, 0);
         self.buf_offset -= consumed_size;
         Ok(input)
     }
 }
 
-// TODO: Refactor to remove nexted Option's
-fn parse_input(bytes: &[u8]) -> std::io::Result<Option<(Option<TerminalInput>, usize)>> {
+fn parse_input(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> {
     if bytes.is_empty() {
-        return Ok(None);
+        return Ok((None, 0)); // No bytes to parse, consumed 0 bytes
     }
 
     // Regular ASCII character
@@ -120,25 +117,25 @@ fn parse_input(bytes: &[u8]) -> std::io::Result<Option<(Option<TerminalInput>, u
                 0x08 => KeyCode::Backspace, // Backspace (Ctrl+H)
                 c => KeyCode::Char((c + 0x60) as char),
             };
-            return Ok(Some((
+            return Ok((
                 Some(TerminalInput::Key(KeyInput {
                     ctrl,
                     alt: false,
                     code,
                 })),
                 1,
-            )));
+            ));
         }
 
         // Regular ASCII characters
-        return Ok(Some((
+        return Ok((
             Some(TerminalInput::Key(KeyInput {
                 ctrl: false,
                 alt: false,
                 code: KeyCode::Char(bytes[0] as char),
             })),
             1,
-        )));
+        ));
     }
 
     // Special keys and escape sequences
@@ -147,7 +144,7 @@ fn parse_input(bytes: &[u8]) -> std::io::Result<Option<(Option<TerminalInput>, u
         0x1b => {
             // For a standalone ESC press, we need to wait and see if more bytes follow
             if bytes.len() == 1 {
-                return Ok(None); // Need more bytes
+                return Ok((None, 0)); // Need more bytes, consumed 0 bytes
             }
 
             // Alt + character (ESC followed by a regular character)
@@ -165,98 +162,98 @@ fn parse_input(bytes: &[u8]) -> std::io::Result<Option<(Option<TerminalInput>, u
                     KeyCode::Char(c)
                 };
 
-                return Ok(Some((
+                return Ok((
                     Some(TerminalInput::Key(KeyInput {
                         ctrl: bytes[1] < 0x20,
                         alt: true,
                         code,
                     })),
                     2,
-                )));
+                ));
             }
 
             // ESC [ sequences (most function keys, arrow keys, etc.)
             if bytes[1] == b'[' {
                 // Need at least 3 bytes for the basic arrow keys (ESC [ A)
                 if bytes.len() < 3 {
-                    return Ok(None); // Need more bytes
+                    return Ok((None, 0)); // Need more bytes, consumed 0 bytes
                 }
 
                 // Arrow keys: ESC [ A, ESC [ B, ESC [ C, ESC [ D
                 match bytes[2] {
                     b'A' => {
-                        return Ok(Some((
+                        return Ok((
                             Some(TerminalInput::Key(KeyInput {
                                 ctrl: false,
                                 alt: false,
                                 code: KeyCode::Up,
                             })),
                             3,
-                        )));
+                        ));
                     }
                     b'B' => {
-                        return Ok(Some((
+                        return Ok((
                             Some(TerminalInput::Key(KeyInput {
                                 ctrl: false,
                                 alt: false,
                                 code: KeyCode::Down,
                             })),
                             3,
-                        )));
+                        ));
                     }
                     b'C' => {
-                        return Ok(Some((
+                        return Ok((
                             Some(TerminalInput::Key(KeyInput {
                                 ctrl: false,
                                 alt: false,
                                 code: KeyCode::Right,
                             })),
                             3,
-                        )));
+                        ));
                     }
                     b'D' => {
-                        return Ok(Some((
+                        return Ok((
                             Some(TerminalInput::Key(KeyInput {
                                 ctrl: false,
                                 alt: false,
                                 code: KeyCode::Left,
                             })),
                             3,
-                        )));
+                        ));
                     }
 
                     // Home/End: ESC [ H, ESC [ F
                     b'H' => {
-                        return Ok(Some((
+                        return Ok((
                             Some(TerminalInput::Key(KeyInput {
                                 ctrl: false,
                                 alt: false,
                                 code: KeyCode::Home,
                             })),
                             3,
-                        )));
+                        ));
                     }
                     b'F' => {
-                        return Ok(Some((
+                        return Ok((
                             Some(TerminalInput::Key(KeyInput {
                                 ctrl: false,
                                 alt: false,
                                 code: KeyCode::End,
                             })),
                             3,
-                        )));
+                        ));
                     }
 
                     // Shift+Tab: ESC [ Z
                     b'Z' => {
-                        return Ok(Some((
+                        return Ok((
                             Some(TerminalInput::Key(KeyInput {
                                 ctrl: false,
                                 alt: false,
                                 code: KeyCode::BackTab,
                             })),
                             3,
-                        )));
+                        ));
                     }
 
                     // Arrow keys with modifiers: ESC [ 1 ; modifier ch
@@ -276,20 +273,17 @@ fn parse_input(bytes: &[u8]) -> std::io::Result<Option<(Option<TerminalInput>, u
                             b'D' => KeyCode::Left,
                             _ => {
                                 // Unknown sequence, discard these bytes
-                                return Ok(Some((None, 6)));
+                                return Ok((None, 6));
                             }
                         };
 
-                        return Ok(Some((
-                            Some(TerminalInput::Key(KeyInput { ctrl, alt, code })),
-                            6,
-                        )));
+                        return Ok((Some(TerminalInput::Key(KeyInput { ctrl, alt, code })), 6));
                     }
 
                     // Multi-byte sequences for special keys
                     b'1' | b'2' | b'3' | b'4' | b'5' | b'6' => {
                         if bytes.len() < 4 {
-                            return Ok(None); // Need more bytes
+                            return Ok((None, 0)); // Need more bytes, consumed 0 bytes
                         }
 
                         if bytes[3] == b'~' {
@@ -302,17 +296,17 @@ fn parse_input(bytes: &[u8]) -> std::io::Result<Option<(Option<TerminalInput>, u
                                 b'6' => KeyCode::PageDown,    // Page Down
                                 _ => {
                                     // Unknown sequence, discard these bytes
-                                    return Ok(Some((None, 4)));
+                                    return Ok((None, 4));
                                 }
                             };
-                            return Ok(Some((
+                            return Ok((
                                 Some(TerminalInput::Key(KeyInput {
                                     ctrl: false,
                                     alt: false,
                                     code,
                                 })),
                                 4,
-                            )));
+                            ));
                         }
 
                         // Handle modifiers in sequences like ESC [ 1 ; 5 ~
@@ -326,7 +320,7 @@ fn parse_input(bytes: &[u8]) -> std::io::Result<Option<(Option<TerminalInput>, u
                                 b'6' => KeyCode::PageDown,
                                 _ => {
                                     // Unknown sequence, discard these bytes
-                                    return Ok(Some((None, 6)));
+                                    return Ok((None, 6));
                                 }
                             };
 
@@ -335,27 +329,24 @@ fn parse_input(bytes: &[u8]) -> std::io::Result<Option<(Option<TerminalInput>, u
                             let alt = modifier & 0x2 != 0;
                             let ctrl = modifier & 0x4 != 0;
 
-                            return Ok(Some((
-                                Some(TerminalInput::Key(KeyInput { ctrl, alt, code })),
-                                6,
-                            )));
+                            return Ok((Some(TerminalInput::Key(KeyInput { ctrl, alt, code })), 6));
                         }
 
                         // Not enough bytes yet for the full sequence
                         if bytes.len() < 6 {
-                            return Ok(None);
+                            return Ok((None, 0)); // Need more bytes, consumed 0 bytes
                         }
 
                         // Unknown sequence, discard the bytes we've examined so far
-                        return Ok(Some((None, 3)));
+                        return Ok((None, 3));
                     }
 
                     _ => {
                         // Unknown escape sequence, discard the first 3 bytes
                         if bytes.len() >= 3 {
-                            return Ok(Some((None, 3)));
+                            return Ok((None, 3));
                         }
-                        return Ok(None); // Need more bytes
+                        return Ok((None, 0)); // Need more bytes, consumed 0 bytes
                     }
                 }
             }
@@ -364,72 +355,72 @@ fn parse_input(bytes: &[u8]) -> std::io::Result<Option<(Option<TerminalInput>, u
             if bytes[1] == b'O' {
                 // Need at least 3 bytes for these sequences
                 if bytes.len() < 3 {
-                    return Ok(None); // Need more bytes
+                    return Ok((None, 0)); // Need more bytes, consumed 0 bytes
                 }
 
                 // Some terminals send ESC O A, ESC O B, etc. for arrow keys
                 match bytes[2] {
                     b'A' => {
-                        return Ok(Some((
+                        return Ok((
                             Some(TerminalInput::Key(KeyInput {
                                 ctrl: false,
                                 alt: false,
                                 code: KeyCode::Up,
                             })),
                             3,
-                        )));
+                        ));
                     }
                     b'B' => {
-                        return Ok(Some((
+                        return Ok((
                             Some(TerminalInput::Key(KeyInput {
                                 ctrl: false,
                                 alt: false,
                                 code: KeyCode::Down,
                             })),
                             3,
-                        )));
+                        ));
                     }
                     b'C' => {
-                        return Ok(Some((
+                        return Ok((
                             Some(TerminalInput::Key(KeyInput {
                                 ctrl: false,
                                 alt: false,
                                 code: KeyCode::Right,
                             })),
                             3,
-                        )));
+                        ));
                     }
                     b'D' => {
-                        return Ok(Some((
+                        return Ok((
                             Some(TerminalInput::Key(KeyInput {
                                 ctrl: false,
                                 alt: false,
                                 code: KeyCode::Left,
                             })),
                             3,
-                        )));
+                        ));
                     }
                     b'H' => {
-                        return Ok(Some((
+                        return Ok((
                             Some(TerminalInput::Key(KeyInput {
                                 ctrl: false,
                                 alt: false,
                                 code: KeyCode::Home,
                             })),
                             3,
-                        )));
+                        ));
                     }
                     b'F' => {
-                        return Ok(Some((
+                        return Ok((
                             Some(TerminalInput::Key(KeyInput {
                                 ctrl: false,
                                 alt: false,
                                 code: KeyCode::End,
                             })),
                             3,
-                        )));
+                        ));
                     }
-                    _ => return Ok(Some((None, 3))), // Unknown ESC O sequence
+                    _ => return Ok((None, 3)), // Unknown ESC O sequence
                 }
             }
 
@@ -437,25 +428,25 @@ fn parse_input(bytes: &[u8]) -> std::io::Result<Option<(Option<TerminalInput>, u
             // Wait at least 50ms before treating it as a standalone ESC
             // But since we can't do timing here, we'll just interpret it as ESC if
             // it doesn't match any known start of a sequence
-            Ok(Some((
+            Ok((
                 Some(TerminalInput::Key(KeyInput {
                     ctrl: false,
                     alt: false,
                     code: KeyCode::Escape,
                 })),
                 1,
-            )))
+            ))
         }
 
         // Backspace
-        0x7F => Ok(Some((
+        0x7F => Ok((
             Some(TerminalInput::Key(KeyInput {
                 ctrl: false,
                 alt: false,
                 code: KeyCode::Backspace,
             })),
             1,
-        ))),
+        )),
 
         // Handle UTF-8 characters
         _ if bytes[0] >= 0x80 => {
@@ -469,29 +460,29 @@ fn parse_input(bytes: &[u8]) -> std::io::Result<Option<(Option<TerminalInput>, u
             }
 
             if bytes.len() < width {
-                return Ok(None); // Not enough bytes yet
+                return Ok((None, 0)); // Not enough bytes yet, consumed 0 bytes
             }
 
             if let Ok(s) = std::str::from_utf8(&bytes[0..width]) {
                 if let Some(c) = s.chars().next() {
-                    return Ok(Some((
+                    return Ok((
                         Some(TerminalInput::Key(KeyInput {
                             ctrl: false,
                             alt: false,
                             code: KeyCode::Char(c),
                         })),
                         width,
-                    )));
+                    ));
                 }
             }
 
             // Invalid UTF-8 sequence, discard the first byte
-            Ok(Some((None, 1)))
+            Ok((None, 1))
         }
 
         _ => {
             // Unknown byte, discard it
-            Ok(Some((None, 1)))
+            Ok((None, 1))
         }
     }
 }
