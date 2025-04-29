@@ -110,12 +110,10 @@ fn parse_input(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> 
     if bytes[0] < 0x80 && bytes[0] != 0x1b && bytes[0] != 0x7f {
         // Control characters (Ctrl+A through Ctrl+Z)
         if bytes[0] < 0x20 {
-            let ctrl = true;
-            let code = match bytes[0] {
-                0x0D => KeyCode::Enter,     // Enter
-                0x09 => KeyCode::Tab,       // Tab
-                0x08 => KeyCode::Backspace, // Backspace (Ctrl+H)
-                c => KeyCode::Char((c + 0x60) as char),
+            let (ctrl, code) = match bytes[0] {
+                0x0D => (false, KeyCode::Enter), // Enter
+                0x09 => (false, KeyCode::Tab),   // Tab
+                c => (true, KeyCode::Char((c + 0x60) as char)),
             };
             return Ok((
                 Some(TerminalInput::Key(KeyInput {
