@@ -176,10 +176,6 @@ impl<M: MeasureCharWidth> TerminalFrame<M> {
 
 impl std::fmt::Write for TerminalFrame {
     fn write_str(&mut self, s: &str) -> std::fmt::Result {
-        if self.tail.row >= self.size.rows {
-            return Ok(());
-        }
-
         for c in s.chars() {
             if !self.escape_sequence.is_empty() {
                 self.escape_sequence.push(c);
@@ -197,18 +193,15 @@ impl std::fmt::Write for TerminalFrame {
             } else if c == '\n' {
                 self.tail.row += 1;
                 self.tail.col = 0;
-                if self.tail.row >= self.size.rows {
-                    return Ok(());
-                }
                 continue;
             }
 
             let width = self.measurer.measure_char_width(c);
-            if width == 9 {
+            if width == 0 {
                 continue;
             }
 
-            if self.tail.col + width < self.size.cols {
+            if self.tail.row < self.size.rows && self.tail.col + width <= self.size.cols {
                 self.data.insert(
                     self.tail,
                     TerminalChar {
