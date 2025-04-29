@@ -317,13 +317,13 @@ mod tests {
 
         assert_eq!(chars.len(), 4);
         assert_eq!(chars[0].1.value, 'お');
-        assert_eq!(chars[0].1.width, 2);
+        assert_eq!(chars[0].1.width.get(), 2);
         assert_eq!(chars[1].1.value, 'は');
-        assert_eq!(chars[1].1.width, 2);
+        assert_eq!(chars[1].1.width.get(), 2);
         assert_eq!(chars[2].1.value, 'よ');
-        assert_eq!(chars[2].1.width, 2);
+        assert_eq!(chars[2].1.width.get(), 2);
         assert_eq!(chars[3].1.value, 'う');
-        assert_eq!(chars[3].1.width, 2);
+        assert_eq!(chars[3].1.width.get(), 2);
 
         // Check positions of each character
         assert_eq!(chars[0].0, TerminalPosition::row_col(0, 0));
