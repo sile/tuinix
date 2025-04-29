@@ -132,7 +132,7 @@ impl<W> TerminalFrame<W> {
     /// # Ok::<(), std::fmt::Error>(())
     /// ```
     pub fn draw<X>(&mut self, position: TerminalPosition, frame: &TerminalFrame<X>) {
-        for (src_pos, c) in frame.chars() {
+        for (src_pos, c) in frame.chars().filter_map(|(p, c)| c.map(|c| (p, c))) {
             let target_pos = position + src_pos;
             if !self.size.contains(target_pos) {
                 continue;
@@ -151,19 +151,21 @@ impl<W> TerminalFrame<W> {
         }
     }
 
-    pub(crate) fn chars(&self) -> impl '_ + Iterator<Item = (TerminalPosition, TerminalChar)> {
+    pub(crate) fn chars(
+        &self,
+    ) -> impl '_ + Iterator<Item = (TerminalPosition, Option<TerminalChar>)> {
         let mut next_pos = TerminalPosition::ZERO;
         (0..self.size.rows)
             .flat_map(|row| (0..self.size.cols).map(move |col| TerminalPosition::row_col(row, col)))
-            .filter_map(move |pos| {
+            .map(move |pos| {
                 if pos < next_pos {
-                    return None;
+                    return (pos, None);
                 }
 
                 next_pos = pos;
                 if let Some(c) = self.data.get(&pos).copied() {
                     next_pos.col += c.width.get();
-                    Some((pos, c))
+                    (pos, Some(c))
                 } else {
                     next_pos.col += 1;
                     let c = TerminalChar {
@@ -171,7 +173,7 @@ impl<W> TerminalFrame<W> {
                         width: NonZeroUsize::MIN,
                         value: ' ',
                     };
-                    Some((pos, c))
+                    (pos, Some(c))
                 }
             })
     }

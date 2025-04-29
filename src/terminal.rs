@@ -422,7 +422,9 @@ impl Terminal {
                 skipped = true;
                 continue;
             }
-            let (position, c) = new;
+            let (position, Some(c)) = new else {
+                continue;
+            };
 
             if skipped || last_row != position.row {
                 move_cursor(&mut self.output, position)?;
