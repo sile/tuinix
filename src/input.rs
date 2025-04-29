@@ -78,21 +78,32 @@ impl<R: Read> InputReader<R> {
     }
 
     pub fn read_input(&mut self) -> std::io::Result<Option<TerminalInput>> {
+        if self.buf_offset > 0 {
+            if let Some(input) = self.read_input_from_buf()? {
+                return Ok(Some(input));
+            }
+        }
+
         let read_size = self.inner.read(&mut self.buf[self.buf_offset..])?;
         if read_size == 0 {
             return Err(std::io::ErrorKind::UnexpectedEof.into());
         }
 
-        let size = self.buf_offset + read_size;
-        let Some((input, consumed_size)) = parse_input(&self.buf[..size])? else {
+        self.buf_offset += read_size;
+        self.read_input_from_buf()
+    }
+
+    pub(crate) fn read_input_from_buf(&mut self) -> std::io::Result<Option<TerminalInput>> {
+        let Some((input, consumed_size)) = parse_input(&self.buf[..self.buf_offset])? else {
             return Ok(None);
         };
-        self.buf.copy_within(consumed_size..size, 0);
-        self.buf_offset = 0;
+        self.buf.copy_within(consumed_size..self.buf_offset, 0);
+        self.buf_offset -= consumed_size;
         Ok(input)
     }
 }
 
+// TODO: Refactor to remove nexted Option's
 fn parse_input(bytes: &[u8]) -> std::io::Result<Option<(Option<TerminalInput>, usize)>> {
     if bytes.is_empty() {
         return Ok(None);
