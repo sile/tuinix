@@ -316,7 +316,11 @@ mod tests {
         assert_eq!(frame.cursor().col, 8); // 4 characters × 2 columns each = 8
 
         // Verify each character is stored correctly with proper width
-        let chars: Vec<_> = frame.chars().filter(|(_, c)| c.value != ' ').collect();
+        let chars: Vec<_> = frame
+            .chars()
+            .filter_map(|(p, c)| c.map(|c| (p, c)))
+            .filter(|(_, c)| c.value != ' ')
+            .collect();
 
         assert_eq!(chars.len(), 4);
         assert_eq!(chars[0].1.value, 'お');
