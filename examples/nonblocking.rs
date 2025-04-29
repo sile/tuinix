@@ -65,7 +65,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             match event.token() {
                 STDIN_TOKEN => {
                     // Handle keyboard input
-                    if let Some(Some(input)) = try_nonblocking(terminal.read_input())? {
+                    while let Some(Some(input)) = try_nonblocking(terminal.read_input())? {
                         match input {
                             TerminalInput::Key(key_input) => {
                                 // Check if 'q' was pressed
@@ -84,7 +84,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 SIGNAL_TOKEN => {
                     // Handle terminal resize event
-                    if let Some(size) = try_nonblocking(terminal.wait_for_resize())? {
+                    while let Some(size) = try_nonblocking(terminal.wait_for_resize())? {
                         let mut frame = TerminalFrame::new(size);
                         writeln!(frame, "Terminal resized to {}x{}", size.cols, size.rows)?;
                         writeln!(frame, "\nPress any key ('q' to quit)")?;

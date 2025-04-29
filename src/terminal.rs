@@ -258,6 +258,10 @@ impl Terminal {
         &mut self,
         timeout: Option<Duration>,
     ) -> std::io::Result<Option<TerminalEvent>> {
+        if let Some(input) = self.input.read_input_from_buf()? {
+            return Ok(Some(TerminalEvent::Input(input)));
+        }
+
         let start_time = Instant::now();
         loop {
             unsafe {
