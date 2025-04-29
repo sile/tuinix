@@ -152,19 +152,20 @@ impl<W> TerminalFrame<W> {
     }
 
     pub(crate) fn chars(&self) -> impl '_ + Iterator<Item = (TerminalPosition, TerminalChar)> {
-        let mut skip_count = 0;
+        let mut next_pos = TerminalPosition::ZERO;
         (0..self.size.rows)
             .flat_map(|row| (0..self.size.cols).map(move |col| TerminalPosition::row_col(row, col)))
             .filter_map(move |pos| {
-                if skip_count > 0 {
-                    skip_count -= 1;
+                if pos < next_pos {
                     return None;
                 }
 
+                next_pos = pos;
                 if let Some(c) = self.data.get(&pos).copied() {
-                    skip_count = c.width.get() - 1;
+                    next_pos.col += c.width.get();
                     Some((pos, c))
                 } else {
+                    next_pos.col += 1;
                     let c = TerminalChar {
                         style: TerminalStyle::new(),
                         width: NonZeroUsize::MIN,
