@@ -58,10 +58,10 @@ pub struct TerminalFrame<W = FixedCharWidthEstimator> {
     char_width_estimator: W,
 }
 
-impl<W: Default> TerminalFrame<W> {
-    /// Makes a new frame with the given size and a default char width estimator.
+impl TerminalFrame<FixedCharWidthEstimator> {
+    /// Makes a new frame with the given size and [`FixedCharWidthEstimator`].
     pub fn new(size: TerminalSize) -> Self {
-        Self::with_char_width_measurer(size, W::default())
+        Self::with_char_width_measurer(size, FixedCharWidthEstimator)
     }
 }
 
@@ -131,7 +131,7 @@ impl<W> TerminalFrame<W> {
     /// main_frame.draw(TerminalPosition::row_col(2, 10), &sub_frame);
     /// # Ok::<(), std::fmt::Error>(())
     /// ```
-    pub fn draw(&mut self, position: TerminalPosition, frame: &Self) {
+    pub fn draw<X>(&mut self, position: TerminalPosition, frame: &TerminalFrame<X>) {
         for (src_pos, c) in frame.chars() {
             let target_pos = position + src_pos;
             if !self.size.contains(target_pos) {
