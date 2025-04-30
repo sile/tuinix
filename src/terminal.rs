@@ -188,7 +188,7 @@ impl Terminal {
             output: BufWriter::new(stdout),
             signal: set_sigwinch_handler()?,
             original_termios,
-            size: TerminalSize::default(),
+            size: TerminalSize::EMPTY,
             last_frame: TerminalFrame::default(),
             cursor: None,
         };
@@ -410,7 +410,7 @@ impl Terminal {
         self.hide_cursor()?;
 
         if frame.size() != self.last_frame.size() {
-            self.last_frame = TerminalFrame::new(TerminalSize::default());
+            self.last_frame = TerminalFrame::new(TerminalSize::EMPTY);
         }
 
         let move_cursor = |output: &mut BufWriter<_>, position: TerminalPosition| {

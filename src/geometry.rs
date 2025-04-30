@@ -14,6 +14,9 @@ pub struct TerminalSize {
 }
 
 impl TerminalSize {
+    /// A terminal size with zero rows and zero columns.
+    pub const EMPTY: Self = Self { rows: 0, cols: 0 };
+
     /// Returns `true` if the terminal has zero rows or zero columns.
     pub const fn is_empty(self) -> bool {
         self.rows == 0 || self.cols == 0
