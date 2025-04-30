@@ -161,6 +161,9 @@ impl<W> TerminalFrame<W> {
             .flat_map(|row| (0..self.size.cols).map(move |col| TerminalPosition::row_col(row, col)))
             .filter_map(move |pos| {
                 if pos < next_pos {
+                    // Skip this position as it's part of a multi-column
+                    // character's display space, but not the actual starting
+                    // position of the character.
                     return None;
                 }
 
