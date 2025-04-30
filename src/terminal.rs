@@ -410,6 +410,11 @@ impl Terminal {
         self.hide_cursor()?;
 
         if frame.size() != self.last_frame.size() {
+            // Reset the last frame when the frame size changes to
+            // disable delta drawing optimization.
+            // This ensures a complete redraw of the new frame rather
+            // than attempting to compare against a frame of different dimensions,
+            // which would lead to incorrect rendering.
             self.last_frame = TerminalFrame::new(TerminalSize::EMPTY);
         }
 
