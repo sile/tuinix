@@ -132,7 +132,7 @@ impl<W> TerminalFrame<W> {
     /// # Ok::<(), std::fmt::Error>(())
     /// ```
     pub fn draw<X>(&mut self, position: TerminalPosition, frame: &TerminalFrame<X>) {
-        for (src_pos, c) in frame.chars().filter_map(|(p, c)| c.map(|c| (p, c))) {
+        for (src_pos, c) in frame.chars() {
             let target_pos = position + src_pos;
             if !self.size.contains(target_pos) {
                 continue;
@@ -151,21 +151,23 @@ impl<W> TerminalFrame<W> {
         }
     }
 
-    pub(crate) fn chars(
-        &self,
-    ) -> impl '_ + Iterator<Item = (TerminalPosition, Option<TerminalChar>)> {
+    pub(crate) fn get_char(&self, position: TerminalPosition) -> Option<TerminalChar> {
+        self.data.get(&position).copied()
+    }
+
+    pub(crate) fn chars(&self) -> impl '_ + Iterator<Item = (TerminalPosition, TerminalChar)> {
         let mut next_pos = TerminalPosition::ZERO;
         (0..self.size.rows)
             .flat_map(|row| (0..self.size.cols).map(move |col| TerminalPosition::row_col(row, col)))
-            .map(move |pos| {
+            .filter_map(move |pos| {
                 if pos < next_pos {
-                    return (pos, None);
+                    return None;
                 }
 
                 next_pos = pos;
                 if let Some(c) = self.data.get(&pos).copied() {
                     next_pos.col += c.width.get();
-                    (pos, Some(c))
+                    Some((pos, c))
                 } else {
                     next_pos.col += 1;
                     let c = TerminalChar {
@@ -173,7 +175,7 @@ impl<W> TerminalFrame<W> {
                         width: NonZeroUsize::MIN,
                         value: ' ',
                     };
-                    (pos, Some(c))
+                    Some((pos, c))
                 }
             })
     }
@@ -316,11 +318,7 @@ mod tests {
         assert_eq!(frame.cursor().col, 8); // 4 characters × 2 columns each = 8
 
         // Verify each character is stored correctly with proper width
-        let chars: Vec<_> = frame
-            .chars()
-            .filter_map(|(p, c)| c.map(|c| (p, c)))
-            .filter(|(_, c)| c.value != ' ')
-            .collect();
+        let chars: Vec<_> = frame.chars().filter(|(_, c)| c.value != ' ').collect();
 
         assert_eq!(chars.len(), 4);
         assert_eq!(chars[0].1.value, 'お');
