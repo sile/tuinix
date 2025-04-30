@@ -188,7 +188,7 @@ impl Terminal {
             output: BufWriter::new(stdout),
             signal: set_sigwinch_handler()?,
             original_termios,
-            size: TerminalSize::default(),
+            size: TerminalSize::EMPTY,
             last_frame: TerminalFrame::default(),
             cursor: None,
         };
@@ -409,9 +409,13 @@ impl Terminal {
         let frame = frame.finish();
         self.hide_cursor()?;
 
-        if self.last_frame.size() != frame.size() {
-            write!(self.output, "\x1b[2J")?; // Clear screen
-            self.last_frame = TerminalFrame::new(frame.size());
+        if frame.size() != self.last_frame.size() {
+            // Reset the last frame when the frame size changes to
+            // disable delta drawing optimization.
+            // This ensures a complete redraw of the new frame rather
+            // than attempting to compare against a frame of different dimensions,
+            // which would lead to incorrect rendering.
+            self.last_frame = TerminalFrame::new(TerminalSize::EMPTY);
         }
 
         let move_cursor = |output: &mut BufWriter<_>, position: TerminalPosition| {
@@ -421,14 +425,12 @@ impl Terminal {
         let mut skipped = false;
         let mut last_style = None;
         let mut last_row = usize::MAX;
-        for (new, old) in frame.chars().zip(self.last_frame.chars()) {
-            if new == old {
+        for (position, c) in frame.chars() {
+            let old = self.last_frame.get_char(position);
+            if Some(c) == old {
                 skipped = true;
                 continue;
             }
-            let (position, Some(c)) = new else {
-                continue;
-            };
 
             if skipped || last_row != position.row {
                 move_cursor(&mut self.output, position)?;
