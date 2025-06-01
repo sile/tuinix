@@ -198,8 +198,7 @@ impl Terminal {
         this.enable_raw_mode()?;
         this.enable_alternate_screen()?;
         this.hide_cursor()?;
-        stdout.write_all(&mut this.output)?;
-        this.output.clear();
+        this.flush_output()?;
 
         let default_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |panic_info| {
@@ -453,8 +452,7 @@ impl Terminal {
             self.show_cursor()?;
         }
 
-        std::io::stdout().write_all(&self.output)?;
-        self.output.clear();
+        self.flush_output()?;
         self.last_frame = frame;
 
         Ok(())
@@ -521,6 +519,14 @@ impl Terminal {
         })?;
         Ok(())
     }
+
+    fn flush_output(&mut self) -> std::io::Result<()> {
+        let mut stdout = std::io::stdout();
+        stdout.write_all(&mut self.output)?;
+        stdout.flush()?;
+        self.output.clear();
+        Ok(())
+    }
 }
 
 impl Drop for Terminal {
@@ -528,7 +534,7 @@ impl Drop for Terminal {
         let _ = self.disable_alternate_screen();
         let _ = self.disable_raw_mode();
         let _ = self.show_cursor();
-        let _ = std::io::stdout().write_all(&mut self.output);
+        let _ = self.flush_output();
         unsafe { libc::close(SIGWINCH_PIPE_FD) };
         TERMINAL_EXISTS.store(false, Ordering::SeqCst);
     }
