@@ -427,7 +427,7 @@ impl Terminal {
         let mut last_row = usize::MAX;
         for (position, c) in frame.chars() {
             let old = self.last_frame.get_char(position);
-            if Some(c) == old {
+            if c == old {
                 skipped = true;
                 continue;
             }

@@ -151,8 +151,11 @@ impl<W> TerminalFrame<W> {
         }
     }
 
-    pub(crate) fn get_char(&self, position: TerminalPosition) -> Option<TerminalChar> {
-        self.data.get(&position).copied()
+    pub(crate) fn get_char(&self, position: TerminalPosition) -> TerminalChar {
+        self.data
+            .get(&position)
+            .copied()
+            .unwrap_or(TerminalChar::BLANK)
     }
 
     pub(crate) fn chars(&self) -> impl '_ + Iterator<Item = (TerminalPosition, TerminalChar)> {
@@ -173,11 +176,7 @@ impl<W> TerminalFrame<W> {
                     Some((pos, c))
                 } else {
                     next_pos.col += 1;
-                    let c = TerminalChar {
-                        style: TerminalStyle::new(),
-                        width: NonZeroUsize::MIN,
-                        value: ' ',
-                    };
+                    let c = TerminalChar::BLANK;
                     Some((pos, c))
                 }
             })
@@ -291,6 +290,14 @@ pub(crate) struct TerminalChar {
     pub style: TerminalStyle,
     pub width: NonZeroUsize,
     pub value: char,
+}
+
+impl TerminalChar {
+    const BLANK: Self = Self {
+        style: TerminalStyle::new(),
+        width: NonZeroUsize::MIN,
+        value: ' ',
+    };
 }
 
 #[cfg(test)]
