@@ -164,19 +164,16 @@ impl Terminal {
     /// - Terminal configuration fails
     pub fn new() -> std::io::Result<Self> {
         if TERMINAL_EXISTS.swap(true, Ordering::SeqCst) {
-            return Err(Error::new(
-                ErrorKind::Other,
-                "Terminal instance already exists",
-            ));
+            return Err(Error::other("Terminal instance already exists"));
         }
 
         let stdin = std::io::stdin();
         let stdout = std::io::stdout();
         if !stdin.is_terminal() {
-            return Err(Error::new(ErrorKind::Other, "STDIN is not a terminal"));
+            return Err(Error::other("STDIN is not a terminal"));
         }
         if !stdout.is_terminal() {
-            return Err(Error::new(ErrorKind::Other, "STDOUT is not a terminal"));
+            return Err(Error::other("STDOUT is not a terminal"));
         }
 
         let mut termios = MaybeUninit::<libc::termios>::zeroed();
@@ -427,7 +424,7 @@ impl Terminal {
         let mut last_row = usize::MAX;
         for (position, c) in frame.chars() {
             let old = self.last_frame.get_char(position);
-            if Some(c) == old {
+            if c == old {
                 skipped = true;
                 continue;
             }
