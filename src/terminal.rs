@@ -1,6 +1,6 @@
 use std::{
     fs::File,
-    io::{BufWriter, Error, ErrorKind, IsTerminal, Read, Stdin, Stdout, Write},
+    io::{Error, ErrorKind, IsTerminal, Read, Stdin, Write},
     mem::MaybeUninit,
     os::fd::{AsRawFd, FromRawFd, RawFd},
     sync::atomic::{AtomicBool, Ordering},
@@ -132,7 +132,7 @@ static mut SIGWINCH_PIPE_FD: RawFd = 0;
 /// ```
 pub struct Terminal {
     input: InputReader<Stdin>,
-    output: BufWriter<Stdout>,
+    output: Vec<u8>,
     signal: File,
     original_termios: libc::termios,
     size: TerminalSize,
@@ -185,7 +185,7 @@ impl Terminal {
 
         let mut this = Self {
             input: InputReader::new(stdin),
-            output: BufWriter::new(stdout),
+            output: Vec::new(),
             signal: set_sigwinch_handler()?,
             original_termios,
             size: TerminalSize::EMPTY,
@@ -231,7 +231,7 @@ impl Terminal {
 
     /// Returns the file descriptor of the terminal output.
     pub fn output_fd(&self) -> RawFd {
-        self.output.get_ref().as_raw_fd()
+        std::io::stdout().as_raw_fd()
     }
 
     /// Returns the file descriptor that receives terminal resize signal notifications.
@@ -418,7 +418,7 @@ impl Terminal {
             self.last_frame = TerminalFrame::new(TerminalSize::EMPTY);
         }
 
-        let move_cursor = |output: &mut BufWriter<_>, position: TerminalPosition| {
+        let move_cursor = |output: &mut Vec<u8>, position: TerminalPosition| {
             write!(output, "\x1b[{};{}H", position.row + 1, position.col + 1)
         };
 
@@ -450,7 +450,8 @@ impl Terminal {
             self.show_cursor()?;
         }
 
-        self.output.flush()?;
+        std::io::stdout().write_all(&self.output)?;
+        self.output.clear();
         self.last_frame = frame;
 
         Ok(())
