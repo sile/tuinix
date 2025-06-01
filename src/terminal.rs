@@ -172,7 +172,7 @@ impl Terminal {
         }
 
         let stdin = std::io::stdin();
-        let mut stdout = std::io::stdout();
+        let stdout = std::io::stdout();
         if !stdin.is_terminal() {
             return Err(Error::new(ErrorKind::Other, "STDIN is not a terminal"));
         }
@@ -409,7 +409,9 @@ impl Terminal {
     /// ```
     pub fn draw<W>(&mut self, frame: TerminalFrame<W>) -> std::io::Result<()> {
         let frame = frame.finish();
-        self.hide_cursor()?;
+        if self.last_cursor_shown {
+            self.hide_cursor()?;
+        }
 
         if frame.size() != self.last_frame.size() {
             // Reset the last frame when the frame size changes to
@@ -454,6 +456,7 @@ impl Terminal {
 
         self.flush_output()?;
         self.last_frame = frame;
+        self.last_cursor_shown = self.cursor.is_some();
 
         Ok(())
     }
