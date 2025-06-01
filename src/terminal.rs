@@ -137,6 +137,7 @@ pub struct Terminal {
     original_termios: libc::termios,
     size: TerminalSize,
     last_frame: TerminalFrame,
+    last_cursor_shown: bool,
     cursor: Option<TerminalPosition>,
 }
 
@@ -171,7 +172,7 @@ impl Terminal {
         }
 
         let stdin = std::io::stdin();
-        let stdout = std::io::stdout();
+        let mut stdout = std::io::stdout();
         if !stdin.is_terminal() {
             return Err(Error::new(ErrorKind::Other, "STDIN is not a terminal"));
         }
@@ -190,13 +191,15 @@ impl Terminal {
             original_termios,
             size: TerminalSize::EMPTY,
             last_frame: TerminalFrame::default(),
+            last_cursor_shown: false,
             cursor: None,
         };
         this.update_size()?;
         this.enable_raw_mode()?;
         this.enable_alternate_screen()?;
         this.hide_cursor()?;
-        this.output.flush()?;
+        stdout.write_all(&mut this.output)?;
+        this.output.clear();
 
         let default_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |panic_info| {
@@ -525,7 +528,7 @@ impl Drop for Terminal {
         let _ = self.disable_alternate_screen();
         let _ = self.disable_raw_mode();
         let _ = self.show_cursor();
-        let _ = self.output.flush();
+        let _ = std::io::stdout().write_all(&mut self.output);
         unsafe { libc::close(SIGWINCH_PIPE_FD) };
         TERMINAL_EXISTS.store(false, Ordering::SeqCst);
     }
