@@ -36,7 +36,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 // Display the input
                 let mut frame = TerminalFrame::new(terminal.size());
-                writeln!(frame, "Key pressed: {:?}", input)?;
+                writeln!(frame, "Key pressed: {input:?}")?;
                 writeln!(frame, "\nPress any key ('q' to quit)")?;
                 terminal.draw(frame)?;
             }
