@@ -17,6 +17,16 @@ impl TerminalSize {
     /// A terminal size with zero rows and zero columns.
     pub const EMPTY: Self = Self { rows: 0, cols: 0 };
 
+    /// Creates a new terminal size with the given number of rows and columns.
+    pub const fn rows_cols(rows: usize, cols: usize) -> Self {
+        Self { rows, cols }
+    }
+
+    /// Returns the total area (number of cells) represented by this size.
+    pub const fn area(self) -> usize {
+        self.rows * self.cols
+    }
+
     /// Returns `true` if the terminal has zero rows or zero columns.
     pub const fn is_empty(self) -> bool {
         self.rows == 0 || self.cols == 0
@@ -25,6 +35,14 @@ impl TerminalSize {
     /// Returns `true` if the given position falls within the boundaries of this terminal size.
     pub const fn contains(self, position: TerminalPosition) -> bool {
         position.row < self.rows && position.col < self.cols
+    }
+
+    /// Converts this size into a region starting at the origin.
+    pub const fn to_region(self) -> TerminalRegion {
+        TerminalRegion {
+            position: TerminalPosition::ZERO,
+            size: self,
+        }
     }
 }
 
@@ -91,5 +109,33 @@ impl Sub for TerminalPosition {
 impl SubAssign for TerminalPosition {
     fn sub_assign(&mut self, other: Self) {
         *self = *self - other;
+    }
+}
+
+/// A rectangular region within a terminal, defined by a position and size.
+///
+/// This structure represents a bounded area within a terminal, useful for
+/// creating sub-regions or windows within the terminal display.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TerminalRegion {
+    /// The top-left position of the region.
+    pub position: TerminalPosition,
+
+    /// The size (dimensions) of the region.
+    pub size: TerminalSize,
+}
+
+impl TerminalRegion {
+    /// Returns `true` if the region has zero area (either zero rows or zero columns).
+    pub const fn is_empty(self) -> bool {
+        self.size.is_empty()
+    }
+
+    /// Returns `true` if the given position falls within this region.
+    pub const fn contains(self, position: TerminalPosition) -> bool {
+        position.row >= self.position.row
+            && position.col >= self.position.col
+            && position.row < self.position.row + self.size.rows
+            && position.col < self.position.col + self.size.cols
     }
 }
