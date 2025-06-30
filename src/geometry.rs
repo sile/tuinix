@@ -139,6 +139,35 @@ impl TerminalRegion {
             && position.col < self.position.col + self.size.cols
     }
 
+    /// Returns the top-left position of the region.
+    pub const fn top_left(self) -> TerminalPosition {
+        self.position
+    }
+
+    /// Returns the top-right position of the region.
+    pub const fn top_right(self) -> TerminalPosition {
+        TerminalPosition::row_col(
+            self.position.row,
+            self.position.col + self.size.cols.saturating_sub(1),
+        )
+    }
+
+    /// Returns the bottom-left position of the region.
+    pub const fn bottom_left(self) -> TerminalPosition {
+        TerminalPosition::row_col(
+            self.position.row + self.size.rows.saturating_sub(1),
+            self.position.col,
+        )
+    }
+
+    /// Returns the bottom-right position of the region.
+    pub const fn bottom_right(self) -> TerminalPosition {
+        TerminalPosition::row_col(
+            self.position.row + self.size.rows.saturating_sub(1),
+            self.position.col + self.size.cols.saturating_sub(1),
+        )
+    }
+
     /// Returns a new region containing only the top N rows.
     pub const fn take_top(mut self, rows: usize) -> Self {
         if rows < self.size.rows {
