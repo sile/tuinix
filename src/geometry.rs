@@ -245,4 +245,50 @@ impl TerminalRegion {
         }
         self
     }
+
+    /// Returns a new region shrunk by the specified amount from all directions.
+    pub const fn drop(self, amount: usize) -> Self {
+        self.drop_top(amount)
+            .drop_bottom(amount)
+            .drop_left(amount)
+            .drop_right(amount)
+    }
+
+    /// Returns a new region expanded upward by the specified number of rows.
+    /// The position moves up and the height increases.
+    pub const fn expand_top(mut self, rows: usize) -> Self {
+        self.position.row = self.position.row.saturating_sub(rows);
+        self.size.rows = self.size.rows.saturating_add(rows);
+        self
+    }
+
+    /// Returns a new region expanded downward by the specified number of rows.
+    /// The height increases while the position stays the same.
+    pub const fn expand_bottom(mut self, rows: usize) -> Self {
+        self.size.rows = self.size.rows.saturating_add(rows);
+        self
+    }
+
+    /// Returns a new region expanded leftward by the specified number of columns.
+    /// The position moves left and the width increases.
+    pub const fn expand_left(mut self, cols: usize) -> Self {
+        self.position.col = self.position.col.saturating_sub(cols);
+        self.size.cols = self.size.cols.saturating_add(cols);
+        self
+    }
+
+    /// Returns a new region expanded rightward by the specified number of columns.
+    /// The width increases while the position stays the same.
+    pub const fn expand_right(mut self, cols: usize) -> Self {
+        self.size.cols = self.size.cols.saturating_add(cols);
+        self
+    }
+
+    /// Returns a new region expanded by the specified amount in all directions.
+    pub const fn expand(self, amount: usize) -> Self {
+        self.expand_top(amount)
+            .expand_bottom(amount)
+            .expand_left(amount)
+            .expand_right(amount)
+    }
 }
