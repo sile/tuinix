@@ -33,7 +33,7 @@ use crate::{TerminalPosition, TerminalSize, TerminalStyle};
 /// use tuinix::{TerminalFrame, TerminalSize, TerminalStyle};
 ///
 /// // Create a new frame with specified dimensions
-/// let size = TerminalSize { rows: 24, cols: 80 };
+/// let size = TerminalSize::rows_cols(24, 80);
 /// let mut frame: TerminalFrame = TerminalFrame::new(size);
 ///
 /// // Write text to the frame
@@ -94,7 +94,7 @@ impl<W> TerminalFrame<W> {
     /// use std::fmt::Write;
     /// use tuinix::{TerminalFrame, TerminalPosition, TerminalSize};
     ///
-    /// let mut frame: TerminalFrame = TerminalFrame::new(TerminalSize { rows: 10, cols: 20 });
+    /// let mut frame: TerminalFrame = TerminalFrame::new(TerminalSize::rows_cols(10, 20));
     /// write!(frame, "Hello")?;
     ///
     /// assert_eq!(frame.cursor().col, 5);
@@ -121,10 +121,10 @@ impl<W> TerminalFrame<W> {
     /// use tuinix::{TerminalFrame, TerminalPosition, TerminalSize};
     ///
     /// // Create a main frame
-    /// let mut main_frame: TerminalFrame = TerminalFrame::new(TerminalSize { rows: 24, cols: 80 });
+    /// let mut main_frame: TerminalFrame = TerminalFrame::new(TerminalSize::rows_cols(24, 80));
     ///
     /// // Create a smaller frame to be drawn onto the main frame
-    /// let mut sub_frame: TerminalFrame = TerminalFrame::new(TerminalSize { rows: 5, cols: 20 });
+    /// let mut sub_frame: TerminalFrame = TerminalFrame::new(TerminalSize::rows_cols(5, 20));
     /// write!(sub_frame, "This is a sub-frame")?;
     ///
     /// // Draw the sub-frame at position (2, 10) on the main frame
@@ -318,7 +318,7 @@ mod tests {
 
     #[test]
     fn unicode_char_width() {
-        let size = TerminalSize { rows: 10, cols: 20 };
+        let size = TerminalSize::rows_cols(10, 20);
         let mut frame = TerminalFrame::with_char_width_estimator(size, UnicodeCharWidthEstimator);
 
         // Write Japanese characters "おはよう" (good morning)
