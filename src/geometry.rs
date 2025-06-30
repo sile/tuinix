@@ -17,6 +17,11 @@ impl TerminalSize {
     /// A terminal size with zero rows and zero columns.
     pub const EMPTY: Self = Self { rows: 0, cols: 0 };
 
+    /// Creates a new terminal size with the given number of rows and columns.
+    pub const fn rows_cols(rows: usize, cols: usize) -> Self {
+        Self { rows, cols }
+    }
+
     /// Returns `true` if the terminal has zero rows or zero columns.
     pub const fn is_empty(self) -> bool {
         self.rows == 0 || self.cols == 0
@@ -25,6 +30,14 @@ impl TerminalSize {
     /// Returns `true` if the given position falls within the boundaries of this terminal size.
     pub const fn contains(self, position: TerminalPosition) -> bool {
         position.row < self.rows && position.col < self.cols
+    }
+
+    /// Converts this size into a region starting at the origin.
+    pub const fn to_region(self) -> TerminalRegion {
+        TerminalRegion {
+            position: TerminalPosition::ZERO,
+            size: self,
+        }
     }
 }
 
@@ -91,5 +104,186 @@ impl Sub for TerminalPosition {
 impl SubAssign for TerminalPosition {
     fn sub_assign(&mut self, other: Self) {
         *self = *self - other;
+    }
+}
+
+/// A rectangular region within a terminal, defined by a position and size.
+///
+/// This structure represents a bounded area within a terminal, useful for
+/// creating sub-regions or windows within the terminal display.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TerminalRegion {
+    /// The top-left position of the region.
+    pub position: TerminalPosition,
+
+    /// The size (dimensions) of the region.
+    pub size: TerminalSize,
+}
+
+impl TerminalRegion {
+    /// Returns `true` if the region has zero area (either zero rows or zero columns).
+    pub const fn is_empty(self) -> bool {
+        self.size.is_empty()
+    }
+
+    /// Returns `true` if the given position falls within this region.
+    pub const fn contains(self, position: TerminalPosition) -> bool {
+        position.row >= self.position.row
+            && position.col >= self.position.col
+            && position.row < self.position.row + self.size.rows
+            && position.col < self.position.col + self.size.cols
+    }
+
+    /// Returns the top-left position of the region.
+    pub const fn top_left(self) -> TerminalPosition {
+        self.position
+    }
+
+    /// Returns the top-right position of the region.
+    pub const fn top_right(self) -> TerminalPosition {
+        TerminalPosition::row_col(
+            self.position.row,
+            self.position.col + self.size.cols.saturating_sub(1),
+        )
+    }
+
+    /// Returns the bottom-left position of the region.
+    pub const fn bottom_left(self) -> TerminalPosition {
+        TerminalPosition::row_col(
+            self.position.row + self.size.rows.saturating_sub(1),
+            self.position.col,
+        )
+    }
+
+    /// Returns the bottom-right position of the region.
+    pub const fn bottom_right(self) -> TerminalPosition {
+        TerminalPosition::row_col(
+            self.position.row + self.size.rows.saturating_sub(1),
+            self.position.col + self.size.cols.saturating_sub(1),
+        )
+    }
+
+    /// Returns a new region containing only the top N rows.
+    pub const fn take_top(mut self, rows: usize) -> Self {
+        if rows < self.size.rows {
+            self.size.rows = rows;
+        }
+        self
+    }
+
+    /// Returns a new region containing only the bottom N rows.
+    pub const fn take_bottom(mut self, rows: usize) -> Self {
+        if rows < self.size.rows {
+            let offset = self.size.rows - rows;
+            self.position.row += offset;
+            self.size.rows = rows;
+        }
+        self
+    }
+
+    /// Returns a new region containing only the leftmost N columns.
+    pub const fn take_left(mut self, cols: usize) -> Self {
+        if cols < self.size.cols {
+            self.size.cols = cols;
+        }
+        self
+    }
+
+    /// Returns a new region containing only the rightmost N columns.
+    pub const fn take_right(mut self, cols: usize) -> Self {
+        if cols < self.size.cols {
+            let offset = self.size.cols - cols;
+            self.position.col += offset;
+            self.size.cols = cols;
+        }
+        self
+    }
+
+    /// Returns a new region with the top N rows removed.
+    pub const fn drop_top(mut self, rows: usize) -> Self {
+        if rows < self.size.rows {
+            self.position.row += rows;
+            self.size.rows -= rows;
+        } else {
+            self.size.rows = 0;
+        }
+        self
+    }
+
+    /// Returns a new region with the bottom N rows removed.
+    pub const fn drop_bottom(mut self, rows: usize) -> Self {
+        if rows < self.size.rows {
+            self.size.rows -= rows;
+        } else {
+            self.size.rows = 0;
+        }
+        self
+    }
+
+    /// Returns a new region with the leftmost N columns removed.
+    pub const fn drop_left(mut self, cols: usize) -> Self {
+        if cols < self.size.cols {
+            self.position.col += cols;
+            self.size.cols -= cols;
+        } else {
+            self.size.cols = 0;
+        }
+        self
+    }
+
+    /// Returns a new region with the rightmost N columns removed.
+    pub const fn drop_right(mut self, cols: usize) -> Self {
+        if cols < self.size.cols {
+            self.size.cols -= cols;
+        } else {
+            self.size.cols = 0;
+        }
+        self
+    }
+
+    /// Returns a new region shrunk by the specified amount from all directions.
+    pub const fn drop(self, amount: usize) -> Self {
+        self.drop_top(amount)
+            .drop_bottom(amount)
+            .drop_left(amount)
+            .drop_right(amount)
+    }
+
+    /// Returns a new region expanded upward by the specified number of rows.
+    /// The position moves up and the height increases.
+    pub const fn expand_top(mut self, rows: usize) -> Self {
+        self.position.row = self.position.row.saturating_sub(rows);
+        self.size.rows = self.size.rows.saturating_add(rows);
+        self
+    }
+
+    /// Returns a new region expanded downward by the specified number of rows.
+    /// The height increases while the position stays the same.
+    pub const fn expand_bottom(mut self, rows: usize) -> Self {
+        self.size.rows = self.size.rows.saturating_add(rows);
+        self
+    }
+
+    /// Returns a new region expanded leftward by the specified number of columns.
+    /// The position moves left and the width increases.
+    pub const fn expand_left(mut self, cols: usize) -> Self {
+        self.position.col = self.position.col.saturating_sub(cols);
+        self.size.cols = self.size.cols.saturating_add(cols);
+        self
+    }
+
+    /// Returns a new region expanded rightward by the specified number of columns.
+    /// The width increases while the position stays the same.
+    pub const fn expand_right(mut self, cols: usize) -> Self {
+        self.size.cols = self.size.cols.saturating_add(cols);
+        self
+    }
+
+    /// Returns a new region expanded by the specified amount in all directions.
+    pub const fn expand(self, amount: usize) -> Self {
+        self.expand_top(amount)
+            .expand_bottom(amount)
+            .expand_left(amount)
+            .expand_right(amount)
     }
 }
