@@ -138,4 +138,82 @@ impl TerminalRegion {
             && position.row < self.position.row + self.size.rows
             && position.col < self.position.col + self.size.cols
     }
+
+    /// Returns a new region containing only the top N rows.
+    pub const fn take_top(mut self, rows: usize) -> Self {
+        if rows < self.size.rows {
+            self.size.rows = rows;
+        }
+        self
+    }
+
+    /// Returns a new region containing only the bottom N rows.
+    pub const fn take_bottom(mut self, rows: usize) -> Self {
+        if rows < self.size.rows {
+            let offset = self.size.rows - rows;
+            self.position.row += offset;
+            self.size.rows = rows;
+        }
+        self
+    }
+
+    /// Returns a new region containing only the leftmost N columns.
+    pub const fn take_left(mut self, cols: usize) -> Self {
+        if cols < self.size.cols {
+            self.size.cols = cols;
+        }
+        self
+    }
+
+    /// Returns a new region containing only the rightmost N columns.
+    pub const fn take_right(mut self, cols: usize) -> Self {
+        if cols < self.size.cols {
+            let offset = self.size.cols - cols;
+            self.position.col += offset;
+            self.size.cols = cols;
+        }
+        self
+    }
+
+    /// Returns a new region with the top N rows removed.
+    pub const fn drop_top(mut self, rows: usize) -> Self {
+        if rows < self.size.rows {
+            self.position.row += rows;
+            self.size.rows -= rows;
+        } else {
+            self.size.rows = 0;
+        }
+        self
+    }
+
+    /// Returns a new region with the bottom N rows removed.
+    pub const fn drop_bottom(mut self, rows: usize) -> Self {
+        if rows < self.size.rows {
+            self.size.rows -= rows;
+        } else {
+            self.size.rows = 0;
+        }
+        self
+    }
+
+    /// Returns a new region with the leftmost N columns removed.
+    pub const fn drop_left(mut self, cols: usize) -> Self {
+        if cols < self.size.cols {
+            self.position.col += cols;
+            self.size.cols -= cols;
+        } else {
+            self.size.cols = 0;
+        }
+        self
+    }
+
+    /// Returns a new region with the rightmost N columns removed.
+    pub const fn drop_right(mut self, cols: usize) -> Self {
+        if cols < self.size.cols {
+            self.size.cols -= cols;
+        } else {
+            self.size.cols = 0;
+        }
+        self
+    }
 }
