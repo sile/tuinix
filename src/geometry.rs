@@ -22,11 +22,6 @@ impl TerminalSize {
         Self { rows, cols }
     }
 
-    /// Returns the total area (number of cells) represented by this size.
-    pub const fn area(self) -> usize {
-        self.rows * self.cols
-    }
-
     /// Returns `true` if the terminal has zero rows or zero columns.
     pub const fn is_empty(self) -> bool {
         self.rows == 0 || self.cols == 0
