@@ -46,7 +46,7 @@ static mut SIGWINCH_PIPE_FD: RawFd = 0;
 ///     let size = terminal.size();
 ///
 ///     // Create and draw a frame
-///     let mut frame = TerminalFrame::new(size);
+///     let mut frame: TerminalFrame = TerminalFrame::new(size);
 ///     // Add content to frame...
 ///     terminal.draw(frame)?;
 ///
@@ -390,7 +390,7 @@ impl Terminal {
     /// use tuinix::{Terminal, TerminalPosition, TerminalFrame};
     ///
     /// let mut terminal = Terminal::new()?;
-    /// let mut frame = TerminalFrame::new(terminal.size());
+    /// let mut frame: TerminalFrame = TerminalFrame::new(terminal.size());
     ///
     /// // Write some text
     /// writeln!(frame, "Hello, terminal world!")?;

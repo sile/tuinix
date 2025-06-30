@@ -24,7 +24,7 @@
 //!     let mut terminal = Terminal::new()?;
 //!
 //!     // Create a frame with the terminal's dimensions
-//!     let mut frame = TerminalFrame::new(terminal.size());
+//!     let mut frame: TerminalFrame = TerminalFrame::new(terminal.size());
 //!
 //!     // Add styled content to the frame
 //!     let title_style = TerminalStyle::new().bold().fg_color(TerminalColor::GREEN);
@@ -52,14 +52,14 @@
 //!                 }
 //!
 //!                 // Display the input
-//!                 let mut frame = TerminalFrame::new(terminal.size());
+//!                 let mut frame: TerminalFrame = TerminalFrame::new(terminal.size());
 //!                 writeln!(frame, "Key pressed: {:?}", input)?;
 //!                 writeln!(frame, "\nPress any key ('q' to quit)")?;
 //!                 terminal.draw(frame)?;
 //!             }
 //!             Some(TerminalEvent::Resize(size)) => {
 //!                 // Terminal was resized, update UI if needed
-//!                 let mut frame = TerminalFrame::new(size);
+//!                 let mut frame: TerminalFrame = TerminalFrame::new(size);
 //!                 writeln!(frame, "Terminal resized to {}x{}", size.cols, size.rows)?;
 //!                 writeln!(frame, "\nPress any key ('q' to quit)")?;
 //!                 terminal.draw(frame)?;

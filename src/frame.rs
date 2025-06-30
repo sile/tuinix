@@ -34,7 +34,7 @@ use crate::{TerminalPosition, TerminalSize, TerminalStyle};
 ///
 /// // Create a new frame with specified dimensions
 /// let size = TerminalSize { rows: 24, cols: 80 };
-/// let mut frame = TerminalFrame::new(size);
+/// let mut frame: TerminalFrame = TerminalFrame::new(size);
 ///
 /// // Write text to the frame
 /// writeln!(frame, "Hello, world!")?;
@@ -58,10 +58,10 @@ pub struct TerminalFrame<W = FixedCharWidthEstimator> {
     char_width_estimator: W,
 }
 
-impl TerminalFrame<FixedCharWidthEstimator> {
-    /// Makes a new frame with the given size and [`FixedCharWidthEstimator`].
+impl<W: Default> TerminalFrame<W> {
+    /// Makes a new frame with the given size and default character width estimator.
     pub fn new(size: TerminalSize) -> Self {
-        Self::with_char_width_estimator(size, FixedCharWidthEstimator)
+        Self::with_char_width_estimator(size, W::default())
     }
 }
 
@@ -94,7 +94,7 @@ impl<W> TerminalFrame<W> {
     /// use std::fmt::Write;
     /// use tuinix::{TerminalFrame, TerminalPosition, TerminalSize};
     ///
-    /// let mut frame = TerminalFrame::new(TerminalSize { rows: 10, cols: 20 });
+    /// let mut frame: TerminalFrame = TerminalFrame::new(TerminalSize { rows: 10, cols: 20 });
     /// write!(frame, "Hello")?;
     ///
     /// assert_eq!(frame.cursor().col, 5);
@@ -121,10 +121,10 @@ impl<W> TerminalFrame<W> {
     /// use tuinix::{TerminalFrame, TerminalPosition, TerminalSize};
     ///
     /// // Create a main frame
-    /// let mut main_frame = TerminalFrame::new(TerminalSize { rows: 24, cols: 80 });
+    /// let mut main_frame: TerminalFrame = TerminalFrame::new(TerminalSize { rows: 24, cols: 80 });
     ///
     /// // Create a smaller frame to be drawn onto the main frame
-    /// let mut sub_frame = TerminalFrame::new(TerminalSize { rows: 5, cols: 20 });
+    /// let mut sub_frame: TerminalFrame = TerminalFrame::new(TerminalSize { rows: 5, cols: 20 });
     /// write!(sub_frame, "This is a sub-frame")?;
     ///
     /// // Draw the sub-frame at position (2, 10) on the main frame
