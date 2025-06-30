@@ -410,12 +410,13 @@ impl Terminal {
             write!(output, "\x1b[{};{}H", position.row + 1, position.col + 1)
         };
 
+        let resized = self.last_frame.size() != frame.size();
         let mut skipped = false;
         let mut last_style = None;
         let mut last_row = usize::MAX;
         for (position, c) in frame.chars() {
             let old = self.last_frame.get_char(position);
-            if c == old {
+            if !resized && c == old {
                 skipped = true;
                 continue;
             }
