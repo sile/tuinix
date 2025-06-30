@@ -17,7 +17,7 @@ use std::{
 ///
 /// // Create a basic terminal frame
 /// let size = TerminalSize { rows: 10, cols: 40 };
-/// let mut frame = TerminalFrame::new(size);
+/// let mut frame: TerminalFrame = TerminalFrame::new(size);
 ///
 /// // Create a simple green, bold text style
 /// let style = TerminalStyle::new()
@@ -47,7 +47,7 @@ use std::{
 /// use tuinix::{TerminalFrame, TerminalSize, TerminalStyle};
 ///
 /// let size = TerminalSize { rows: 24, cols: 80 };
-/// let mut frame = TerminalFrame::new(size);
+/// let mut frame: TerminalFrame = TerminalFrame::new(size);
 ///
 /// // This will produce text that is ONLY underlined, not bold+underlined
 /// let bold = TerminalStyle::new().bold();

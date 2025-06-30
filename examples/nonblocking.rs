@@ -38,7 +38,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     // Draw initial frame
-    let mut frame = TerminalFrame::new(terminal.size());
+    let mut frame: TerminalFrame = TerminalFrame::new(terminal.size());
 
     // Add styled content to the frame
     let title_style = TerminalStyle::new().bold().fg_color(TerminalColor::GREEN);
@@ -74,7 +74,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
 
                                 // Display the input
-                                let mut frame = TerminalFrame::new(terminal.size());
+                                let mut frame: TerminalFrame = TerminalFrame::new(terminal.size());
                                 writeln!(frame, "Key pressed: {key_input:?}")?;
                                 writeln!(frame, "\nPress any key ('q' to quit)")?;
                                 terminal.draw(frame)?;
@@ -85,7 +85,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 SIGNAL_TOKEN => {
                     // Handle terminal resize event
                     while let Some(size) = try_nonblocking(terminal.wait_for_resize())? {
-                        let mut frame = TerminalFrame::new(size);
+                        let mut frame: TerminalFrame = TerminalFrame::new(size);
                         writeln!(frame, "Terminal resized to {}x{}", size.cols, size.rows)?;
                         writeln!(frame, "\nPress any key ('q' to quit)")?;
                         terminal.draw(frame)?;
