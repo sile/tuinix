@@ -153,518 +153,359 @@ impl<R: Read> InputReader<R> {
 
 fn parse_input(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> {
     if bytes.is_empty() {
-        return Ok((None, 0)); // No bytes to parse, consumed 0 bytes
+        return Ok((None, 0));
     }
 
-    // Regular ASCII character
-    if bytes[0] < 0x80 && bytes[0] != 0x1b && bytes[0] != 0x7f {
-        // Control characters (Ctrl+A through Ctrl+Z)
-        if bytes[0] < 0x20 {
-            let (ctrl, code) = match bytes[0] {
-                0x0D => (false, KeyCode::Enter), // Enter
-                0x09 => (false, KeyCode::Tab),   // Tab
-                c => (true, KeyCode::Char((c + 0x60) as char)),
-            };
-            return Ok((
-                Some(TerminalInput::Key(KeyInput {
-                    ctrl,
-                    alt: false,
-                    code,
-                })),
-                1,
-            ));
-        }
-
-        // Regular ASCII characters
-        return Ok((
-            Some(TerminalInput::Key(KeyInput {
-                ctrl: false,
-                alt: false,
-                code: KeyCode::Char(bytes[0] as char),
-            })),
-            1,
-        ));
-    }
-
-    // Special keys and escape sequences
     match bytes[0] {
-        // Escape key or start of escape sequence
-        0x1b => {
-            // For a standalone ESC press, we need to wait and see if more bytes follow
-            if bytes.len() == 1 {
-                return Ok((None, 0)); // Need more bytes, consumed 0 bytes
-            }
-
-            // Alt + character (ESC followed by a regular character)
-            if bytes[1] < 0x80 && bytes[1] != 0x1b && bytes[1] != 0x5b && bytes[1] != 0x4f {
-                let c = bytes[1] as char;
-                let (ctrl, code) = if bytes[1] < 0x20 {
-                    // Control characters with Alt
-                    match bytes[1] {
-                        0x0D => (false, KeyCode::Enter),
-                        0x09 => (false, KeyCode::Tab),
-                        0x08 => (false, KeyCode::Backspace),
-                        c => (true, KeyCode::Char((c + 0x60) as char)),
-                    }
-                } else {
-                    (false, KeyCode::Char(c))
-                };
-
-                return Ok((
-                    Some(TerminalInput::Key(KeyInput {
-                        ctrl,
-                        alt: true,
-                        code,
-                    })),
-                    2,
-                ));
-            }
-
-            // ESC [ sequences (most function keys, arrow keys, mouse events, etc.)
-            if bytes[1] == b'[' {
-                // Need at least 3 bytes for the basic arrow keys (ESC [ A)
-                if bytes.len() < 3 {
-                    return Ok((None, 0)); // Need more bytes, consumed 0 bytes
-                }
-
-                // SGR mouse mode: ESC [ < <button> ; <x> ; <y> M/m
-                // Check for SGR format FIRST before X10/X11 format
-                if bytes[2] == b'<' {
-                    // Find the end of the sequence
-                    let mut end_pos = None;
-                    for (i, &b) in bytes.iter().enumerate().skip(3) {
-                        if b == b'M' || b == b'm' {
-                            end_pos = Some(i);
-                            break;
-                        }
-                    }
-
-                    if let Some(end) = end_pos {
-                        // Parse the parameters
-                        let params_str = std::str::from_utf8(&bytes[3..end]).map_err(|_| {
-                            std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid UTF-8")
-                        })?;
-
-                        let params: Vec<&str> = params_str.split(';').collect();
-                        if params.len() == 3 {
-                            if let (Ok(button), Ok(x), Ok(y)) = (
-                                params[0].parse::<u16>(),
-                                params[1].parse::<u16>(),
-                                params[2].parse::<u16>(),
-                            ) {
-                                let is_release = bytes[end] == b'm';
-
-                                // Decode button and modifiers
-                                let button_code = button & 0x03;
-                                let ctrl = (button & 0x10) != 0;
-                                let alt = (button & 0x08) != 0;
-                                let shift = (button & 0x04) != 0;
-                                let drag = (button & 0x20) != 0;
-
-                                let event = if drag {
-                                    MouseEvent::Drag
-                                } else if is_release {
-                                    match button_code {
-                                        0 => MouseEvent::LeftRelease,
-                                        1 => MouseEvent::MiddleRelease,
-                                        2 => MouseEvent::RightRelease,
-                                        _ => return Ok((None, end + 1)),
-                                    }
-                                } else {
-                                    // Check for scroll events first
-                                    match button {
-                                        64 => MouseEvent::ScrollUp,
-                                        65 => MouseEvent::ScrollDown,
-                                        _ => match button_code {
-                                            0 => MouseEvent::LeftPress,
-                                            1 => MouseEvent::MiddlePress,
-                                            2 => MouseEvent::RightPress,
-                                            _ => return Ok((None, end + 1)),
-                                        },
-                                    }
-                                };
-
-                                return Ok((
-                                    Some(TerminalInput::Mouse(MouseInput {
-                                        event,
-                                        col: x.saturating_sub(1) as usize,
-                                        row: y.saturating_sub(1) as usize,
-                                        ctrl,
-                                        alt,
-                                        shift,
-                                    })),
-                                    end + 1,
-                                ));
-                            }
-                        }
-
-                        // Invalid SGR sequence, discard it
-                        return Ok((None, end + 1));
-                    } else {
-                        // Incomplete SGR sequence
-                        return Ok((None, 0));
-                    }
-                }
-                // Standard X10/X11 mouse reporting: ESC [ M <button> <x> <y>
-                else if bytes[2] == b'M' {
-                    if bytes.len() < 6 {
-                        return Ok((None, 0));
-                    }
-
-                    let button_byte = bytes[3];
-                    let x = bytes[4] as u16;
-                    let y = bytes[5] as u16;
-
-                    // Decode modifiers
-                    let ctrl = (button_byte & 0x10) != 0;
-                    let alt = (button_byte & 0x08) != 0;
-                    let shift = (button_byte & 0x04) != 0;
-
-                    let event = {
-                        // Check for scroll events first (they use button codes 96/97)
-                        match button_byte {
-                            96 => MouseEvent::ScrollUp,   // 0x60
-                            97 => MouseEvent::ScrollDown, // 0x61
-                            _ => {
-                                // Check for drag (but not for scroll events)
-                                let drag = (button_byte & 0x20) != 0;
-                                if drag {
-                                    MouseEvent::Drag
-                                } else {
-                                    // Regular button events
-                                    match button_byte & 0x03 {
-                                        0 => MouseEvent::LeftPress,
-                                        1 => MouseEvent::MiddlePress,
-                                        2 => MouseEvent::RightPress,
-                                        3 => MouseEvent::LeftRelease,
-                                        _ => return Ok((None, 6)),
-                                    }
-                                }
-                            }
-                        }
-                    };
-
-                    let col = x.saturating_sub(33) as usize;
-                    let row = y.saturating_sub(33) as usize;
-
-                    return Ok((
-                        Some(TerminalInput::Mouse(MouseInput {
-                            event,
-                            col,
-                            row,
-                            ctrl,
-                            alt,
-                            shift,
-                        })),
-                        6,
-                    ));
-                }
-
-                // Arrow keys: ESC [ A, ESC [ B, ESC [ C, ESC [ D
-                match bytes[2] {
-                    b'A' => {
-                        return Ok((
-                            Some(TerminalInput::Key(KeyInput {
-                                ctrl: false,
-                                alt: false,
-                                code: KeyCode::Up,
-                            })),
-                            3,
-                        ));
-                    }
-                    b'B' => {
-                        return Ok((
-                            Some(TerminalInput::Key(KeyInput {
-                                ctrl: false,
-                                alt: false,
-                                code: KeyCode::Down,
-                            })),
-                            3,
-                        ));
-                    }
-                    b'C' => {
-                        return Ok((
-                            Some(TerminalInput::Key(KeyInput {
-                                ctrl: false,
-                                alt: false,
-                                code: KeyCode::Right,
-                            })),
-                            3,
-                        ));
-                    }
-                    b'D' => {
-                        return Ok((
-                            Some(TerminalInput::Key(KeyInput {
-                                ctrl: false,
-                                alt: false,
-                                code: KeyCode::Left,
-                            })),
-                            3,
-                        ));
-                    }
-
-                    // Home/End: ESC [ H, ESC [ F
-                    b'H' => {
-                        return Ok((
-                            Some(TerminalInput::Key(KeyInput {
-                                ctrl: false,
-                                alt: false,
-                                code: KeyCode::Home,
-                            })),
-                            3,
-                        ));
-                    }
-                    b'F' => {
-                        return Ok((
-                            Some(TerminalInput::Key(KeyInput {
-                                ctrl: false,
-                                alt: false,
-                                code: KeyCode::End,
-                            })),
-                            3,
-                        ));
-                    }
-
-                    // Shift+Tab: ESC [ Z
-                    b'Z' => {
-                        return Ok((
-                            Some(TerminalInput::Key(KeyInput {
-                                ctrl: false,
-                                alt: false,
-                                code: KeyCode::BackTab,
-                            })),
-                            3,
-                        ));
-                    }
-
-                    // Arrow keys with modifiers: ESC [ 1 ; modifier ch
-                    b'1' if bytes.len() >= 6
-                        && bytes[3] == b';'
-                        && bytes[5] >= b'A'
-                        && bytes[5] <= b'D' =>
-                    {
-                        let modifier = bytes[4] - b'0';
-                        let alt = modifier & 0x2 != 0;
-                        let ctrl = modifier & 0x4 != 0;
-
-                        let code = match bytes[5] {
-                            b'A' => KeyCode::Up,
-                            b'B' => KeyCode::Down,
-                            b'C' => KeyCode::Right,
-                            b'D' => KeyCode::Left,
-                            _ => {
-                                // Unknown sequence, discard these bytes
-                                return Ok((None, 6));
-                            }
-                        };
-
-                        return Ok((Some(TerminalInput::Key(KeyInput { ctrl, alt, code })), 6));
-                    }
-
-                    // Multi-byte sequences for special keys
-                    b'1' | b'2' | b'3' | b'4' | b'5' | b'6' => {
-                        if bytes.len() < 4 {
-                            return Ok((None, 0)); // Need more bytes, consumed 0 bytes
-                        }
-
-                        if bytes[3] == b'~' {
-                            let code = match bytes[2] {
-                                b'1' | b'7' => KeyCode::Home, // Home
-                                b'2' => KeyCode::Insert,      // Insert
-                                b'3' => KeyCode::Delete,      // Delete
-                                b'4' | b'8' => KeyCode::End,  // End
-                                b'5' => KeyCode::PageUp,      // Page Up
-                                b'6' => KeyCode::PageDown,    // Page Down
-                                _ => {
-                                    // Unknown sequence, discard these bytes
-                                    return Ok((None, 4));
-                                }
-                            };
-                            return Ok((
-                                Some(TerminalInput::Key(KeyInput {
-                                    ctrl: false,
-                                    alt: false,
-                                    code,
-                                })),
-                                4,
-                            ));
-                        }
-
-                        // Handle modifiers in sequences like ESC [ 1 ; 5 ~
-                        if bytes.len() >= 6 && bytes[3] == b';' && bytes[5] == b'~' {
-                            let code = match bytes[2] {
-                                b'1' | b'7' => KeyCode::Home,
-                                b'2' => KeyCode::Insert,
-                                b'3' => KeyCode::Delete,
-                                b'4' | b'8' => KeyCode::End,
-                                b'5' => KeyCode::PageUp,
-                                b'6' => KeyCode::PageDown,
-                                _ => {
-                                    // Unknown sequence, discard these bytes
-                                    return Ok((None, 6));
-                                }
-                            };
-
-                            // Parse modifier
-                            let modifier = bytes[4] - b'0';
-                            let alt = modifier & 0x2 != 0;
-                            let ctrl = modifier & 0x4 != 0;
-
-                            return Ok((Some(TerminalInput::Key(KeyInput { ctrl, alt, code })), 6));
-                        }
-
-                        // Not enough bytes yet for the full sequence
-                        if bytes.len() < 6 {
-                            return Ok((None, 0)); // Need more bytes, consumed 0 bytes
-                        }
-
-                        // Unknown sequence, discard the bytes we've examined so far
-                        return Ok((None, 3));
-                    }
-
-                    _ => {
-                        // Unknown escape sequence, discard the first 3 bytes
-                        if bytes.len() >= 3 {
-                            return Ok((None, 3));
-                        }
-                        return Ok((None, 0)); // Need more bytes, consumed 0 bytes
-                    }
-                }
-            }
-
-            // ESC O sequences (function keys on some terminals)
-            if bytes[1] == b'O' {
-                // Need at least 3 bytes for these sequences
-                if bytes.len() < 3 {
-                    return Ok((None, 0)); // Need more bytes, consumed 0 bytes
-                }
-
-                // Some terminals send ESC O A, ESC O B, etc. for arrow keys
-                match bytes[2] {
-                    b'A' => {
-                        return Ok((
-                            Some(TerminalInput::Key(KeyInput {
-                                ctrl: false,
-                                alt: false,
-                                code: KeyCode::Up,
-                            })),
-                            3,
-                        ));
-                    }
-                    b'B' => {
-                        return Ok((
-                            Some(TerminalInput::Key(KeyInput {
-                                ctrl: false,
-                                alt: false,
-                                code: KeyCode::Down,
-                            })),
-                            3,
-                        ));
-                    }
-                    b'C' => {
-                        return Ok((
-                            Some(TerminalInput::Key(KeyInput {
-                                ctrl: false,
-                                alt: false,
-                                code: KeyCode::Right,
-                            })),
-                            3,
-                        ));
-                    }
-                    b'D' => {
-                        return Ok((
-                            Some(TerminalInput::Key(KeyInput {
-                                ctrl: false,
-                                alt: false,
-                                code: KeyCode::Left,
-                            })),
-                            3,
-                        ));
-                    }
-                    b'H' => {
-                        return Ok((
-                            Some(TerminalInput::Key(KeyInput {
-                                ctrl: false,
-                                alt: false,
-                                code: KeyCode::Home,
-                            })),
-                            3,
-                        ));
-                    }
-                    b'F' => {
-                        return Ok((
-                            Some(TerminalInput::Key(KeyInput {
-                                ctrl: false,
-                                alt: false,
-                                code: KeyCode::End,
-                            })),
-                            3,
-                        ));
-                    }
-                    _ => return Ok((None, 3)), // Unknown ESC O sequence
-                }
-            }
-
-            // If we get here, it's either a standalone ESC key or an unknown sequence
-            // Wait at least 50ms before treating it as a standalone ESC
-            // But since we can't do timing here, we'll just interpret it as ESC if
-            // it doesn't match any known start of a sequence
-            Ok((
-                Some(TerminalInput::Key(KeyInput {
-                    ctrl: false,
-                    alt: false,
-                    code: KeyCode::Escape,
-                })),
-                1,
-            ))
-        }
-
+        // Regular ASCII character (not escape or backspace)
+        b if b < 0x80 && b != 0x1b && b != 0x7f => parse_ascii_char(bytes),
+        // Escape key or escape sequence
+        0x1b => parse_escape_sequence(bytes),
         // Backspace
-        0x7F => Ok((
-            Some(TerminalInput::Key(KeyInput {
-                ctrl: false,
-                alt: false,
-                code: KeyCode::Backspace,
-            })),
-            1,
-        )),
+        0x7f => Ok((Some(create_key_input(false, false, KeyCode::Backspace)), 1)),
+        // UTF-8 characters
+        b if b >= 0x80 => parse_utf8_char(bytes),
+        // Unknown byte
+        _ => Ok((None, 1)),
+    }
+}
 
-        // Handle UTF-8 characters
-        _ if bytes[0] >= 0x80 => {
-            let mut width = 1;
-            if bytes[0] & 0xE0 == 0xC0 {
-                width = 2;
-            } else if bytes[0] & 0xF0 == 0xE0 {
-                width = 3;
-            } else if bytes[0] & 0xF8 == 0xF0 {
-                width = 4;
+fn parse_ascii_char(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> {
+    let byte = bytes[0];
+
+    // Control characters (Ctrl+A through Ctrl+Z)
+    if byte < 0x20 {
+        let (ctrl, code) = match byte {
+            0x0D => (false, KeyCode::Enter), // Enter
+            0x09 => (false, KeyCode::Tab),   // Tab
+            c => (true, KeyCode::Char((c + 0x60) as char)),
+        };
+        return Ok((Some(create_key_input(ctrl, false, code)), 1));
+    }
+
+    // Regular ASCII characters
+    Ok((
+        Some(create_key_input(false, false, KeyCode::Char(byte as char))),
+        1,
+    ))
+}
+
+fn parse_escape_sequence(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> {
+    // Need at least 2 bytes for escape sequences
+    if bytes.len() == 1 {
+        return Ok((None, 0));
+    }
+
+    match bytes[1] {
+        b'[' => parse_csi_sequence(bytes),
+        b'O' => parse_ss3_sequence(bytes),
+        // Alt + character (ESC followed by a regular character)
+        b if b < 0x80 && b != 0x1b && b != 0x5b && b != 0x4f => parse_alt_char(bytes),
+        // Standalone ESC or unknown sequence
+        _ => Ok((Some(create_key_input(false, false, KeyCode::Escape)), 1)),
+    }
+}
+
+fn parse_alt_char(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> {
+    let c = bytes[1] as char;
+    let (ctrl, code) = if bytes[1] < 0x20 {
+        // Control characters with Alt
+        match bytes[1] {
+            0x0D => (false, KeyCode::Enter),
+            0x09 => (false, KeyCode::Tab),
+            0x08 => (false, KeyCode::Backspace),
+            c => (true, KeyCode::Char((c + 0x60) as char)),
+        }
+    } else {
+        (false, KeyCode::Char(c))
+    };
+
+    Ok((Some(create_key_input(ctrl, true, code)), 2))
+}
+
+fn parse_csi_sequence(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> {
+    // Need at least 3 bytes for basic CSI sequences (ESC [ X)
+    if bytes.len() < 3 {
+        return Ok((None, 0));
+    }
+
+    match bytes[2] {
+        b'<' => parse_sgr_mouse_sequence(bytes),
+        b'M' => parse_x10_mouse_sequence(bytes),
+        b'A'..=b'D' | b'H' | b'F' | b'Z' => parse_simple_csi_key(bytes),
+        b'1'..=b'6' => parse_complex_csi_key(bytes),
+        _ => Ok((None, 3)), // Unknown CSI sequence
+    }
+}
+
+fn parse_ss3_sequence(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> {
+    // Need at least 3 bytes for SS3 sequences (ESC O X)
+    if bytes.len() < 3 {
+        return Ok((None, 0));
+    }
+
+    let code = match bytes[2] {
+        b'A' => KeyCode::Up,
+        b'B' => KeyCode::Down,
+        b'C' => KeyCode::Right,
+        b'D' => KeyCode::Left,
+        b'H' => KeyCode::Home,
+        b'F' => KeyCode::End,
+        _ => return Ok((None, 3)), // Unknown SS3 sequence
+    };
+
+    Ok((Some(create_key_input(false, false, code)), 3))
+}
+
+fn parse_simple_csi_key(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> {
+    let code = match bytes[2] {
+        b'A' => KeyCode::Up,
+        b'B' => KeyCode::Down,
+        b'C' => KeyCode::Right,
+        b'D' => KeyCode::Left,
+        b'H' => KeyCode::Home,
+        b'F' => KeyCode::End,
+        b'Z' => KeyCode::BackTab,
+        _ => return Ok((None, 3)),
+    };
+
+    Ok((Some(create_key_input(false, false, code)), 3))
+}
+
+fn parse_complex_csi_key(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> {
+    // Handle sequences like ESC [ 1 ; 5 A (modified arrow keys)
+    if bytes.len() >= 6 && bytes[2] == b'1' && bytes[3] == b';' && matches!(bytes[5], b'A'..=b'D') {
+        return parse_modified_arrow_key(bytes);
+    }
+
+    // Handle sequences like ESC [ 3 ~ (Delete) or ESC [ 3 ; 5 ~ (Ctrl+Delete)
+    if bytes.len() >= 4 && bytes[3] == b'~' {
+        return parse_special_key_simple(bytes);
+    }
+
+    if bytes.len() >= 6 && bytes[3] == b';' && bytes[5] == b'~' {
+        return parse_special_key_with_modifier(bytes);
+    }
+
+    // Need more bytes or unknown sequence
+    if bytes.len() < 6 {
+        Ok((None, 0))
+    } else {
+        Ok((None, 3))
+    }
+}
+
+fn parse_modified_arrow_key(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> {
+    let modifier = bytes[4] - b'0';
+    let alt = modifier & 0x2 != 0;
+    let ctrl = modifier & 0x4 != 0;
+
+    let code = match bytes[5] {
+        b'A' => KeyCode::Up,
+        b'B' => KeyCode::Down,
+        b'C' => KeyCode::Right,
+        b'D' => KeyCode::Left,
+        _ => return Ok((None, 6)),
+    };
+
+    Ok((Some(create_key_input(ctrl, alt, code)), 6))
+}
+
+fn parse_special_key_simple(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> {
+    let code = match bytes[2] {
+        b'1' | b'7' => KeyCode::Home,
+        b'2' => KeyCode::Insert,
+        b'3' => KeyCode::Delete,
+        b'4' | b'8' => KeyCode::End,
+        b'5' => KeyCode::PageUp,
+        b'6' => KeyCode::PageDown,
+        _ => return Ok((None, 4)),
+    };
+
+    Ok((Some(create_key_input(false, false, code)), 4))
+}
+
+fn parse_special_key_with_modifier(
+    bytes: &[u8],
+) -> std::io::Result<(Option<TerminalInput>, usize)> {
+    let code = match bytes[2] {
+        b'1' | b'7' => KeyCode::Home,
+        b'2' => KeyCode::Insert,
+        b'3' => KeyCode::Delete,
+        b'4' | b'8' => KeyCode::End,
+        b'5' => KeyCode::PageUp,
+        b'6' => KeyCode::PageDown,
+        _ => return Ok((None, 6)),
+    };
+
+    let modifier = bytes[4] - b'0';
+    let alt = modifier & 0x2 != 0;
+    let ctrl = modifier & 0x4 != 0;
+
+    Ok((Some(create_key_input(ctrl, alt, code)), 6))
+}
+
+fn parse_sgr_mouse_sequence(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> {
+    // Find the end of the sequence (M or m)
+    let mut end_pos = None;
+    for (i, &b) in bytes.iter().enumerate().skip(3) {
+        if b == b'M' || b == b'm' {
+            end_pos = Some(i);
+            break;
+        }
+    }
+
+    let end = match end_pos {
+        Some(pos) => pos,
+        None => return Ok((None, 0)), // Incomplete sequence
+    };
+
+    // Parse the parameters
+    let params_str = std::str::from_utf8(&bytes[3..end])
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid UTF-8"))?;
+
+    let params: Vec<&str> = params_str.split(';').collect();
+    if params.len() != 3 {
+        return Ok((None, end + 1)); // Invalid parameter count
+    }
+
+    let (button, x, y) = match (
+        params[0].parse::<u16>(),
+        params[1].parse::<u16>(),
+        params[2].parse::<u16>(),
+    ) {
+        (Ok(b), Ok(x), Ok(y)) => (b, x, y),
+        _ => return Ok((None, end + 1)), // Invalid parameters
+    };
+
+    let mouse_input = create_sgr_mouse_input(button, x, y, bytes[end] == b'm')?;
+    match mouse_input {
+        Some(input) => Ok((Some(TerminalInput::Mouse(input)), end + 1)),
+        None => Ok((None, end + 1)),
+    }
+}
+
+fn parse_x10_mouse_sequence(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> {
+    if bytes.len() < 6 {
+        return Ok((None, 0));
+    }
+
+    let button_byte = bytes[3];
+    let x = bytes[4] as u16;
+    let y = bytes[5] as u16;
+
+    let mouse_input = create_x10_mouse_input(button_byte, x, y);
+    Ok((Some(TerminalInput::Mouse(mouse_input)), 6))
+}
+
+fn parse_utf8_char(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> {
+    let width = match bytes[0] {
+        b if b & 0xE0 == 0xC0 => 2,
+        b if b & 0xF0 == 0xE0 => 3,
+        b if b & 0xF8 == 0xF0 => 4,
+        _ => 1,
+    };
+
+    if bytes.len() < width {
+        return Ok((None, 0)); // Not enough bytes yet
+    }
+
+    match std::str::from_utf8(&bytes[0..width]) {
+        Ok(s) => {
+            if let Some(c) = s.chars().next() {
+                Ok((
+                    Some(create_key_input(false, false, KeyCode::Char(c))),
+                    width,
+                ))
+            } else {
+                Ok((None, 1)) // Invalid UTF-8, discard first byte
             }
+        }
+        Err(_) => Ok((None, 1)), // Invalid UTF-8, discard first byte
+    }
+}
 
-            if bytes.len() < width {
-                return Ok((None, 0)); // Not enough bytes yet, consumed 0 bytes
-            }
+// Helper functions
+fn create_key_input(ctrl: bool, alt: bool, code: KeyCode) -> TerminalInput {
+    TerminalInput::Key(KeyInput { ctrl, alt, code })
+}
 
-            if let Ok(s) = std::str::from_utf8(&bytes[0..width]) {
-                if let Some(c) = s.chars().next() {
-                    return Ok((
-                        Some(TerminalInput::Key(KeyInput {
-                            ctrl: false,
-                            alt: false,
-                            code: KeyCode::Char(c),
-                        })),
-                        width,
-                    ));
+fn create_sgr_mouse_input(
+    button: u16,
+    x: u16,
+    y: u16,
+    is_release: bool,
+) -> std::io::Result<Option<MouseInput>> {
+    let button_code = button & 0x03;
+    let ctrl = (button & 0x10) != 0;
+    let alt = (button & 0x08) != 0;
+    let shift = (button & 0x04) != 0;
+    let drag = (button & 0x20) != 0;
+
+    let event = if drag {
+        MouseEvent::Drag
+    } else if is_release {
+        match button_code {
+            0 => MouseEvent::LeftRelease,
+            1 => MouseEvent::MiddleRelease,
+            2 => MouseEvent::RightRelease,
+            _ => return Ok(None),
+        }
+    } else {
+        // Check for scroll events first
+        match button {
+            64 => MouseEvent::ScrollUp,
+            65 => MouseEvent::ScrollDown,
+            _ => match button_code {
+                0 => MouseEvent::LeftPress,
+                1 => MouseEvent::MiddlePress,
+                2 => MouseEvent::RightPress,
+                _ => return Ok(None),
+            },
+        }
+    };
+
+    Ok(Some(MouseInput {
+        event,
+        col: x.saturating_sub(1) as usize,
+        row: y.saturating_sub(1) as usize,
+        ctrl,
+        alt,
+        shift,
+    }))
+}
+
+fn create_x10_mouse_input(button_byte: u8, x: u16, y: u16) -> MouseInput {
+    let ctrl = (button_byte & 0x10) != 0;
+    let alt = (button_byte & 0x08) != 0;
+    let shift = (button_byte & 0x04) != 0;
+
+    let event = match button_byte {
+        96 => MouseEvent::ScrollUp,
+        97 => MouseEvent::ScrollDown,
+        _ => {
+            let drag = (button_byte & 0x20) != 0;
+            if drag {
+                MouseEvent::Drag
+            } else {
+                match button_byte & 0x03 {
+                    0 => MouseEvent::LeftPress,
+                    1 => MouseEvent::MiddlePress,
+                    2 => MouseEvent::RightPress,
+                    3 => MouseEvent::LeftRelease,
+                    _ => MouseEvent::LeftPress, // fallback
                 }
             }
-
-            // Invalid UTF-8 sequence, discard the first byte
-            Ok((None, 1))
         }
+    };
 
-        _ => {
-            // Unknown byte, discard it
-            Ok((None, 1))
-        }
+    MouseInput {
+        event,
+        col: x.saturating_sub(33) as usize,
+        row: y.saturating_sub(33) as usize,
+        ctrl,
+        alt,
+        shift,
     }
 }
 
