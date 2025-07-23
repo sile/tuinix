@@ -44,7 +44,9 @@
 //!     loop {
 //!         match terminal.poll_event(&[], &[], Some(Duration::from_millis(100)))? {
 //!             Some(TerminalEvent::Input(input)) => {
-//!                 let TerminalInput::Key(input) = input;
+//!                 let TerminalInput::Key(input) = input else {
+//!                     continue;  // Skip mouse events
+//!                 };
 //!
 //!                 // Check if 'q' was pressed
 //!                 if let tuinix::KeyCode::Char('q') = input.code {
@@ -89,7 +91,7 @@ mod terminal;
 
 pub use frame::{EstimateCharWidth, FixedCharWidthEstimator, TerminalFrame};
 pub use geometry::{TerminalPosition, TerminalRegion, TerminalSize};
-pub use input::{KeyCode, KeyInput, TerminalInput};
+pub use input::{KeyCode, KeyInput, MouseEvent, MouseInput, TerminalInput};
 pub use style::{TerminalColor, TerminalStyle};
 pub use terminal::{Terminal, TerminalEvent};
 

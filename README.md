@@ -53,7 +53,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     loop {
         match terminal.poll_event(&[], &[], Some(Duration::from_millis(100)))? {
             Some(TerminalEvent::Input(input)) => {
-                let TerminalInput::Key(input) = input;
+                let TerminalInput::Key(input) = input else {
+                    continue;  // Skip mouse events
+                };
 
                 // Check if 'q' was pressed
                 if let tuinix::KeyCode::Char('q') = input.code {

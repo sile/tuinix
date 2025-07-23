@@ -1,10 +1,15 @@
 use std::io::Read;
 
+use crate::TerminalPosition;
+
 /// User input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum TerminalInput {
     /// Keyboard input.
     Key(KeyInput),
+
+    /// Mouse input.
+    Mouse(MouseInput),
 }
 
 /// Keyboard input.
@@ -57,6 +62,48 @@ pub enum KeyCode {
     Char(char),
 }
 
+/// Mouse input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct MouseInput {
+    /// The type of mouse event that occurred.
+    pub event: MouseEvent,
+
+    /// The position where the mouse event occurred.
+    pub position: TerminalPosition,
+
+    /// Indicates whether the Ctrl modifier key was pressed during the event.
+    pub ctrl: bool,
+
+    /// Indicates whether the Alt modifier key was pressed during the event.
+    pub alt: bool,
+
+    /// Indicates whether the Shift modifier key was pressed during the event.
+    pub shift: bool,
+}
+
+/// Mouse event types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum MouseEvent {
+    /// Left mouse button pressed.
+    LeftPress,
+    /// Left mouse button released.
+    LeftRelease,
+    /// Right mouse button pressed.
+    RightPress,
+    /// Right mouse button released.
+    RightRelease,
+    /// Middle mouse button pressed.
+    MiddlePress,
+    /// Middle mouse button released.
+    MiddleRelease,
+    /// Mouse moved while a button is held down (drag).
+    Drag,
+    /// Mouse wheel scrolled up.
+    ScrollUp,
+    /// Mouse wheel scrolled down.
+    ScrollDown,
+}
+
 #[derive(Debug)]
 pub struct InputReader<R> {
     inner: R,
@@ -103,385 +150,371 @@ impl<R: Read> InputReader<R> {
 
 fn parse_input(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> {
     if bytes.is_empty() {
-        return Ok((None, 0)); // No bytes to parse, consumed 0 bytes
+        return Ok((None, 0));
     }
 
-    // Regular ASCII character
-    if bytes[0] < 0x80 && bytes[0] != 0x1b && bytes[0] != 0x7f {
-        // Control characters (Ctrl+A through Ctrl+Z)
-        if bytes[0] < 0x20 {
-            let (ctrl, code) = match bytes[0] {
-                0x0D => (false, KeyCode::Enter), // Enter
-                0x09 => (false, KeyCode::Tab),   // Tab
-                c => (true, KeyCode::Char((c + 0x60) as char)),
-            };
-            return Ok((
-                Some(TerminalInput::Key(KeyInput {
-                    ctrl,
-                    alt: false,
-                    code,
-                })),
-                1,
-            ));
-        }
-
-        // Regular ASCII characters
-        return Ok((
-            Some(TerminalInput::Key(KeyInput {
-                ctrl: false,
-                alt: false,
-                code: KeyCode::Char(bytes[0] as char),
-            })),
-            1,
-        ));
-    }
-
-    // Special keys and escape sequences
     match bytes[0] {
-        // Escape key or start of escape sequence
-        0x1b => {
-            // For a standalone ESC press, we need to wait and see if more bytes follow
-            if bytes.len() == 1 {
-                return Ok((None, 0)); // Need more bytes, consumed 0 bytes
-            }
-
-            // Alt + character (ESC followed by a regular character)
-            if bytes[1] < 0x80 && bytes[1] != 0x1b && bytes[1] != 0x5b && bytes[1] != 0x4f {
-                let c = bytes[1] as char;
-                let (ctrl, code) = if bytes[1] < 0x20 {
-                    // Control characters with Alt
-                    match bytes[1] {
-                        0x0D => (false, KeyCode::Enter),
-                        0x09 => (false, KeyCode::Tab),
-                        0x08 => (false, KeyCode::Backspace),
-                        c => (true, KeyCode::Char((c + 0x60) as char)),
-                    }
-                } else {
-                    (false, KeyCode::Char(c))
-                };
-
-                return Ok((
-                    Some(TerminalInput::Key(KeyInput {
-                        ctrl,
-                        alt: true,
-                        code,
-                    })),
-                    2,
-                ));
-            }
-
-            // ESC [ sequences (most function keys, arrow keys, etc.)
-            if bytes[1] == b'[' {
-                // Need at least 3 bytes for the basic arrow keys (ESC [ A)
-                if bytes.len() < 3 {
-                    return Ok((None, 0)); // Need more bytes, consumed 0 bytes
-                }
-
-                // Arrow keys: ESC [ A, ESC [ B, ESC [ C, ESC [ D
-                match bytes[2] {
-                    b'A' => {
-                        return Ok((
-                            Some(TerminalInput::Key(KeyInput {
-                                ctrl: false,
-                                alt: false,
-                                code: KeyCode::Up,
-                            })),
-                            3,
-                        ));
-                    }
-                    b'B' => {
-                        return Ok((
-                            Some(TerminalInput::Key(KeyInput {
-                                ctrl: false,
-                                alt: false,
-                                code: KeyCode::Down,
-                            })),
-                            3,
-                        ));
-                    }
-                    b'C' => {
-                        return Ok((
-                            Some(TerminalInput::Key(KeyInput {
-                                ctrl: false,
-                                alt: false,
-                                code: KeyCode::Right,
-                            })),
-                            3,
-                        ));
-                    }
-                    b'D' => {
-                        return Ok((
-                            Some(TerminalInput::Key(KeyInput {
-                                ctrl: false,
-                                alt: false,
-                                code: KeyCode::Left,
-                            })),
-                            3,
-                        ));
-                    }
-
-                    // Home/End: ESC [ H, ESC [ F
-                    b'H' => {
-                        return Ok((
-                            Some(TerminalInput::Key(KeyInput {
-                                ctrl: false,
-                                alt: false,
-                                code: KeyCode::Home,
-                            })),
-                            3,
-                        ));
-                    }
-                    b'F' => {
-                        return Ok((
-                            Some(TerminalInput::Key(KeyInput {
-                                ctrl: false,
-                                alt: false,
-                                code: KeyCode::End,
-                            })),
-                            3,
-                        ));
-                    }
-
-                    // Shift+Tab: ESC [ Z
-                    b'Z' => {
-                        return Ok((
-                            Some(TerminalInput::Key(KeyInput {
-                                ctrl: false,
-                                alt: false,
-                                code: KeyCode::BackTab,
-                            })),
-                            3,
-                        ));
-                    }
-
-                    // Arrow keys with modifiers: ESC [ 1 ; modifier ch
-                    b'1' if bytes.len() >= 6
-                        && bytes[3] == b';'
-                        && bytes[5] >= b'A'
-                        && bytes[5] <= b'D' =>
-                    {
-                        let modifier = bytes[4] - b'0';
-                        let alt = modifier & 0x2 != 0;
-                        let ctrl = modifier & 0x4 != 0;
-
-                        let code = match bytes[5] {
-                            b'A' => KeyCode::Up,
-                            b'B' => KeyCode::Down,
-                            b'C' => KeyCode::Right,
-                            b'D' => KeyCode::Left,
-                            _ => {
-                                // Unknown sequence, discard these bytes
-                                return Ok((None, 6));
-                            }
-                        };
-
-                        return Ok((Some(TerminalInput::Key(KeyInput { ctrl, alt, code })), 6));
-                    }
-
-                    // Multi-byte sequences for special keys
-                    b'1' | b'2' | b'3' | b'4' | b'5' | b'6' => {
-                        if bytes.len() < 4 {
-                            return Ok((None, 0)); // Need more bytes, consumed 0 bytes
-                        }
-
-                        if bytes[3] == b'~' {
-                            let code = match bytes[2] {
-                                b'1' | b'7' => KeyCode::Home, // Home
-                                b'2' => KeyCode::Insert,      // Insert
-                                b'3' => KeyCode::Delete,      // Delete
-                                b'4' | b'8' => KeyCode::End,  // End
-                                b'5' => KeyCode::PageUp,      // Page Up
-                                b'6' => KeyCode::PageDown,    // Page Down
-                                _ => {
-                                    // Unknown sequence, discard these bytes
-                                    return Ok((None, 4));
-                                }
-                            };
-                            return Ok((
-                                Some(TerminalInput::Key(KeyInput {
-                                    ctrl: false,
-                                    alt: false,
-                                    code,
-                                })),
-                                4,
-                            ));
-                        }
-
-                        // Handle modifiers in sequences like ESC [ 1 ; 5 ~
-                        if bytes.len() >= 6 && bytes[3] == b';' && bytes[5] == b'~' {
-                            let code = match bytes[2] {
-                                b'1' | b'7' => KeyCode::Home,
-                                b'2' => KeyCode::Insert,
-                                b'3' => KeyCode::Delete,
-                                b'4' | b'8' => KeyCode::End,
-                                b'5' => KeyCode::PageUp,
-                                b'6' => KeyCode::PageDown,
-                                _ => {
-                                    // Unknown sequence, discard these bytes
-                                    return Ok((None, 6));
-                                }
-                            };
-
-                            // Parse modifier
-                            let modifier = bytes[4] - b'0';
-                            let alt = modifier & 0x2 != 0;
-                            let ctrl = modifier & 0x4 != 0;
-
-                            return Ok((Some(TerminalInput::Key(KeyInput { ctrl, alt, code })), 6));
-                        }
-
-                        // Not enough bytes yet for the full sequence
-                        if bytes.len() < 6 {
-                            return Ok((None, 0)); // Need more bytes, consumed 0 bytes
-                        }
-
-                        // Unknown sequence, discard the bytes we've examined so far
-                        return Ok((None, 3));
-                    }
-
-                    _ => {
-                        // Unknown escape sequence, discard the first 3 bytes
-                        if bytes.len() >= 3 {
-                            return Ok((None, 3));
-                        }
-                        return Ok((None, 0)); // Need more bytes, consumed 0 bytes
-                    }
-                }
-            }
-
-            // ESC O sequences (function keys on some terminals)
-            if bytes[1] == b'O' {
-                // Need at least 3 bytes for these sequences
-                if bytes.len() < 3 {
-                    return Ok((None, 0)); // Need more bytes, consumed 0 bytes
-                }
-
-                // Some terminals send ESC O A, ESC O B, etc. for arrow keys
-                match bytes[2] {
-                    b'A' => {
-                        return Ok((
-                            Some(TerminalInput::Key(KeyInput {
-                                ctrl: false,
-                                alt: false,
-                                code: KeyCode::Up,
-                            })),
-                            3,
-                        ));
-                    }
-                    b'B' => {
-                        return Ok((
-                            Some(TerminalInput::Key(KeyInput {
-                                ctrl: false,
-                                alt: false,
-                                code: KeyCode::Down,
-                            })),
-                            3,
-                        ));
-                    }
-                    b'C' => {
-                        return Ok((
-                            Some(TerminalInput::Key(KeyInput {
-                                ctrl: false,
-                                alt: false,
-                                code: KeyCode::Right,
-                            })),
-                            3,
-                        ));
-                    }
-                    b'D' => {
-                        return Ok((
-                            Some(TerminalInput::Key(KeyInput {
-                                ctrl: false,
-                                alt: false,
-                                code: KeyCode::Left,
-                            })),
-                            3,
-                        ));
-                    }
-                    b'H' => {
-                        return Ok((
-                            Some(TerminalInput::Key(KeyInput {
-                                ctrl: false,
-                                alt: false,
-                                code: KeyCode::Home,
-                            })),
-                            3,
-                        ));
-                    }
-                    b'F' => {
-                        return Ok((
-                            Some(TerminalInput::Key(KeyInput {
-                                ctrl: false,
-                                alt: false,
-                                code: KeyCode::End,
-                            })),
-                            3,
-                        ));
-                    }
-                    _ => return Ok((None, 3)), // Unknown ESC O sequence
-                }
-            }
-
-            // If we get here, it's either a standalone ESC key or an unknown sequence
-            // Wait at least 50ms before treating it as a standalone ESC
-            // But since we can't do timing here, we'll just interpret it as ESC if
-            // it doesn't match any known start of a sequence
-            Ok((
-                Some(TerminalInput::Key(KeyInput {
-                    ctrl: false,
-                    alt: false,
-                    code: KeyCode::Escape,
-                })),
-                1,
-            ))
-        }
-
+        // Regular ASCII character (not escape or backspace)
+        b if b < 0x80 && b != 0x1b && b != 0x7f => parse_ascii_char(bytes),
+        // Escape key or escape sequence
+        0x1b => parse_escape_sequence(bytes),
         // Backspace
-        0x7F => Ok((
-            Some(TerminalInput::Key(KeyInput {
-                ctrl: false,
-                alt: false,
-                code: KeyCode::Backspace,
-            })),
-            1,
-        )),
+        0x7f => Ok((Some(create_key_input(false, false, KeyCode::Backspace)), 1)),
+        // UTF-8 characters
+        b if b >= 0x80 => parse_utf8_char(bytes),
+        // Unknown byte
+        _ => Ok((None, 1)),
+    }
+}
 
-        // Handle UTF-8 characters
-        _ if bytes[0] >= 0x80 => {
-            let mut width = 1;
-            if bytes[0] & 0xE0 == 0xC0 {
-                width = 2;
-            } else if bytes[0] & 0xF0 == 0xE0 {
-                width = 3;
-            } else if bytes[0] & 0xF8 == 0xF0 {
-                width = 4;
+fn parse_ascii_char(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> {
+    let byte = bytes[0];
+
+    // Control characters (Ctrl+A through Ctrl+Z)
+    if byte < 0x20 {
+        let (ctrl, code) = match byte {
+            0x0D => (false, KeyCode::Enter), // Enter
+            0x09 => (false, KeyCode::Tab),   // Tab
+            c => (true, KeyCode::Char((c + 0x60) as char)),
+        };
+        return Ok((Some(create_key_input(ctrl, false, code)), 1));
+    }
+
+    // Regular ASCII characters
+    Ok((
+        Some(create_key_input(false, false, KeyCode::Char(byte as char))),
+        1,
+    ))
+}
+
+fn parse_escape_sequence(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> {
+    // Need at least 2 bytes for escape sequences
+    if bytes.len() == 1 {
+        return Ok((None, 0));
+    }
+
+    match bytes[1] {
+        b'[' => parse_csi_sequence(bytes),
+        b'O' => parse_ss3_sequence(bytes),
+        // Alt + character (ESC followed by a regular character)
+        b if b < 0x80 && b != 0x1b && b != 0x5b && b != 0x4f => parse_alt_char(bytes),
+        // Standalone ESC or unknown sequence
+        _ => Ok((Some(create_key_input(false, false, KeyCode::Escape)), 1)),
+    }
+}
+
+fn parse_alt_char(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> {
+    let c = bytes[1] as char;
+    let (ctrl, code) = if bytes[1] < 0x20 {
+        // Control characters with Alt
+        match bytes[1] {
+            0x0D => (false, KeyCode::Enter),
+            0x09 => (false, KeyCode::Tab),
+            0x08 => (false, KeyCode::Backspace),
+            c => (true, KeyCode::Char((c + 0x60) as char)),
+        }
+    } else {
+        (false, KeyCode::Char(c))
+    };
+
+    Ok((Some(create_key_input(ctrl, true, code)), 2))
+}
+
+fn parse_csi_sequence(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> {
+    // Need at least 3 bytes for basic CSI sequences (ESC [ X)
+    if bytes.len() < 3 {
+        return Ok((None, 0));
+    }
+
+    match bytes[2] {
+        b'<' => parse_sgr_mouse_sequence(bytes),
+        b'M' => parse_x10_mouse_sequence(bytes),
+        b'A'..=b'D' | b'H' | b'F' | b'Z' => parse_simple_csi_key(bytes),
+        b'1'..=b'6' => parse_complex_csi_key(bytes),
+        _ => Ok((None, 3)), // Unknown CSI sequence
+    }
+}
+
+fn parse_ss3_sequence(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> {
+    // Need at least 3 bytes for SS3 sequences (ESC O X)
+    if bytes.len() < 3 {
+        return Ok((None, 0));
+    }
+
+    let code = match bytes[2] {
+        b'A' => KeyCode::Up,
+        b'B' => KeyCode::Down,
+        b'C' => KeyCode::Right,
+        b'D' => KeyCode::Left,
+        b'H' => KeyCode::Home,
+        b'F' => KeyCode::End,
+        _ => return Ok((None, 3)), // Unknown SS3 sequence
+    };
+
+    Ok((Some(create_key_input(false, false, code)), 3))
+}
+
+fn parse_simple_csi_key(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> {
+    let code = match bytes[2] {
+        b'A' => KeyCode::Up,
+        b'B' => KeyCode::Down,
+        b'C' => KeyCode::Right,
+        b'D' => KeyCode::Left,
+        b'H' => KeyCode::Home,
+        b'F' => KeyCode::End,
+        b'Z' => KeyCode::BackTab,
+        _ => return Ok((None, 3)),
+    };
+
+    Ok((Some(create_key_input(false, false, code)), 3))
+}
+
+fn parse_complex_csi_key(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> {
+    // Handle sequences like ESC [ 1 ; 5 A (modified arrow keys)
+    if bytes.len() >= 6 && bytes[2] == b'1' && bytes[3] == b';' && matches!(bytes[5], b'A'..=b'D') {
+        return parse_modified_arrow_key(bytes);
+    }
+
+    // Handle sequences like ESC [ 3 ~ (Delete) or ESC [ 3 ; 5 ~ (Ctrl+Delete)
+    if bytes.len() >= 4 && bytes[3] == b'~' {
+        return parse_special_key_simple(bytes);
+    }
+
+    if bytes.len() >= 6 && bytes[3] == b';' && bytes[5] == b'~' {
+        return parse_special_key_with_modifier(bytes);
+    }
+
+    // Need more bytes or unknown sequence
+    if bytes.len() < 6 {
+        Ok((None, 0))
+    } else {
+        Ok((None, 3))
+    }
+}
+
+fn parse_modified_arrow_key(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> {
+    let modifier = bytes[4] - b'0';
+    let alt = modifier & 0x2 != 0;
+    let ctrl = modifier & 0x4 != 0;
+
+    let code = match bytes[5] {
+        b'A' => KeyCode::Up,
+        b'B' => KeyCode::Down,
+        b'C' => KeyCode::Right,
+        b'D' => KeyCode::Left,
+        _ => return Ok((None, 6)),
+    };
+
+    Ok((Some(create_key_input(ctrl, alt, code)), 6))
+}
+
+fn parse_special_key_simple(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> {
+    let code = match bytes[2] {
+        b'1' | b'7' => KeyCode::Home,
+        b'2' => KeyCode::Insert,
+        b'3' => KeyCode::Delete,
+        b'4' | b'8' => KeyCode::End,
+        b'5' => KeyCode::PageUp,
+        b'6' => KeyCode::PageDown,
+        _ => return Ok((None, 4)),
+    };
+
+    Ok((Some(create_key_input(false, false, code)), 4))
+}
+
+fn parse_special_key_with_modifier(
+    bytes: &[u8],
+) -> std::io::Result<(Option<TerminalInput>, usize)> {
+    let code = match bytes[2] {
+        b'1' | b'7' => KeyCode::Home,
+        b'2' => KeyCode::Insert,
+        b'3' => KeyCode::Delete,
+        b'4' | b'8' => KeyCode::End,
+        b'5' => KeyCode::PageUp,
+        b'6' => KeyCode::PageDown,
+        _ => return Ok((None, 6)),
+    };
+
+    let modifier = bytes[4] - b'0';
+    let alt = modifier & 0x2 != 0;
+    let ctrl = modifier & 0x4 != 0;
+
+    Ok((Some(create_key_input(ctrl, alt, code)), 6))
+}
+
+fn parse_sgr_mouse_sequence(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> {
+    // Find the end of the sequence (M or m)
+    let mut end_pos = None;
+    for (i, &b) in bytes.iter().enumerate().skip(3) {
+        if b == b'M' || b == b'm' {
+            end_pos = Some(i);
+            break;
+        }
+    }
+
+    let end = match end_pos {
+        Some(pos) => pos,
+        None => return Ok((None, 0)), // Incomplete sequence
+    };
+
+    // Parse the parameters
+    let params_str = std::str::from_utf8(&bytes[3..end])
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid UTF-8"))?;
+
+    let params: Vec<&str> = params_str.split(';').collect();
+    if params.len() != 3 {
+        return Ok((None, end + 1)); // Invalid parameter count
+    }
+
+    let (button, x, y) = match (
+        params[0].parse::<u16>(),
+        params[1].parse::<u16>(),
+        params[2].parse::<u16>(),
+    ) {
+        (Ok(b), Ok(x), Ok(y)) => (b, x, y),
+        _ => return Ok((None, end + 1)), // Invalid parameters
+    };
+
+    let mouse_input = create_sgr_mouse_input(button, x, y, bytes[end] == b'm')?;
+    match mouse_input {
+        Some(input) => Ok((Some(TerminalInput::Mouse(input)), end + 1)),
+        None => Ok((None, end + 1)),
+    }
+}
+
+fn parse_x10_mouse_sequence(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> {
+    if bytes.len() < 6 {
+        return Ok((None, 0));
+    }
+
+    let button_byte = bytes[3];
+    let x = bytes[4] as u16;
+    let y = bytes[5] as u16;
+
+    let mouse_input = create_x10_mouse_input(button_byte, x, y);
+    Ok((Some(TerminalInput::Mouse(mouse_input)), 6))
+}
+
+fn parse_utf8_char(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> {
+    let width = match bytes[0] {
+        b if b & 0xE0 == 0xC0 => 2,
+        b if b & 0xF0 == 0xE0 => 3,
+        b if b & 0xF8 == 0xF0 => 4,
+        _ => 1,
+    };
+
+    if bytes.len() < width {
+        return Ok((None, 0)); // Not enough bytes yet
+    }
+
+    match std::str::from_utf8(&bytes[0..width]) {
+        Ok(s) => {
+            if let Some(c) = s.chars().next() {
+                Ok((
+                    Some(create_key_input(false, false, KeyCode::Char(c))),
+                    width,
+                ))
+            } else {
+                Ok((None, 1)) // Invalid UTF-8, discard first byte
             }
+        }
+        Err(_) => Ok((None, 1)), // Invalid UTF-8, discard first byte
+    }
+}
 
-            if bytes.len() < width {
-                return Ok((None, 0)); // Not enough bytes yet, consumed 0 bytes
-            }
+// Helper functions
+fn create_key_input(ctrl: bool, alt: bool, code: KeyCode) -> TerminalInput {
+    TerminalInput::Key(KeyInput { ctrl, alt, code })
+}
 
-            if let Ok(s) = std::str::from_utf8(&bytes[0..width]) {
-                if let Some(c) = s.chars().next() {
-                    return Ok((
-                        Some(TerminalInput::Key(KeyInput {
-                            ctrl: false,
-                            alt: false,
-                            code: KeyCode::Char(c),
-                        })),
-                        width,
-                    ));
+fn create_sgr_mouse_input(
+    button: u16,
+    x: u16,
+    y: u16,
+    is_release: bool,
+) -> std::io::Result<Option<MouseInput>> {
+    let button_code = button & 0x03;
+    let ctrl = (button & 0x10) != 0;
+    let alt = (button & 0x08) != 0;
+    let shift = (button & 0x04) != 0;
+    let drag = (button & 0x20) != 0;
+
+    let event = if drag {
+        MouseEvent::Drag
+    } else if is_release {
+        match button_code {
+            0 => MouseEvent::LeftRelease,
+            1 => MouseEvent::MiddleRelease,
+            2 => MouseEvent::RightRelease,
+            _ => return Ok(None),
+        }
+    } else {
+        // Check for scroll events first
+        match button {
+            64 => MouseEvent::ScrollUp,
+            65 => MouseEvent::ScrollDown,
+            _ => match button_code {
+                0 => MouseEvent::LeftPress,
+                1 => MouseEvent::MiddlePress,
+                2 => MouseEvent::RightPress,
+                _ => return Ok(None),
+            },
+        }
+    };
+
+    Ok(Some(MouseInput {
+        event,
+        position: TerminalPosition::row_col(
+            y.saturating_sub(1) as usize,
+            x.saturating_sub(1) as usize,
+        ),
+        ctrl,
+        alt,
+        shift,
+    }))
+}
+
+fn create_x10_mouse_input(button_byte: u8, x: u16, y: u16) -> MouseInput {
+    let ctrl = (button_byte & 0x10) != 0;
+    let alt = (button_byte & 0x08) != 0;
+    let shift = (button_byte & 0x04) != 0;
+
+    let event = match button_byte {
+        96 => MouseEvent::ScrollUp,
+        97 => MouseEvent::ScrollDown,
+        _ => {
+            // Remove modifier bits to get the base button code
+            let base_button = button_byte & !0x1C; // Remove shift(4), alt(8), ctrl(16) bits
+
+            match base_button {
+                32 => MouseEvent::LeftPress,   // 0x20
+                33 => MouseEvent::MiddlePress, // 0x21
+                34 => MouseEvent::RightPress,  // 0x22
+                35 => MouseEvent::LeftRelease, // 0x23
+                64 => MouseEvent::Drag,        // 0x40
+                _ => {
+                    // Fallback: check bottom 2 bits for button type
+                    match button_byte & 0x03 {
+                        0 => MouseEvent::LeftPress,
+                        1 => MouseEvent::MiddlePress,
+                        2 => MouseEvent::RightPress,
+                        3 => MouseEvent::LeftRelease,
+                        _ => MouseEvent::LeftPress,
+                    }
                 }
             }
-
-            // Invalid UTF-8 sequence, discard the first byte
-            Ok((None, 1))
         }
+    };
 
-        _ => {
-            // Unknown byte, discard it
-            Ok((None, 1))
-        }
+    MouseInput {
+        event,
+        position: TerminalPosition::row_col(
+            y.saturating_sub(33) as usize,
+            x.saturating_sub(33) as usize,
+        ),
+        ctrl,
+        alt,
+        shift,
     }
 }
 
@@ -1030,6 +1063,481 @@ mod tests {
                 ctrl: false,
                 alt: false,
                 code: KeyCode::Char('b'),
+            }))
+        );
+    }
+
+    #[test]
+    fn test_parse_mouse_scroll_events() {
+        // SGR mode scroll up: ESC [ < 64 ; 10 ; 5 M
+        let input = b"\x1b[<64;10;5M";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::ScrollUp,
+                position: TerminalPosition::row_col(4, 9), // row: 5-1, col: 10-1
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+
+        // SGR mode scroll down: ESC [ < 65 ; 10 ; 5 M
+        let input = b"\x1b[<65;10;5M";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::ScrollDown,
+                position: TerminalPosition::row_col(4, 9),
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+    }
+
+    #[test]
+    fn test_parse_mouse_sgr_mode_button_press() {
+        // SGR mode left button press: ESC [ < 0 ; 10 ; 5 M
+        let input = b"\x1b[<0;10;5M";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::LeftPress,
+                position: TerminalPosition::row_col(4, 9), // row: 5-1, col: 10-1
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+        assert_eq!(result.1, input.len());
+
+        // SGR mode middle button press: ESC [ < 1 ; 10 ; 5 M
+        let input = b"\x1b[<1;10;5M";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::MiddlePress,
+                position: TerminalPosition::row_col(4, 9),
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+
+        // SGR mode right button press: ESC [ < 2 ; 10 ; 5 M
+        let input = b"\x1b[<2;10;5M";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::RightPress,
+                position: TerminalPosition::row_col(4, 9),
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+    }
+
+    #[test]
+    fn test_parse_mouse_sgr_mode_button_release() {
+        // SGR mode left button release: ESC [ < 0 ; 10 ; 5 m (lowercase 'm')
+        let input = b"\x1b[<0;10;5m";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::LeftRelease,
+                position: TerminalPosition::row_col(4, 9),
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+
+        // SGR mode middle button release: ESC [ < 1 ; 10 ; 5 m
+        let input = b"\x1b[<1;10;5m";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::MiddleRelease,
+                position: TerminalPosition::row_col(4, 9),
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+
+        // SGR mode right button release: ESC [ < 2 ; 10 ; 5 m
+        let input = b"\x1b[<2;10;5m";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::RightRelease,
+                position: TerminalPosition::row_col(4, 9),
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+    }
+
+    #[test]
+    fn test_parse_mouse_sgr_mode_with_modifiers() {
+        // SGR mode with Ctrl modifier: ESC [ < 16 ; 10 ; 5 M (16 = 0 + 16)
+        let input = b"\x1b[<16;10;5M";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::LeftPress,
+                position: TerminalPosition::row_col(4, 9),
+                ctrl: true,
+                alt: false,
+                shift: false,
+            }))
+        );
+
+        // SGR mode with Alt modifier: ESC [ < 8 ; 10 ; 5 M (8 = 0 + 8)
+        let input = b"\x1b[<8;10;5M";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::LeftPress,
+                position: TerminalPosition::row_col(4, 9),
+                ctrl: false,
+                alt: true,
+                shift: false,
+            }))
+        );
+
+        // SGR mode with Shift modifier: ESC [ < 4 ; 10 ; 5 M (4 = 0 + 4)
+        let input = b"\x1b[<4;10;5M";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::LeftPress,
+                position: TerminalPosition::row_col(4, 9),
+                ctrl: false,
+                alt: false,
+                shift: true,
+            }))
+        );
+
+        // SGR mode with all modifiers: ESC [ < 28 ; 10 ; 5 M (28 = 0 + 4 + 8 + 16)
+        let input = b"\x1b[<28;10;5M";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::LeftPress,
+                position: TerminalPosition::row_col(4, 9),
+                ctrl: true,
+                alt: true,
+                shift: true,
+            }))
+        );
+    }
+    #[test]
+    fn test_parse_mouse_sgr_mode_drag() {
+        // SGR mode drag: ESC [ < 32 ; 10 ; 5 M (32 = 0 + 32)
+        let input = b"\x1b[<32;10;5M";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::Drag,
+                position: TerminalPosition::row_col(4, 9),
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+
+        // SGR mode drag with modifiers: ESC [ < 60 ; 10 ; 5 M (60 = 0 + 4 + 8 + 16 + 32)
+        let input = b"\x1b[<60;10;5M";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::Drag,
+                position: TerminalPosition::row_col(4, 9),
+                ctrl: true,
+                alt: true,
+                shift: true,
+            }))
+        );
+    }
+
+    #[test]
+    fn test_parse_mouse_x10_x11_mode() {
+        // X10/X11 mode left button press: ESC [ M <button> <x> <y>
+        // Button 32 (0x20) = left press, x=43 (10+33), y=38 (5+33)
+        let input = b"\x1b[M \x2b\x26";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::LeftPress,
+                position: TerminalPosition::row_col(5, 10),
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+        assert_eq!(result.1, 6);
+
+        // X10/X11 mode middle button press: ESC [ M <button> <x> <y>
+        // Button 33 (0x21) = middle press
+        let input = b"\x1b[M!\x2b\x26";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::MiddlePress,
+                position: TerminalPosition::row_col(5, 10),
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+
+        // X10/X11 mode right button press: ESC [ M <button> <x> <y>
+        // Button 34 (0x22) = right press
+        let input = b"\x1b[M\"\x2b\x26";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::RightPress,
+                position: TerminalPosition::row_col(5, 10),
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+
+        // X10/X11 mode button release: ESC [ M <button> <x> <y>
+        // Button 35 (0x23) = release
+        let input = b"\x1b[M#\x2b\x26";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::LeftRelease,
+                position: TerminalPosition::row_col(5, 10),
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+    }
+
+    #[test]
+    fn test_parse_mouse_x10_x11_mode_with_modifiers() {
+        // X10/X11 mode with Ctrl modifier: button = 32 + 16 = 48 (0x30)
+        let input = b"\x1b[M0\x2b\x26";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::LeftPress,
+                position: TerminalPosition::row_col(5, 10),
+                ctrl: true,
+                alt: false,
+                shift: false,
+            }))
+        );
+
+        // X10/X11 mode with Alt modifier: button = 32 + 8 = 40 (0x28)
+        let input = b"\x1b[M(\x2b\x26";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::LeftPress,
+                position: TerminalPosition::row_col(5, 10),
+                ctrl: false,
+                alt: true,
+                shift: false,
+            }))
+        );
+
+        // X10/X11 mode with Shift modifier: button = 32 + 4 = 36 (0x24)
+        let input = b"\x1b[M$\x2b\x26";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::LeftPress,
+                position: TerminalPosition::row_col(5, 10),
+                ctrl: false,
+                alt: false,
+                shift: true,
+            }))
+        );
+    }
+
+    #[test]
+    fn test_parse_mouse_x10_x11_mode_scroll() {
+        // X10/X11 mode scroll up: button = 96 (0x60)
+        let input = b"\x1b[M`\x2b\x26";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::ScrollUp,
+                position: TerminalPosition::row_col(5, 10),
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+
+        // X10/X11 mode scroll down: button = 97 (0x61)
+        let input = b"\x1b[Ma\x2b\x26";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::ScrollDown,
+                position: TerminalPosition::row_col(5, 10),
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+    }
+
+    #[test]
+    fn test_parse_mouse_x10_x11_mode_drag() {
+        // X10/X11 mode drag: button = 32 + 32 = 64 (0x40)
+        let input = b"\x1b[M@\x2b\x26";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::Drag,
+                position: TerminalPosition::row_col(5, 10),
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+    }
+
+    #[test]
+    fn test_parse_mouse_coordinate_boundaries() {
+        // Test coordinates at origin (1,1 -> 0,0)
+        let input = b"\x1b[<0;1;1M";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::LeftPress,
+                position: TerminalPosition::row_col(0, 0),
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+
+        // Test large coordinates
+        let input = b"\x1b[<0;100;200M";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::LeftPress,
+                position: TerminalPosition::row_col(199, 99), // row: 200-1, col: 100-1
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+    }
+
+    #[test]
+    fn test_parse_mouse_edge_cases() {
+        // SGR sequence with zero coordinates (should saturate to 0)
+        let input = b"\x1b[<0;0;0M";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::LeftPress,
+                position: TerminalPosition::row_col(0, 0), // saturating_sub(1) on 0 = 0
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+
+        // X10/X11 sequence with minimum coordinate values (33)
+        let input = b"\x1b[M !!";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::LeftPress,
+                position: TerminalPosition::row_col(0, 0), // 33-33 = 0
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+    }
+
+    #[test]
+    fn test_input_reader_mouse_events() {
+        use std::io::Cursor;
+
+        // Test reading a mouse click
+        let mut reader = InputReader::new(Cursor::new(b"\x1b[<0;10;5M"));
+        let result = reader.read_input().unwrap();
+        assert_eq!(
+            result,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::LeftPress,
+                position: TerminalPosition::row_col(4, 9),
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+
+        // Test reading multiple mouse events
+        let mut reader = InputReader::new(Cursor::new(b"\x1b[<0;10;5M\x1b[<0;10;5m"));
+        let result1 = reader.read_input().unwrap();
+        let result2 = reader.read_input().unwrap();
+
+        assert_eq!(
+            result1,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::LeftPress,
+                position: TerminalPosition::row_col(4, 9),
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+        assert_eq!(
+            result2,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::LeftRelease,
+                position: TerminalPosition::row_col(4, 9),
+                ctrl: false,
+                alt: false,
+                shift: false,
             }))
         );
     }
