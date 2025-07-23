@@ -91,7 +91,7 @@ mod terminal;
 
 pub use frame::{EstimateCharWidth, FixedCharWidthEstimator, TerminalFrame};
 pub use geometry::{TerminalPosition, TerminalRegion, TerminalSize};
-pub use input::{KeyCode, KeyInput, TerminalInput};
+pub use input::{KeyCode, KeyInput, MouseEvent, MouseInput, TerminalInput};
 pub use style::{TerminalColor, TerminalStyle};
 pub use terminal::{Terminal, TerminalEvent};
 
