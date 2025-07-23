@@ -66,20 +66,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 STDIN_TOKEN => {
                     // Handle keyboard input
                     while let Some(Some(input)) = try_nonblocking(terminal.read_input())? {
-                        match input {
-                            TerminalInput::Key(key_input) => {
-                                // Check if 'q' was pressed
-                                if let KeyCode::Char('q') = key_input.code {
-                                    return Ok(());
-                                }
+                        let TerminalInput::Key(key_input) = input else {
+                            continue; // Skip mouse events
+                        };
 
-                                // Display the input
-                                let mut frame: TerminalFrame = TerminalFrame::new(terminal.size());
-                                writeln!(frame, "Key pressed: {key_input:?}")?;
-                                writeln!(frame, "\nPress any key ('q' to quit)")?;
-                                terminal.draw(frame)?;
-                            }
+                        // Check if 'q' was pressed
+                        if let KeyCode::Char('q') = key_input.code {
+                            return Ok(());
                         }
+
+                        // Display the input
+                        let mut frame: TerminalFrame = TerminalFrame::new(terminal.size());
+                        writeln!(frame, "Key pressed: {key_input:?}")?;
+                        writeln!(frame, "\nPress any key ('q' to quit)")?;
+                        terminal.draw(frame)?;
                     }
                 }
                 SIGNAL_TOKEN => {
