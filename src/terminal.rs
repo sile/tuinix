@@ -286,10 +286,12 @@ impl Terminal {
 
                 // Add extra write fds
                 let mut writefds = MaybeUninit::<libc::fd_set>::zeroed();
-                libc::FD_ZERO(writefds.as_mut_ptr());
-                for &fd in additional_writefds {
-                    libc::FD_SET(fd, writefds.as_mut_ptr());
-                    maxfd = maxfd.max(fd);
+                if !additional_writefds.is_empty() {
+                    libc::FD_ZERO(writefds.as_mut_ptr());
+                    for &fd in additional_writefds {
+                        libc::FD_SET(fd, writefds.as_mut_ptr());
+                        maxfd = maxfd.max(fd);
+                    }
                 }
                 let mut writefds = writefds.assume_init();
 
