@@ -232,8 +232,8 @@ fn parse_input(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> 
                 if bytes[2] == b'<' {
                     // Find the end of the sequence
                     let mut end_pos = None;
-                    for i in 3..bytes.len() {
-                        if bytes[i] == b'M' || bytes[i] == b'm' {
+                    for (i, &b) in bytes.iter().enumerate().skip(3) {
+                        if b == b'M' || b == b'm' {
                             end_pos = Some(i);
                             break;
                         }
@@ -319,23 +319,26 @@ fn parse_input(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> 
                     let ctrl = (button_byte & 0x10) != 0;
                     let alt = (button_byte & 0x08) != 0;
                     let shift = (button_byte & 0x04) != 0;
-                    let drag = (button_byte & 0x20) != 0;
 
-                    let event = if drag {
-                        MouseEvent::Drag
-                    } else {
+                    let event = {
                         // Check for scroll events first (they use button codes 96/97)
                         match button_byte {
                             96 => MouseEvent::ScrollUp,   // 0x60
                             97 => MouseEvent::ScrollDown, // 0x61
                             _ => {
-                                // Regular button events
-                                match button_byte & 0x03 {
-                                    0 => MouseEvent::LeftPress,
-                                    1 => MouseEvent::MiddlePress,
-                                    2 => MouseEvent::RightPress,
-                                    3 => MouseEvent::LeftRelease,
-                                    _ => return Ok((None, 6)),
+                                // Check for drag (but not for scroll events)
+                                let drag = (button_byte & 0x20) != 0;
+                                if drag {
+                                    MouseEvent::Drag
+                                } else {
+                                    // Regular button events
+                                    match button_byte & 0x03 {
+                                        0 => MouseEvent::LeftPress,
+                                        1 => MouseEvent::MiddlePress,
+                                        2 => MouseEvent::RightPress,
+                                        3 => MouseEvent::LeftRelease,
+                                        _ => return Ok((None, 6)),
+                                    }
                                 }
                             }
                         }
@@ -1238,6 +1241,534 @@ mod tests {
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
                 event: MouseEvent::ScrollDown,
+                col: 9,
+                row: 4,
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+    }
+
+    #[test]
+    fn test_parse_mouse_sgr_mode_button_press() {
+        // SGR mode left button press: ESC [ < 0 ; 10 ; 5 M
+        let input = b"\x1b[<0;10;5M";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::LeftPress,
+                col: 9, // 10-1
+                row: 4, // 5-1
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+        assert_eq!(result.1, input.len());
+
+        // SGR mode middle button press: ESC [ < 1 ; 10 ; 5 M
+        let input = b"\x1b[<1;10;5M";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::MiddlePress,
+                col: 9,
+                row: 4,
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+
+        // SGR mode right button press: ESC [ < 2 ; 10 ; 5 M
+        let input = b"\x1b[<2;10;5M";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::RightPress,
+                col: 9,
+                row: 4,
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+    }
+
+    #[test]
+    fn test_parse_mouse_sgr_mode_button_release() {
+        // SGR mode left button release: ESC [ < 0 ; 10 ; 5 m (lowercase 'm')
+        let input = b"\x1b[<0;10;5m";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::LeftRelease,
+                col: 9,
+                row: 4,
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+
+        // SGR mode middle button release: ESC [ < 1 ; 10 ; 5 m
+        let input = b"\x1b[<1;10;5m";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::MiddleRelease,
+                col: 9,
+                row: 4,
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+
+        // SGR mode right button release: ESC [ < 2 ; 10 ; 5 m
+        let input = b"\x1b[<2;10;5m";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::RightRelease,
+                col: 9,
+                row: 4,
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+    }
+
+    #[test]
+    fn test_parse_mouse_sgr_mode_with_modifiers() {
+        // SGR mode with Ctrl modifier: ESC [ < 16 ; 10 ; 5 M (16 = 0 + 16)
+        let input = b"\x1b[<16;10;5M";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::LeftPress,
+                col: 9,
+                row: 4,
+                ctrl: true,
+                alt: false,
+                shift: false,
+            }))
+        );
+
+        // SGR mode with Alt modifier: ESC [ < 8 ; 10 ; 5 M (8 = 0 + 8)
+        let input = b"\x1b[<8;10;5M";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::LeftPress,
+                col: 9,
+                row: 4,
+                ctrl: false,
+                alt: true,
+                shift: false,
+            }))
+        );
+
+        // SGR mode with Shift modifier: ESC [ < 4 ; 10 ; 5 M (4 = 0 + 4)
+        let input = b"\x1b[<4;10;5M";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::LeftPress,
+                col: 9,
+                row: 4,
+                ctrl: false,
+                alt: false,
+                shift: true,
+            }))
+        );
+
+        // SGR mode with all modifiers: ESC [ < 28 ; 10 ; 5 M (28 = 0 + 4 + 8 + 16)
+        let input = b"\x1b[<28;10;5M";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::LeftPress,
+                col: 9,
+                row: 4,
+                ctrl: true,
+                alt: true,
+                shift: true,
+            }))
+        );
+    }
+
+    #[test]
+    fn test_parse_mouse_sgr_mode_drag() {
+        // SGR mode drag: ESC [ < 32 ; 10 ; 5 M (32 = 0 + 32)
+        let input = b"\x1b[<32;10;5M";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::Drag,
+                col: 9,
+                row: 4,
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+
+        // SGR mode drag with modifiers: ESC [ < 60 ; 10 ; 5 M (60 = 0 + 4 + 8 + 16 + 32)
+        let input = b"\x1b[<60;10;5M";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::Drag,
+                col: 9,
+                row: 4,
+                ctrl: true,
+                alt: true,
+                shift: true,
+            }))
+        );
+    }
+
+    #[test]
+    fn test_parse_mouse_x10_x11_mode() {
+        // X10/X11 mode left button press: ESC [ M <button> <x> <y>
+        // Button 32 (0x20) = left press, x=43 (10+33), y=38 (5+33)
+        let input = b"\x1b[M \x2b\x26";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::LeftPress,
+                col: 10,
+                row: 5,
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+        assert_eq!(result.1, 6);
+
+        // X10/X11 mode middle button press: ESC [ M <button> <x> <y>
+        // Button 33 (0x21) = middle press
+        let input = b"\x1b[M!\x2b\x26";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::MiddlePress,
+                col: 10,
+                row: 5,
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+
+        // X10/X11 mode right button press: ESC [ M <button> <x> <y>
+        // Button 34 (0x22) = right press
+        let input = b"\x1b[M\"\x2b\x26";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::RightPress,
+                col: 10,
+                row: 5,
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+
+        // X10/X11 mode button release: ESC [ M <button> <x> <y>
+        // Button 35 (0x23) = release
+        let input = b"\x1b[M#\x2b\x26";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::LeftRelease,
+                col: 10,
+                row: 5,
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+    }
+
+    #[test]
+    fn test_parse_mouse_x10_x11_mode_with_modifiers() {
+        // X10/X11 mode with Ctrl modifier: button = 32 + 16 = 48 (0x30)
+        let input = b"\x1b[M0\x2b\x26";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::LeftPress,
+                col: 10,
+                row: 5,
+                ctrl: true,
+                alt: false,
+                shift: false,
+            }))
+        );
+
+        // X10/X11 mode with Alt modifier: button = 32 + 8 = 40 (0x28)
+        let input = b"\x1b[M(\x2b\x26";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::LeftPress,
+                col: 10,
+                row: 5,
+                ctrl: false,
+                alt: true,
+                shift: false,
+            }))
+        );
+
+        // X10/X11 mode with Shift modifier: button = 32 + 4 = 36 (0x24)
+        let input = b"\x1b[M$\x2b\x26";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::LeftPress,
+                col: 10,
+                row: 5,
+                ctrl: false,
+                alt: false,
+                shift: true,
+            }))
+        );
+    }
+
+    #[test]
+    fn test_parse_mouse_x10_x11_mode_scroll() {
+        // X10/X11 mode scroll up: button = 96 (0x60)
+        let input = b"\x1b[M`\x2b\x26";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::ScrollUp,
+                col: 10,
+                row: 5,
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+
+        // X10/X11 mode scroll down: button = 97 (0x61)
+        let input = b"\x1b[Ma\x2b\x26";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::ScrollDown,
+                col: 10,
+                row: 5,
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+    }
+
+    #[test]
+    fn test_parse_mouse_x10_x11_mode_drag() {
+        // X10/X11 mode drag: button = 32 + 32 = 64 (0x40)
+        let input = b"\x1b[M@\x2b\x26";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::Drag,
+                col: 10,
+                row: 5,
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+    }
+
+    #[test]
+    fn test_parse_mouse_coordinate_boundaries() {
+        // Test coordinates at origin (1,1 -> 0,0)
+        let input = b"\x1b[<0;1;1M";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::LeftPress,
+                col: 0,
+                row: 0,
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+
+        // Test large coordinates
+        let input = b"\x1b[<0;100;200M";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::LeftPress,
+                col: 99,  // 100-1
+                row: 199, // 200-1
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+    }
+
+    #[test]
+    fn test_parse_mouse_incomplete_sequences() {
+        // Incomplete SGR sequence - missing terminator
+        let input = b"\x1b[<0;10;5";
+        let result = parse_input(input).unwrap();
+        assert_eq!(result.0, None); // Need more bytes
+        assert_eq!(result.1, 0);
+
+        // Incomplete SGR sequence - missing parameters
+        let input = b"\x1b[<0;10";
+        let result = parse_input(input).unwrap();
+        assert_eq!(result.0, None); // Need more bytes
+        assert_eq!(result.1, 0);
+
+        // Incomplete X10/X11 sequence - missing bytes
+        let input = b"\x1b[M \x2b";
+        let result = parse_input(input).unwrap();
+        assert_eq!(result.0, None); // Need more bytes
+        assert_eq!(result.1, 0);
+
+        // Incomplete X10/X11 sequence - missing all coordinate bytes
+        let input = b"\x1b[M ";
+        let result = parse_input(input).unwrap();
+        assert_eq!(result.0, None); // Need more bytes
+        assert_eq!(result.1, 0);
+    }
+
+    #[test]
+    fn test_parse_mouse_invalid_sequences() {
+        // Invalid SGR sequence - malformed parameters
+        let input = b"\x1b[<abc;def;ghiM";
+        let result = parse_input(input).unwrap();
+        assert_eq!(result.0, None); // Invalid sequence discarded
+        assert_eq!(result.1, input.len());
+
+        // Invalid SGR sequence - missing semicolons
+        let input = b"\x1b[<0 10 5M";
+        let result = parse_input(input).unwrap();
+        assert_eq!(result.0, None); // Invalid sequence discarded
+        assert_eq!(result.1, input.len());
+
+        // Invalid SGR sequence - wrong parameter count
+        let input = b"\x1b[<0;10M";
+        let result = parse_input(input).unwrap();
+        assert_eq!(result.0, None); // Invalid sequence discarded
+        assert_eq!(result.1, input.len());
+    }
+
+    #[test]
+    fn test_parse_mouse_edge_cases() {
+        // SGR sequence with zero coordinates (should saturate to 0)
+        let input = b"\x1b[<0;0;0M";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::LeftPress,
+                col: 0, // saturating_sub(1) on 0 = 0
+                row: 0,
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+
+        // X10/X11 sequence with minimum coordinate values (33)
+        let input = b"\x1b[M !!";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::LeftPress,
+                col: 0, // 33-33 = 0
+                row: 0,
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+
+        // Unknown button code in SGR mode
+        let input = b"\x1b[<255;10;5M";
+        let result = parse_input(input).unwrap();
+        assert_eq!(result.0, None); // Unknown button, sequence discarded
+        assert_eq!(result.1, input.len());
+    }
+
+    #[test]
+    fn test_input_reader_mouse_events() {
+        use std::io::Cursor;
+
+        // Test reading a mouse click
+        let mut reader = InputReader::new(Cursor::new(b"\x1b[<0;10;5M"));
+        let result = reader.read_input().unwrap();
+        assert_eq!(
+            result,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::LeftPress,
+                col: 9,
+                row: 4,
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+
+        // Test reading multiple mouse events
+        let mut reader = InputReader::new(Cursor::new(b"\x1b[<0;10;5M\x1b[<0;10;5m"));
+        let result1 = reader.read_input().unwrap();
+        let result2 = reader.read_input().unwrap();
+
+        assert_eq!(
+            result1,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::LeftPress,
+                col: 9,
+                row: 4,
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+        assert_eq!(
+            result2,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::LeftRelease,
                 col: 9,
                 row: 4,
                 ctrl: false,
