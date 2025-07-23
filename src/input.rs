@@ -148,21 +148,21 @@ fn parse_input(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> 
             // Alt + character (ESC followed by a regular character)
             if bytes[1] < 0x80 && bytes[1] != 0x1b && bytes[1] != 0x5b && bytes[1] != 0x4f {
                 let c = bytes[1] as char;
-                let code = if bytes[1] < 0x20 {
+                let (ctrl, code) = if bytes[1] < 0x20 {
                     // Control characters with Alt
                     match bytes[1] {
-                        0x0D => KeyCode::Enter,
-                        0x09 => KeyCode::Tab,
-                        0x08 => KeyCode::Backspace,
-                        c => KeyCode::Char((c + 0x60) as char),
+                        0x0D => (false, KeyCode::Enter),
+                        0x09 => (false, KeyCode::Tab),
+                        0x08 => (false, KeyCode::Backspace),
+                        c => (true, KeyCode::Char((c + 0x60) as char)),
                     }
                 } else {
-                    KeyCode::Char(c)
+                    (false, KeyCode::Char(c))
                 };
 
                 return Ok((
                     Some(TerminalInput::Key(KeyInput {
-                        ctrl: bytes[1] < 0x20,
+                        ctrl,
                         alt: true,
                         code,
                     })),
@@ -482,5 +482,555 @@ fn parse_input(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> 
             // Unknown byte, discard it
             Ok((None, 1))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_regular_ascii_characters() {
+        // Test regular ASCII characters
+        let result = parse_input(b"a").unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: false,
+                code: KeyCode::Char('a'),
+            }))
+        );
+        assert_eq!(result.1, 1);
+
+        let result = parse_input(b"Z").unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: false,
+                code: KeyCode::Char('Z'),
+            }))
+        );
+        assert_eq!(result.1, 1);
+
+        let result = parse_input(b"5").unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: false,
+                code: KeyCode::Char('5'),
+            }))
+        );
+        assert_eq!(result.1, 1);
+    }
+
+    #[test]
+    fn test_parse_control_characters() {
+        // Test Ctrl+A (0x01)
+        let result = parse_input(&[0x01]).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: true,
+                alt: false,
+                code: KeyCode::Char('a'),
+            }))
+        );
+        assert_eq!(result.1, 1);
+
+        // Test Ctrl+Z (0x1A)
+        let result = parse_input(&[0x1A]).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: true,
+                alt: false,
+                code: KeyCode::Char('z'),
+            }))
+        );
+        assert_eq!(result.1, 1);
+
+        // Test Enter (0x0D)
+        let result = parse_input(&[0x0D]).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: false,
+                code: KeyCode::Enter,
+            }))
+        );
+        assert_eq!(result.1, 1);
+
+        // Test Tab (0x09)
+        let result = parse_input(&[0x09]).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: false,
+                code: KeyCode::Tab,
+            }))
+        );
+        assert_eq!(result.1, 1);
+    }
+
+    #[test]
+    fn test_parse_backspace() {
+        let result = parse_input(&[0x7F]).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: false,
+                code: KeyCode::Backspace,
+            }))
+        );
+        assert_eq!(result.1, 1);
+    }
+
+    #[test]
+    fn test_parse_escape_key() {
+        // Standalone ESC key
+        let result = parse_input(&[0x1b]).unwrap();
+        assert_eq!(result.0, None); // Need more bytes
+        assert_eq!(result.1, 0);
+
+        // ESC followed by unknown character should be treated as ESC
+        let result = parse_input(&[0x1b, b'x']).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: true,
+                code: KeyCode::Char('x'),
+            }))
+        );
+        assert_eq!(result.1, 2);
+    }
+
+    #[test]
+    fn test_parse_alt_combinations() {
+        // Alt+a
+        let result = parse_input(&[0x1b, b'a']).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: true,
+                code: KeyCode::Char('a'),
+            }))
+        );
+        assert_eq!(result.1, 2);
+
+        // Alt+Enter
+        let result = parse_input(&[0x1b, 0x0D]).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: true,
+                code: KeyCode::Enter,
+            }))
+        );
+        assert_eq!(result.1, 2);
+
+        // Alt+Tab
+        let result = parse_input(&[0x1b, 0x09]).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: true,
+                code: KeyCode::Tab,
+            }))
+        );
+        assert_eq!(result.1, 2);
+    }
+
+    #[test]
+    fn test_parse_arrow_keys_esc_bracket() {
+        // Up arrow: ESC [ A
+        let result = parse_input(&[0x1b, b'[', b'A']).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: false,
+                code: KeyCode::Up,
+            }))
+        );
+        assert_eq!(result.1, 3);
+
+        // Down arrow: ESC [ B
+        let result = parse_input(&[0x1b, b'[', b'B']).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: false,
+                code: KeyCode::Down,
+            }))
+        );
+        assert_eq!(result.1, 3);
+
+        // Right arrow: ESC [ C
+        let result = parse_input(&[0x1b, b'[', b'C']).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: false,
+                code: KeyCode::Right,
+            }))
+        );
+        assert_eq!(result.1, 3);
+
+        // Left arrow: ESC [ D
+        let result = parse_input(&[0x1b, b'[', b'D']).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: false,
+                code: KeyCode::Left,
+            }))
+        );
+        assert_eq!(result.1, 3);
+    }
+
+    #[test]
+    fn test_parse_arrow_keys_esc_o() {
+        // Up arrow: ESC O A
+        let result = parse_input(&[0x1b, b'O', b'A']).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: false,
+                code: KeyCode::Up,
+            }))
+        );
+        assert_eq!(result.1, 3);
+
+        // Down arrow: ESC O B
+        let result = parse_input(&[0x1b, b'O', b'B']).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: false,
+                code: KeyCode::Down,
+            }))
+        );
+        assert_eq!(result.1, 3);
+    }
+
+    #[test]
+    fn test_parse_home_end_keys() {
+        // Home: ESC [ H
+        let result = parse_input(&[0x1b, b'[', b'H']).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: false,
+                code: KeyCode::Home,
+            }))
+        );
+        assert_eq!(result.1, 3);
+
+        // End: ESC [ F
+        let result = parse_input(&[0x1b, b'[', b'F']).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: false,
+                code: KeyCode::End,
+            }))
+        );
+        assert_eq!(result.1, 3);
+
+        // Home: ESC O H
+        let result = parse_input(&[0x1b, b'O', b'H']).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: false,
+                code: KeyCode::Home,
+            }))
+        );
+        assert_eq!(result.1, 3);
+
+        // End: ESC O F
+        let result = parse_input(&[0x1b, b'O', b'F']).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: false,
+                code: KeyCode::End,
+            }))
+        );
+        assert_eq!(result.1, 3);
+    }
+
+    #[test]
+    fn test_parse_special_keys() {
+        // Shift+Tab: ESC [ Z
+        let result = parse_input(&[0x1b, b'[', b'Z']).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: false,
+                code: KeyCode::BackTab,
+            }))
+        );
+        assert_eq!(result.1, 3);
+
+        // Insert: ESC [ 2 ~
+        let result = parse_input(&[0x1b, b'[', b'2', b'~']).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: false,
+                code: KeyCode::Insert,
+            }))
+        );
+        assert_eq!(result.1, 4);
+
+        // Delete: ESC [ 3 ~
+        let result = parse_input(&[0x1b, b'[', b'3', b'~']).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: false,
+                code: KeyCode::Delete,
+            }))
+        );
+        assert_eq!(result.1, 4);
+
+        // Page Up: ESC [ 5 ~
+        let result = parse_input(&[0x1b, b'[', b'5', b'~']).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: false,
+                code: KeyCode::PageUp,
+            }))
+        );
+        assert_eq!(result.1, 4);
+
+        // Page Down: ESC [ 6 ~
+        let result = parse_input(&[0x1b, b'[', b'6', b'~']).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: false,
+                code: KeyCode::PageDown,
+            }))
+        );
+        assert_eq!(result.1, 4);
+    }
+
+    #[test]
+    fn test_parse_modified_arrow_keys() {
+        // Ctrl+Up: ESC [ 1 ; 5 A (modifier 5 = Ctrl)
+        let result = parse_input(&[0x1b, b'[', b'1', b';', b'5', b'A']).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: true,
+                alt: false,
+                code: KeyCode::Up,
+            }))
+        );
+        assert_eq!(result.1, 6);
+
+        // Alt+Right: ESC [ 1 ; 3 C (modifier 3 = Alt)
+        let result = parse_input(&[0x1b, b'[', b'1', b';', b'3', b'C']).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: true,
+                code: KeyCode::Right,
+            }))
+        );
+        assert_eq!(result.1, 6);
+
+        // Ctrl+Alt+Left: ESC [ 1 ; 7 D (modifier 7 = Ctrl+Alt)
+        let result = parse_input(&[0x1b, b'[', b'1', b';', b'7', b'D']).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: true,
+                alt: true,
+                code: KeyCode::Left,
+            }))
+        );
+        assert_eq!(result.1, 6);
+    }
+
+    #[test]
+    fn test_parse_modified_special_keys() {
+        // Ctrl+Delete: ESC [ 3 ; 5 ~
+        let result = parse_input(&[0x1b, b'[', b'3', b';', b'5', b'~']).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: true,
+                alt: false,
+                code: KeyCode::Delete,
+            }))
+        );
+        assert_eq!(result.1, 6);
+
+        // Alt+Home: ESC [ 1 ; 3 ~
+        let result = parse_input(&[0x1b, b'[', b'1', b';', b'3', b'~']).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: true,
+                code: KeyCode::Home,
+            }))
+        );
+        assert_eq!(result.1, 6);
+    }
+
+    #[test]
+    fn test_parse_utf8_characters() {
+        // Test UTF-8 character (é = 0xC3 0xA9)
+        let result = parse_input(&[0xC3, 0xA9]).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: false,
+                code: KeyCode::Char('é'),
+            }))
+        );
+        assert_eq!(result.1, 2);
+
+        // Test 3-byte UTF-8 character (€ = 0xE2 0x82 0xAC)
+        let result = parse_input(&[0xE2, 0x82, 0xAC]).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: false,
+                code: KeyCode::Char('€'),
+            }))
+        );
+        assert_eq!(result.1, 3);
+
+        // Test incomplete UTF-8 sequence
+        let result = parse_input(&[0xC3]).unwrap();
+        assert_eq!(result.0, None); // Need more bytes
+        assert_eq!(result.1, 0);
+    }
+
+    #[test]
+    fn test_parse_incomplete_sequences() {
+        // Incomplete escape sequence
+        let result = parse_input(&[0x1b, b'[']).unwrap();
+        assert_eq!(result.0, None); // Need more bytes
+        assert_eq!(result.1, 0);
+
+        // Incomplete special key sequence
+        let result = parse_input(&[0x1b, b'[', b'2']).unwrap();
+        assert_eq!(result.0, None); // Need more bytes
+        assert_eq!(result.1, 0);
+
+        // Incomplete modified key sequence
+        let result = parse_input(&[0x1b, b'[', b'1', b';']).unwrap();
+        assert_eq!(result.0, None); // Need more bytes
+        assert_eq!(result.1, 0);
+    }
+
+    #[test]
+    fn test_parse_empty_input() {
+        let result = parse_input(&[]).unwrap();
+        assert_eq!(result.0, None);
+        assert_eq!(result.1, 0);
+    }
+
+    #[test]
+    fn test_parse_unknown_sequences() {
+        // Unknown escape sequence should be discarded
+        let result = parse_input(&[0x1b, b'[', b'X']).unwrap();
+        assert_eq!(result.0, None);
+        assert_eq!(result.1, 3);
+
+        // Unknown ESC O sequence
+        let result = parse_input(&[0x1b, b'O', b'X']).unwrap();
+        assert_eq!(result.0, None);
+        assert_eq!(result.1, 3);
+
+        // Invalid UTF-8 sequence
+        let result = parse_input(&[0xFF]).unwrap();
+        assert_eq!(result.0, None);
+        assert_eq!(result.1, 1);
+    }
+
+    #[test]
+    fn test_input_reader() {
+        use std::io::Cursor;
+
+        // Test reading a simple character
+        let mut reader = InputReader::new(Cursor::new(b"a"));
+        let result = reader.read_input().unwrap();
+        assert_eq!(
+            result,
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: false,
+                code: KeyCode::Char('a'),
+            }))
+        );
+
+        // Test reading an arrow key
+        let mut reader = InputReader::new(Cursor::new(&[0x1b, b'[', b'A'][..]));
+        let result = reader.read_input().unwrap();
+        assert_eq!(
+            result,
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: false,
+                code: KeyCode::Up,
+            }))
+        );
+
+        // Test reading multiple inputs
+        let mut reader = InputReader::new(Cursor::new(b"ab"));
+        let result1 = reader.read_input().unwrap();
+        let result2 = reader.read_input().unwrap();
+
+        assert_eq!(
+            result1,
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: false,
+                code: KeyCode::Char('a'),
+            }))
+        );
+        assert_eq!(
+            result2,
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: false,
+                code: KeyCode::Char('b'),
+            }))
+        );
     }
 }
