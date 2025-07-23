@@ -51,7 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Process input events with a timeout
     loop {
-        match terminal.poll_event(Some(Duration::from_millis(100)))? {
+        match terminal.poll_event(&[], &[], Some(Duration::from_millis(100)))? {
             Some(TerminalEvent::Input(input)) => {
                 let TerminalInput::Key(input) = input;
 
@@ -73,6 +73,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 writeln!(frame, "\nPress any key ('q' to quit)")?;
                 terminal.draw(frame)?;
             }
+            Some(TerminalEvent::FdReady { .. }) => unreachable!(),
             None => {
                 // Timeout elapsed, no events to process
             }

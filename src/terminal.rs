@@ -52,7 +52,7 @@ static mut SIGWINCH_PIPE_FD: RawFd = 0;
 ///
 ///     // Wait for events with timeout
 ///     let timeout = Duration::from_millis(100);
-///     if let Some(event) = terminal.poll_event(Some(timeout))? {
+///     if let Some(event) = terminal.poll_event(&[], &[], Some(timeout))? {
 ///         // Handle input or resize events
 ///         println!("Received event: {:?}", event);
 ///     }
@@ -238,21 +238,29 @@ impl Terminal {
 
     /// Waits for and returns the next terminal event.
     ///
-    /// This method efficiently waits for either input events or terminal resize events
-    /// using [`libc::select()`].
+    /// This method efficiently waits for either input events, terminal resize events,
+    /// or custom file descriptor events using [`libc::select()`].
     ///
     /// If you want to use I/O polling mechanisms other than [`libc::select()`],
     /// please use the following methods directly:
     /// - [`Terminal::input_fd()`] and [`Terminal::read_input()`] for input events
     /// - [`Terminal::signal_fd()`] and [`Terminal::wait_for_resize()`] for resize events
     ///
+    /// # Parameters
+    ///
+    /// - `additional_readfds`: Additional file descriptors to monitor for read readiness
+    /// - `additional_writefds`: Additional file descriptors to monitor for write readiness
+    /// - `timeout`: Optional timeout duration; `None` blocks indefinitely
+    ///
     /// # Returns
     ///
-    /// - `Ok(Some(TerminalEvent))` if either an input or resize event was received
+    /// - `Ok(Some(TerminalEvent))` if an input, resize, or file descriptor event was received
     /// - `Ok(None)` if the timeout expired without any event
     /// - `Err(e)` if an I/O error occurred
     pub fn poll_event(
         &mut self,
+        additional_readfds: &[RawFd],
+        additional_writefds: &[RawFd],
         timeout: Option<Duration>,
     ) -> std::io::Result<Option<TerminalEvent>> {
         if let Some(input) = self.input.read_input_from_buf()? {
@@ -262,13 +270,28 @@ impl Terminal {
         let start_time = Instant::now();
         loop {
             unsafe {
+                // Always monitor input and signal fds
                 let mut readfds = MaybeUninit::<libc::fd_set>::zeroed();
                 libc::FD_ZERO(readfds.as_mut_ptr());
                 libc::FD_SET(self.input_fd(), readfds.as_mut_ptr());
                 libc::FD_SET(self.signal_fd(), readfds.as_mut_ptr());
+                let mut maxfd = self.input_fd().max(self.signal.as_raw_fd());
+
+                // Add extra read fds
+                for &fd in additional_readfds {
+                    libc::FD_SET(fd, readfds.as_mut_ptr());
+                    maxfd = maxfd.max(fd);
+                }
                 let mut readfds = readfds.assume_init();
 
-                let maxfd = self.input_fd().max(self.signal.as_raw_fd());
+                // Add extra write fds
+                let mut writefds = MaybeUninit::<libc::fd_set>::zeroed();
+                for &fd in additional_writefds {
+                    libc::FD_ZERO(writefds.as_mut_ptr());
+                    libc::FD_SET(fd, writefds.as_mut_ptr());
+                    maxfd = maxfd.max(fd);
+                }
+                let mut writefds = writefds.assume_init();
 
                 let mut timeval = MaybeUninit::<libc::timeval>::zeroed();
                 let timeval_ptr = if let Some(duration) = timeout {
@@ -284,10 +307,15 @@ impl Terminal {
                 let ret = libc::select(
                     maxfd + 1,
                     &mut readfds,
-                    std::ptr::null_mut(),
+                    if additional_writefds.is_empty() {
+                        std::ptr::null_mut()
+                    } else {
+                        &mut writefds
+                    },
                     std::ptr::null_mut(),
                     timeval_ptr,
                 );
+
                 if ret == -1 {
                     let e = Error::last_os_error();
                     if e.kind() == ErrorKind::Interrupted {
@@ -299,6 +327,7 @@ impl Terminal {
                     return Ok(None);
                 }
 
+                // Check built-in fds first
                 if libc::FD_ISSET(self.input_fd(), &readfds) {
                     if let Some(input) = self.read_input()? {
                         return Ok(Some(TerminalEvent::Input(input)));
@@ -306,6 +335,22 @@ impl Terminal {
                 }
                 if libc::FD_ISSET(self.signal_fd(), &readfds) {
                     return self.wait_for_resize().map(TerminalEvent::Resize).map(Some);
+                }
+
+                // Check extra read fds
+                for &fd in additional_readfds {
+                    if libc::FD_ISSET(fd, &readfds) {
+                        let readable = true;
+                        return Ok(Some(TerminalEvent::FdReady { fd, readable }));
+                    }
+                }
+
+                // Check extra write fds
+                for &fd in additional_writefds {
+                    if libc::FD_ISSET(fd, &writefds) {
+                        let readable = false;
+                        return Ok(Some(TerminalEvent::FdReady { fd, readable }));
+                    }
                 }
             }
         }
@@ -525,7 +570,7 @@ impl std::fmt::Debug for Terminal {
     }
 }
 
-/// Terminal event.
+/// Terminal event returned by [`Terminal::poll_event()`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum TerminalEvent {
     /// Terminal resize event.
@@ -533,6 +578,19 @@ pub enum TerminalEvent {
 
     /// User input event.
     Input(TerminalInput),
+
+    /// Custom file descriptor is ready for I/O.
+    FdReady {
+        /// The file descriptor that is ready for I/O operations.
+        ///
+        /// This is the raw file descriptor number that was passed to
+        /// [`Terminal::poll_event()`] in either the `additional_readfds` or
+        /// `additional_writefds` parameters and is now ready for reading or writing.
+        fd: RawFd,
+
+        /// `true` if ready for reading, `false` if ready for writing.
+        readable: bool,
+    },
 }
 
 fn check_libc_result(result: libc::c_int) -> std::io::Result<()> {
