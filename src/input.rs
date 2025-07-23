@@ -5,6 +5,9 @@ use std::io::Read;
 pub enum TerminalInput {
     /// Keyboard input.
     Key(KeyInput),
+
+    /// Mouse input.
+    Mouse(MouseInput),
 }
 
 /// Keyboard input.
@@ -55,6 +58,55 @@ pub enum KeyCode {
     PageDown,
     /// Character key.
     Char(char),
+}
+
+/// Mouse input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct MouseInput {
+    /// The type of mouse event that occurred.
+    pub event: MouseEvent,
+
+    /// The column (x-coordinate) where the mouse event occurred.
+    /// 0-based indexing (0 is the leftmost column).
+    pub col: usize,
+
+    /// The row (y-coordinate) where the mouse event occurred.
+    /// 0-based indexing (0 is the topmost row).
+    pub row: usize,
+
+    /// Indicates whether the Ctrl modifier key was pressed during the event.
+    pub ctrl: bool,
+
+    /// Indicates whether the Alt modifier key was pressed during the event.
+    pub alt: bool,
+
+    /// Indicates whether the Shift modifier key was pressed during the event.
+    pub shift: bool,
+}
+
+/// Mouse event types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum MouseEvent {
+    /// Left mouse button pressed.
+    LeftPress,
+    /// Left mouse button released.
+    LeftRelease,
+    /// Right mouse button pressed.
+    RightPress,
+    /// Right mouse button released.
+    RightRelease,
+    /// Middle mouse button pressed.
+    MiddlePress,
+    /// Middle mouse button released.
+    MiddleRelease,
+    /// Mouse moved while a button is held down (drag).
+    Drag,
+    /// Mouse moved without any button pressed.
+    Move,
+    /// Mouse wheel scrolled up.
+    ScrollUp,
+    /// Mouse wheel scrolled down.
+    ScrollDown,
 }
 
 #[derive(Debug)]
@@ -170,11 +222,138 @@ fn parse_input(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> 
                 ));
             }
 
-            // ESC [ sequences (most function keys, arrow keys, etc.)
+            // ESC [ sequences (most function keys, arrow keys, mouse events, etc.)
             if bytes[1] == b'[' {
                 // Need at least 3 bytes for the basic arrow keys (ESC [ A)
                 if bytes.len() < 3 {
                     return Ok((None, 0)); // Need more bytes, consumed 0 bytes
+                }
+
+                // Check for mouse input: ESC [ M or ESC [ < (SGR mouse mode)
+                if bytes[2] == b'M' {
+                    // Standard X10/X11 mouse reporting: ESC [ M <button> <x> <y>
+                    if bytes.len() < 6 {
+                        return Ok((None, 0)); // Need more bytes
+                    }
+
+                    let button_byte = bytes[3];
+                    let x = bytes[4] as u16;
+                    let y = bytes[5] as u16;
+
+                    // Decode button and modifiers
+                    let button_code = button_byte & 0x03;
+                    let drag = (button_byte & 0x20) != 0;
+                    let ctrl = (button_byte & 0x10) != 0;
+                    let alt = (button_byte & 0x08) != 0;
+                    let shift = (button_byte & 0x04) != 0;
+
+                    let event = if drag {
+                        MouseEvent::Drag
+                    } else {
+                        match button_code {
+                            0 => MouseEvent::LeftPress,
+                            1 => MouseEvent::MiddlePress,
+                            2 => MouseEvent::RightPress,
+                            3 => MouseEvent::LeftRelease, // Release events use code 3
+                            _ => return Ok((None, 6)),    // Unknown button
+                        }
+                    };
+
+                    // Convert from terminal coordinates to 0-based coordinates
+                    let col = x.saturating_sub(33) as usize;
+                    let row = y.saturating_sub(33) as usize;
+
+                    return Ok((
+                        Some(TerminalInput::Mouse(MouseInput {
+                            event,
+                            col,
+                            row,
+                            ctrl,
+                            alt,
+                            shift,
+                        })),
+                        6,
+                    ));
+                } else if bytes[2] == b'<' {
+                    // SGR mouse mode: ESC [ < <button> ; <x> ; <y> M/m
+                    // Find the end of the sequence
+                    let mut end_pos = None;
+                    for i in 3..bytes.len() {
+                        if bytes[i] == b'M' || bytes[i] == b'm' {
+                            end_pos = Some(i);
+                            break;
+                        }
+                    }
+
+                    if let Some(end) = end_pos {
+                        // Parse the parameters
+                        let params_str = std::str::from_utf8(&bytes[3..end]).map_err(|_| {
+                            std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid UTF-8")
+                        })?;
+
+                        let params: Vec<&str> = params_str.split(';').collect();
+                        if params.len() == 3 {
+                            if let (Ok(button), Ok(x), Ok(y)) = (
+                                params[0].parse::<u16>(),
+                                params[1].parse::<u16>(),
+                                params[2].parse::<u16>(),
+                            ) {
+                                let is_release = bytes[end] == b'm';
+
+                                // Decode button and modifiers
+                                let button_code = button & 0x03;
+                                let ctrl = (button & 0x10) != 0;
+                                let alt = (button & 0x08) != 0;
+                                let shift = (button & 0x04) != 0;
+                                let drag = (button & 0x20) != 0;
+
+                                let event = if drag {
+                                    MouseEvent::Drag
+                                } else if is_release {
+                                    match button_code {
+                                        0 => MouseEvent::LeftRelease,
+                                        1 => MouseEvent::MiddleRelease,
+                                        2 => MouseEvent::RightRelease,
+                                        _ => return Ok((None, end + 1)),
+                                    }
+                                } else {
+                                    match button_code {
+                                        0 => MouseEvent::LeftPress,
+                                        1 => MouseEvent::MiddlePress,
+                                        2 => MouseEvent::RightPress,
+                                        _ => {
+                                            // Check for scroll events
+                                            if button == 64 {
+                                                MouseEvent::ScrollUp
+                                            } else if button == 65 {
+                                                MouseEvent::ScrollDown
+                                            } else {
+                                                return Ok((None, end + 1));
+                                            }
+                                        }
+                                    }
+                                };
+
+                                return Ok((
+                                    Some(TerminalInput::Mouse(MouseInput {
+                                        event,
+                                        col: x.saturating_sub(1) as usize,
+                                        row: y.saturating_sub(1) as usize,
+                                        ctrl,
+                                        alt,
+                                        shift,
+                                    })),
+                                    end + 1,
+                                ));
+                            }
+                        }
+
+                        // Invalid SGR sequence, discard it
+                        return Ok((None, end + 1));
+                    } else {
+                        // Incomplete SGR sequence
+                        return Ok((None, 0));
+                    }
                 }
 
                 // Arrow keys: ESC [ A, ESC [ B, ESC [ C, ESC [ D
