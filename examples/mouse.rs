@@ -155,7 +155,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 writeln!(frame, "  → Middle button released")?
                             }
                             tuinix::MouseEvent::Drag => writeln!(frame, "  → Mouse dragged")?,
-                            tuinix::MouseEvent::Move => writeln!(frame, "  → Mouse moved")?,
                             tuinix::MouseEvent::ScrollUp => writeln!(frame, "  → Scrolled up")?,
                             tuinix::MouseEvent::ScrollDown => writeln!(frame, "  → Scrolled down")?,
                         }

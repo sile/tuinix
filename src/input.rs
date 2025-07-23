@@ -101,8 +101,6 @@ pub enum MouseEvent {
     MiddleRelease,
     /// Mouse moved while a button is held down (drag).
     Drag,
-    /// Mouse moved without any button pressed.
-    Move,
     /// Mouse wheel scrolled up.
     ScrollUp,
     /// Mouse wheel scrolled down.
@@ -229,53 +227,9 @@ fn parse_input(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> 
                     return Ok((None, 0)); // Need more bytes, consumed 0 bytes
                 }
 
-                // Check for mouse input: ESC [ M or ESC [ < (SGR mouse mode)
-                if bytes[2] == b'M' {
-                    // Standard X10/X11 mouse reporting: ESC [ M <button> <x> <y>
-                    if bytes.len() < 6 {
-                        return Ok((None, 0)); // Need more bytes
-                    }
-
-                    let button_byte = bytes[3];
-                    let x = bytes[4] as u16;
-                    let y = bytes[5] as u16;
-
-                    // Decode button and modifiers
-                    let button_code = button_byte & 0x03;
-                    let drag = (button_byte & 0x20) != 0;
-                    let ctrl = (button_byte & 0x10) != 0;
-                    let alt = (button_byte & 0x08) != 0;
-                    let shift = (button_byte & 0x04) != 0;
-
-                    let event = if drag {
-                        MouseEvent::Drag
-                    } else {
-                        match button_code {
-                            0 => MouseEvent::LeftPress,
-                            1 => MouseEvent::MiddlePress,
-                            2 => MouseEvent::RightPress,
-                            3 => MouseEvent::LeftRelease, // Release events use code 3
-                            _ => return Ok((None, 6)),    // Unknown button
-                        }
-                    };
-
-                    // Convert from terminal coordinates to 0-based coordinates
-                    let col = x.saturating_sub(33) as usize;
-                    let row = y.saturating_sub(33) as usize;
-
-                    return Ok((
-                        Some(TerminalInput::Mouse(MouseInput {
-                            event,
-                            col,
-                            row,
-                            ctrl,
-                            alt,
-                            shift,
-                        })),
-                        6,
-                    ));
-                } else if bytes[2] == b'<' {
-                    // SGR mouse mode: ESC [ < <button> ; <x> ; <y> M/m
+                // SGR mouse mode: ESC [ < <button> ; <x> ; <y> M/m
+                // Check for SGR format FIRST before X10/X11 format
+                if bytes[2] == b'<' {
                     // Find the end of the sequence
                     let mut end_pos = None;
                     for i in 3..bytes.len() {
@@ -317,20 +271,16 @@ fn parse_input(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> 
                                         _ => return Ok((None, end + 1)),
                                     }
                                 } else {
-                                    match button_code {
-                                        0 => MouseEvent::LeftPress,
-                                        1 => MouseEvent::MiddlePress,
-                                        2 => MouseEvent::RightPress,
-                                        _ => {
-                                            // Check for scroll events
-                                            if button == 64 {
-                                                MouseEvent::ScrollUp
-                                            } else if button == 65 {
-                                                MouseEvent::ScrollDown
-                                            } else {
-                                                return Ok((None, end + 1));
-                                            }
-                                        }
+                                    // Check for scroll events first
+                                    match button {
+                                        64 => MouseEvent::ScrollUp,
+                                        65 => MouseEvent::ScrollDown,
+                                        _ => match button_code {
+                                            0 => MouseEvent::LeftPress,
+                                            1 => MouseEvent::MiddlePress,
+                                            2 => MouseEvent::RightPress,
+                                            _ => return Ok((None, end + 1)),
+                                        },
                                     }
                                 };
 
@@ -354,6 +304,57 @@ fn parse_input(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> 
                         // Incomplete SGR sequence
                         return Ok((None, 0));
                     }
+                }
+                // Standard X10/X11 mouse reporting: ESC [ M <button> <x> <y>
+                else if bytes[2] == b'M' {
+                    if bytes.len() < 6 {
+                        return Ok((None, 0));
+                    }
+
+                    let button_byte = bytes[3];
+                    let x = bytes[4] as u16;
+                    let y = bytes[5] as u16;
+
+                    // Decode modifiers
+                    let ctrl = (button_byte & 0x10) != 0;
+                    let alt = (button_byte & 0x08) != 0;
+                    let shift = (button_byte & 0x04) != 0;
+                    let drag = (button_byte & 0x20) != 0;
+
+                    let event = if drag {
+                        MouseEvent::Drag
+                    } else {
+                        // Check for scroll events first (they use button codes 96/97)
+                        match button_byte {
+                            96 => MouseEvent::ScrollUp,   // 0x60
+                            97 => MouseEvent::ScrollDown, // 0x61
+                            _ => {
+                                // Regular button events
+                                match button_byte & 0x03 {
+                                    0 => MouseEvent::LeftPress,
+                                    1 => MouseEvent::MiddlePress,
+                                    2 => MouseEvent::RightPress,
+                                    3 => MouseEvent::LeftRelease,
+                                    _ => return Ok((None, 6)),
+                                }
+                            }
+                        }
+                    };
+
+                    let col = x.saturating_sub(33) as usize;
+                    let row = y.saturating_sub(33) as usize;
+
+                    return Ok((
+                        Some(TerminalInput::Mouse(MouseInput {
+                            event,
+                            col,
+                            row,
+                            ctrl,
+                            alt,
+                            shift,
+                        })),
+                        6,
+                    ));
                 }
 
                 // Arrow keys: ESC [ A, ESC [ B, ESC [ C, ESC [ D
@@ -1209,6 +1210,39 @@ mod tests {
                 ctrl: false,
                 alt: false,
                 code: KeyCode::Char('b'),
+            }))
+        );
+    }
+
+    #[test]
+    fn test_parse_mouse_scroll_events() {
+        // SGR mode scroll up: ESC [ < 64 ; 10 ; 5 M
+        let input = b"\x1b[<64;10;5M";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::ScrollUp,
+                col: 9, // 10-1
+                row: 4, // 5-1
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+
+        // SGR mode scroll down: ESC [ < 65 ; 10 ; 5 M
+        let input = b"\x1b[<65;10;5M";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::ScrollDown,
+                col: 9,
+                row: 4,
+                ctrl: false,
+                alt: false,
+                shift: false,
             }))
         );
     }
