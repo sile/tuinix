@@ -236,6 +236,61 @@ impl Terminal {
         self.signal.as_raw_fd()
     }
 
+    /// Enables mouse input reporting in the terminal.
+    ///
+    /// Mouse events will be received through [`Terminal::poll_event()`] or [`Terminal::read_input()`]
+    /// as [`TerminalInput::Mouse`] variants.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use tuinix::{Terminal, TerminalEvent, TerminalInput};
+    /// use std::time::Duration;
+    ///
+    /// let mut terminal = Terminal::new()?;
+    /// terminal.enable_mouse_input()?;
+    ///
+    /// loop {
+    ///     if let Some(event) = terminal.poll_event(&[], &[], Some(Duration::from_millis(100)))? {
+    ///         match event {
+    ///             TerminalEvent::Input(TerminalInput::Mouse(mouse)) => {
+    ///                 println!("Mouse event: {:?} at ({}, {})", mouse.event, mouse.col, mouse.row);
+    ///             }
+    ///             _ => {}
+    ///         }
+    ///     }
+    /// }
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
+    pub fn enable_mouse_input(&mut self) -> std::io::Result<()> {
+        // Enable mouse reporting in SGR mode (more reliable than X10/X11 mode)
+        write!(self.output, "\x1b[?1000h")?; // Enable basic mouse reporting
+        write!(self.output, "\x1b[?1002h")?; // Enable button event tracking and motion
+        write!(self.output, "\x1b[?1015h")?; // Enable urxvt extended coordinate reporting
+        write!(self.output, "\x1b[?1006h")?; // Enable SGR extended coordinate reporting
+        self.output.flush()?;
+        Ok(())
+    }
+
+    /// Disables mouse input reporting in the terminal.
+    ///
+    /// This method disables all mouse event reporting that was previously enabled
+    /// with [`Terminal::enable_mouse_input()`]. After calling this method, mouse
+    /// events will no longer be sent to the application.
+    ///
+    /// Mouse input is automatically disabled when the Terminal is dropped, so calling
+    /// this method manually is only necessary if you want to disable mouse input
+    /// while keeping the Terminal instance active.
+    pub fn disable_mouse_input(&mut self) -> std::io::Result<()> {
+        // Disable mouse reporting (reverse order)
+        write!(self.output, "\x1b[?1006l")?; // Disable SGR extended coordinate reporting
+        write!(self.output, "\x1b[?1015l")?; // Disable urxvt extended coordinate reporting
+        write!(self.output, "\x1b[?1002l")?; // Disable button event tracking
+        write!(self.output, "\x1b[?1000l")?; // Disable basic mouse reporting
+        self.output.flush()?;
+        Ok(())
+    }
+
     /// Waits for and returns the next terminal event.
     ///
     /// This method efficiently waits for either input events, terminal resize events,
@@ -557,6 +612,7 @@ impl Terminal {
 
 impl Drop for Terminal {
     fn drop(&mut self) {
+        let _ = self.disable_mouse_input();
         let _ = self.disable_alternate_screen();
         let _ = self.disable_raw_mode();
         let _ = self.show_cursor();

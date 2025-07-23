@@ -6,6 +6,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize terminal
     let mut terminal = Terminal::new()?;
 
+    // Enable mouse input reporting
+    terminal.enable_mouse_input()?;
+
     // Create a frame with the terminal's dimensions
     let mut frame: TerminalFrame = TerminalFrame::new(terminal.size());
 
