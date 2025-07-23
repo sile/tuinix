@@ -113,7 +113,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         writeln!(
                             frame,
                             "  Position: column {}, row {}",
-                            mouse_input.col, mouse_input.row
+                            mouse_input.position.col, mouse_input.position.row
                         )?;
 
                         // Show modifiers if any are pressed

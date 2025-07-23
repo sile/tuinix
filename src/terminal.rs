@@ -254,7 +254,8 @@ impl Terminal {
     ///     if let Some(event) = terminal.poll_event(&[], &[], Some(Duration::from_millis(100)))? {
     ///         match event {
     ///             TerminalEvent::Input(TerminalInput::Mouse(mouse)) => {
-    ///                 println!("Mouse event: {:?} at ({}, {})", mouse.event, mouse.col, mouse.row);
+    ///                 println!("Mouse event: {:?} at ({}, {})",
+    ///                          mouse.event, mouse.position.col, mouse.position.row);
     ///             }
     ///             _ => {}
     ///         }
