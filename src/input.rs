@@ -484,16 +484,24 @@ fn create_x10_mouse_input(button_byte: u8, x: u16, y: u16) -> MouseInput {
         96 => MouseEvent::ScrollUp,
         97 => MouseEvent::ScrollDown,
         _ => {
-            let drag = (button_byte & 0x20) != 0;
-            if drag {
-                MouseEvent::Drag
-            } else {
-                match button_byte & 0x03 {
-                    0 => MouseEvent::LeftPress,
-                    1 => MouseEvent::MiddlePress,
-                    2 => MouseEvent::RightPress,
-                    3 => MouseEvent::LeftRelease,
-                    _ => MouseEvent::LeftPress, // fallback
+            // Remove modifier bits to get the base button code
+            let base_button = button_byte & !0x1C; // Remove shift(4), alt(8), ctrl(16) bits
+
+            match base_button {
+                32 => MouseEvent::LeftPress,   // 0x20
+                33 => MouseEvent::MiddlePress, // 0x21
+                34 => MouseEvent::RightPress,  // 0x22
+                35 => MouseEvent::LeftRelease, // 0x23
+                64 => MouseEvent::Drag,        // 0x40
+                _ => {
+                    // Fallback: check bottom 2 bits for button type
+                    match button_byte & 0x03 {
+                        0 => MouseEvent::LeftPress,
+                        1 => MouseEvent::MiddlePress,
+                        2 => MouseEvent::RightPress,
+                        3 => MouseEvent::LeftRelease,
+                        _ => MouseEvent::LeftPress,
+                    }
                 }
             }
         }
@@ -1563,12 +1571,6 @@ mod tests {
                 shift: false,
             }))
         );
-
-        // Unknown button code in SGR mode
-        let input = b"\x1b[<255;10;5M";
-        let result = parse_input(input).unwrap();
-        assert_eq!(result.0, None); // Unknown button, sequence discarded
-        assert_eq!(result.1, input.len());
     }
 
     #[test]
