@@ -386,10 +386,10 @@ impl Terminal {
                 }
 
                 // Check built-in fds first
-                if libc::FD_ISSET(self.input_fd(), &readfds) {
-                    if let Some(input) = self.read_input()? {
-                        return Ok(Some(TerminalEvent::Input(input)));
-                    }
+                if libc::FD_ISSET(self.input_fd(), &readfds)
+                    && let Some(input) = self.read_input()?
+                {
+                    return Ok(Some(TerminalEvent::Input(input)));
                 }
                 if libc::FD_ISSET(self.signal_fd(), &readfds) {
                     return self.wait_for_resize().map(TerminalEvent::Resize).map(Some);

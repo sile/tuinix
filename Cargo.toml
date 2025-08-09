@@ -2,6 +2,7 @@
 name = "tuinix"
 version = "0.3.0"
 edition = "2024"
+rust-version = "1.88"
 authors = ["Takeru Ohta <phjgt308@gmail.com>"]
 description = "A library for building terminal user interface (TUI) applications on Unix systems with minimum dependencies"
 license = "MIT"
