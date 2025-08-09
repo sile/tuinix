@@ -126,9 +126,10 @@ impl<R: Read> InputReader<R> {
 
     pub fn read_input(&mut self) -> std::io::Result<Option<TerminalInput>> {
         if self.buf_offset > 0
-            && let Some(input) = self.read_input_from_buf()? {
-                return Ok(Some(input));
-            }
+            && let Some(input) = self.read_input_from_buf()?
+        {
+            return Ok(Some(input));
+        }
 
         let read_size = self.inner.read(&mut self.buf[self.buf_offset..])?;
         if read_size == 0 {
