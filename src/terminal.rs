@@ -519,7 +519,7 @@ impl Terminal {
         let mut last_row = usize::MAX;
         for (position, c) in frame.chars() {
             let old = self.last_frame.get_char(position);
-            if !resized && c == old {
+            if !resized && Some(c) == old {
                 skipped = true;
                 continue;
             }
