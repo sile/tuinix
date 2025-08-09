@@ -151,11 +151,23 @@ impl<W> TerminalFrame<W> {
         }
     }
 
-    pub(crate) fn get_char(&self, position: TerminalPosition) -> TerminalChar {
-        self.data
-            .get(&position)
-            .copied()
-            .unwrap_or(TerminalChar::BLANK)
+    pub(crate) fn get_char(&self, position: TerminalPosition) -> Option<TerminalChar> {
+        if let Some(ch) = self.data.get(&position).copied() {
+            // Character exists at this exact position - return it
+            Some(ch)
+        } else if let Some((pos, prev)) = self.data.range(..position).next_back()
+            && position.row == pos.row
+            && position.col < pos.col + prev.width.get()
+        {
+            // Position falls within a wide character's display area but not at its starting position.
+            // Return None to indicate this position is occupied by a multi-column character
+            // that starts at an earlier column.
+            None
+        } else {
+            // No character at this position and it's not part of a wide character's display area.
+            // Return a blank character to represent empty space.
+            Some(TerminalChar::BLANK)
+        }
     }
 
     pub(crate) fn chars(&self) -> impl '_ + Iterator<Item = (TerminalPosition, TerminalChar)> {
