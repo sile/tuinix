@@ -1,6 +1,6 @@
 use std::{
     fs::File,
-    io::{BufWriter, Error, ErrorKind, IsTerminal, Read, Stdin, Stdout, Write},
+    io::{BufWriter, Error, ErrorKind, IsTerminal, Read, Stdout, Write},
     mem::MaybeUninit,
     os::fd::{AsRawFd, FromRawFd, RawFd},
     sync::atomic::{AtomicBool, Ordering},
@@ -131,7 +131,7 @@ static mut SIGWINCH_PIPE_FD: RawFd = 0;
 /// }
 /// ```
 pub struct Terminal {
-    input: InputReader<Stdin>,
+    input: InputReader<File>,
     output: BufWriter<Stdout>,
     signal: File,
     original_termios: libc::termios,
@@ -180,6 +180,7 @@ impl Terminal {
         check_libc_result(unsafe { libc::tcgetattr(stdin.as_raw_fd(), termios.as_mut_ptr()) })?;
         let original_termios = unsafe { termios.assume_init() };
 
+        let stdin = unsafe { File::from_raw_fd(stdin.as_raw_fd()) };
         let mut this = Self {
             input: InputReader::new(stdin),
             output: BufWriter::new(stdout),
