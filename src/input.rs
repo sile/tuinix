@@ -145,7 +145,7 @@ impl<R: Read> InputReader<R> {
             let (input, consumed_size) = parse_input(&self.buf[..self.buf_offset])?;
             self.buf.copy_within(consumed_size..self.buf_offset, 0);
             self.buf_offset -= consumed_size;
-            if input == None && consumed_size > 0 {
+            if input.is_none() && consumed_size > 0 {
                 continue;
             }
             return Ok(input);
