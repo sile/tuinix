@@ -7,6 +7,8 @@ on:
 jobs:
   github-release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - id: create-release
         uses: actions/create-release@v1
