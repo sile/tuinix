@@ -15,8 +15,7 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           release_name: v${{ github.ref_name }}
-          generate_release_notes: true
-          draft: false
+          draft: true
 
   publish:
     runs-on: ubuntu-latest
