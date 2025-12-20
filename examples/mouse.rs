@@ -157,6 +157,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             tuinix::MouseEvent::Drag => writeln!(frame, "  → Mouse dragged")?,
                             tuinix::MouseEvent::ScrollUp => writeln!(frame, "  → Scrolled up")?,
                             tuinix::MouseEvent::ScrollDown => writeln!(frame, "  → Scrolled down")?,
+                            tuinix::MouseEvent::ScrollLeft => writeln!(frame, "  → Scrolled left")?,
+                            tuinix::MouseEvent::ScrollRight => {
+                                writeln!(frame, "  → Scrolled right")?
+                            }
                         }
 
                         terminal.draw(frame)?;

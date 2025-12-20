@@ -102,6 +102,10 @@ pub enum MouseEvent {
     ScrollUp,
     /// Mouse wheel scrolled down.
     ScrollDown,
+    /// Mouse wheel scrolled left.
+    ScrollLeft,
+    /// Mouse wheel scrolled right.
+    ScrollRight,
 }
 
 #[derive(Debug)]
@@ -458,6 +462,8 @@ fn create_sgr_mouse_input(
         match button {
             64 => MouseEvent::ScrollUp,
             65 => MouseEvent::ScrollDown,
+            66 => MouseEvent::ScrollRight,
+            67 => MouseEvent::ScrollLeft,
             _ => match button_code {
                 0 => MouseEvent::LeftPress,
                 1 => MouseEvent::MiddlePress,
@@ -487,6 +493,8 @@ fn create_x10_mouse_input(button_byte: u8, x: u16, y: u16) -> MouseInput {
     let event = match button_byte {
         96 => MouseEvent::ScrollUp,
         97 => MouseEvent::ScrollDown,
+        98 => MouseEvent::ScrollRight,
+        99 => MouseEvent::ScrollLeft,
         _ => {
             // Remove modifier bits to get the base button code
             let base_button = button_byte & !0x1C; // Remove shift(4), alt(8), ctrl(16) bits
@@ -1540,6 +1548,68 @@ mod tests {
             Some(TerminalInput::Mouse(MouseInput {
                 event: MouseEvent::LeftRelease,
                 position: TerminalPosition::row_col(4, 9),
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+    }
+
+    #[test]
+    fn test_parse_mouse_sgr_mode_horizontal_scroll() {
+        // SGR mode scroll right: ESC [ < 66 ; 10 ; 5 M
+        let input = b"\x1b[<66;10;5M";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::ScrollRight,
+                position: TerminalPosition::row_col(4, 9),
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+
+        // SGR mode scroll left: ESC [ < 67 ; 10 ; 5 M
+        let input = b"\x1b[<67;10;5M";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::ScrollLeft,
+                position: TerminalPosition::row_col(4, 9),
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+    }
+
+    #[test]
+    fn test_parse_mouse_x10_x11_mode_horizontal_scroll() {
+        // X10/X11 mode scroll right: button = 98 (0x62)
+        let input = b"\x1b[Mb\x2b\x26";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::ScrollRight,
+                position: TerminalPosition::row_col(5, 10),
+                ctrl: false,
+                alt: false,
+                shift: false,
+            }))
+        );
+
+        // X10/X11 mode scroll left: button = 99 (0x63)
+        let input = b"\x1b[Mc\x2b\x26";
+        let result = parse_input(input).unwrap();
+        assert_eq!(
+            result.0,
+            Some(TerminalInput::Mouse(MouseInput {
+                event: MouseEvent::ScrollLeft,
+                position: TerminalPosition::row_col(5, 10),
                 ctrl: false,
                 alt: false,
                 shift: false,
