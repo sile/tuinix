@@ -675,7 +675,7 @@ fn set_sigwinch_handler() -> std::io::Result<File> {
 
         let mut sigaction = MaybeUninit::<libc::sigaction>::zeroed().assume_init();
 
-        sigaction.sa_sigaction = handle_sigwinch as libc::sighandler_t;
+        sigaction.sa_sigaction = handle_sigwinch as *const () as libc::sighandler_t;
         sigaction.sa_flags = 0;
 
         check_libc_result(libc::sigemptyset(&mut sigaction.sa_mask))?;
