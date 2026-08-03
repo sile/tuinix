@@ -124,6 +124,10 @@ impl<R: Read> InputReader<R> {
         &self.inner
     }
 
+    pub(crate) fn replace_inner(&mut self, inner: R) {
+        self.inner = inner;
+    }
+
     pub fn read_input(&mut self) -> std::io::Result<Option<TerminalInput>> {
         if self.buf_offset > 0
             && let Some(input) = self.read_input_from_buf()?
@@ -525,6 +529,8 @@ fn create_x10_mouse_input(button_byte: u8, x: u16, y: u16) -> MouseInput {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Cursor;
+
     use super::*;
 
     #[test]
@@ -1022,9 +1028,78 @@ mod tests {
     }
 
     #[test]
-    fn test_input_reader() {
-        use std::io::Cursor;
+    fn test_replace_inner_preserves_buffer_then_reads_new_inner() {
+        let mut reader = InputReader::new(Cursor::new(&b"ab"[..]));
 
+        // Read the first input. The remaining byte is kept in the internal buffer.
+        let first = reader.read_input().unwrap();
+        assert_eq!(
+            first,
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: false,
+                code: KeyCode::Char('a'),
+            }))
+        );
+
+        // Replacing the inner reader must preserve the buffered data and then
+        // continue reading from the new inner reader.
+        reader.replace_inner(Cursor::new(&b"c"[..]));
+        let second = reader.read_input().unwrap();
+        assert_eq!(
+            second,
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: false,
+                code: KeyCode::Char('b'),
+            }))
+        );
+        let third = reader.read_input().unwrap();
+        assert_eq!(
+            third,
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: false,
+                code: KeyCode::Char('c'),
+            }))
+        );
+    }
+
+    #[test]
+    fn test_replace_inner_combines_partial_sequence_with_new_inner() {
+        // An incomplete escape sequence stays in the buffer.
+        let mut reader = InputReader::new(Cursor::new(&[0x1b, b'['][..]));
+        let none = reader.read_input().unwrap();
+        assert_eq!(none, None);
+
+        // The continuation arrives from the new inner reader.
+        reader.replace_inner(Cursor::new(&b"A"[..]));
+        let input = reader.read_input().unwrap();
+        assert_eq!(
+            input,
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: false,
+                code: KeyCode::Up,
+            }))
+        );
+    }
+
+    #[test]
+    fn test_replace_inner_propagates_new_inner_eof() {
+        let mut reader = InputReader::new(Cursor::new(&b"ab"[..]));
+        assert!(reader.read_input().unwrap().is_some());
+
+        reader.replace_inner(Cursor::new(&b""[..]));
+        assert!(reader.read_input().unwrap().is_some());
+
+        // After the buffer is consumed, EOF from the new inner reader propagates.
+        let err = reader.read_input().unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn test_input_reader() {
         // Test reading a simple character
         let mut reader = InputReader::new(Cursor::new(b"a"));
         let result = reader.read_input().unwrap();
@@ -1504,8 +1579,6 @@ mod tests {
 
     #[test]
     fn test_input_reader_mouse_events() {
-        use std::io::Cursor;
-
         // Test reading a mouse click
         let mut reader = InputReader::new(Cursor::new(b"\x1b[<0;10;5M"));
         let result = reader.read_input().unwrap();
