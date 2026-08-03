@@ -529,6 +529,8 @@ fn create_x10_mouse_input(button_byte: u8, x: u16, y: u16) -> MouseInput {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Cursor;
+
     use super::*;
 
     #[test]
@@ -1027,8 +1029,6 @@ mod tests {
 
     #[test]
     fn test_replace_inner_preserves_buffer_then_reads_new_inner() {
-        use std::io::Cursor;
-
         let mut reader = InputReader::new(Cursor::new(&b"ab"[..]));
 
         // Read the first input. The remaining byte is kept in the internal buffer.
@@ -1067,8 +1067,6 @@ mod tests {
 
     #[test]
     fn test_replace_inner_combines_partial_sequence_with_new_inner() {
-        use std::io::Cursor;
-
         // An incomplete escape sequence stays in the buffer.
         let mut reader = InputReader::new(Cursor::new(&[0x1b, b'['][..]));
         let none = reader.read_input().unwrap();
@@ -1089,8 +1087,6 @@ mod tests {
 
     #[test]
     fn test_replace_inner_propagates_new_inner_eof() {
-        use std::io::Cursor;
-
         let mut reader = InputReader::new(Cursor::new(&b"ab"[..]));
         assert!(reader.read_input().unwrap().is_some());
 
@@ -1104,8 +1100,6 @@ mod tests {
 
     #[test]
     fn test_input_reader() {
-        use std::io::Cursor;
-
         // Test reading a simple character
         let mut reader = InputReader::new(Cursor::new(b"a"));
         let result = reader.read_input().unwrap();
@@ -1585,8 +1579,6 @@ mod tests {
 
     #[test]
     fn test_input_reader_mouse_events() {
-        use std::io::Cursor;
-
         // Test reading a mouse click
         let mut reader = InputReader::new(Cursor::new(b"\x1b[<0;10;5M"));
         let result = reader.read_input().unwrap();
