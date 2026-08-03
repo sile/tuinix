@@ -17,12 +17,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut poll = Poll::new()?;
     let mut events = Events::with_capacity(10);
 
-    // Get the file descriptors we need to monitor
-    let stdin_fd = terminal.input_fd();
+    // Get the file descriptors we need to monitor.
+    // `set_input_nonblocking()` replaces the input fd with a fresh open of the
+    // terminal device that stdin is connected to, so making it non-blocking
+    // does not affect stdout.
+    let stdin_fd = terminal.set_input_nonblocking()?;
     let signal_fd = terminal.signal_fd();
 
-    // Set both file descriptors to non-blocking mode
-    set_nonblocking(stdin_fd)?;
+    // Set the signal file descriptor to non-blocking mode
     set_nonblocking(signal_fd)?;
 
     // Register the file descriptors with mio

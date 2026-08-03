@@ -16,6 +16,8 @@ static TERMINAL_EXISTS: AtomicBool = AtomicBool::new(false);
 
 static mut SIGWINCH_PIPE_FD: RawFd = 0;
 
+static mut INPUT_FD: RawFd = 0;
+
 /// Terminal interface for building TUI (Terminal User Interface) applications.
 ///
 /// The [`Terminal`] struct provides a foundational layer for creating terminal-based
@@ -83,9 +85,8 @@ static mut SIGWINCH_PIPE_FD: RawFd = 0;
 ///     let mut events = Events::with_capacity(10);
 ///
 ///     // Get file descriptors and set to non-blocking mode
-///     let stdin_fd = terminal.input_fd();
+///     let stdin_fd = terminal.set_input_nonblocking()?;
 ///     let signal_fd = terminal.signal_fd();
-///     set_nonblocking(stdin_fd)?;
 ///     set_nonblocking(signal_fd)?;
 ///
 ///     // Register with mio poll
@@ -200,9 +201,8 @@ impl Terminal {
         std::panic::set_hook(Box::new(move |panic_info| {
             // Disable alternate screen and raw mode to show the panic message
             let mut stdout = std::io::stdout();
-            let stdin = std::io::stdin();
             unsafe {
-                libc::tcsetattr(stdin.as_raw_fd(), libc::TCSAFLUSH, &original_termios);
+                libc::tcsetattr(INPUT_FD, libc::TCSAFLUSH, &original_termios);
             }
             let _ = write!(stdout, "\x1b[?1049l");
             let _ = stdout.flush();
@@ -421,7 +421,7 @@ impl Terminal {
     /// structured [`TerminalInput`] event.
     ///
     /// By default, this method blocks until input is available. To use it in non-blocking
-    /// mode, first call [`set_nonblocking()`](crate::set_nonblocking) on [`Terminal::input_fd()`].
+    /// mode, first call [`Terminal::set_input_nonblocking()`].
     ///
     /// While [`Terminal::poll_event()`] is generally recommended for receiving terminal input events,
     /// you may need to call this method directly when using external I/O polling crates like `mio`.
@@ -437,6 +437,95 @@ impl Terminal {
     /// This method returns an error if reading from stdin fails or encounters EOF.
     pub fn read_input(&mut self) -> std::io::Result<Option<TerminalInput>> {
         self.input.read_input()
+    }
+
+    /// Makes the terminal input non-blocking by replacing the input file descriptor with a fresh
+    /// open of the terminal device that stdin is connected to, and returns the new file
+    /// descriptor.
+    ///
+    /// This is the recommended way to make the input non-blocking (e.g. for use with `mio` or
+    /// `tokio::io::unix::AsyncFd`). Applying [`set_nonblocking()`](crate::set_nonblocking) directly
+    /// to [`Terminal::input_fd()`] also affects [`Terminal::output_fd()`] when both share the same
+    /// open file description (typical for interactive terminals on macOS and Linux), which may
+    /// cause [`Terminal::draw()`] to fail with `EAGAIN` / `EWOULDBLOCK`. This method avoids that
+    /// by opening a fresh, independent file description for the input.
+    ///
+    /// If `set_nonblocking()` has already been applied to [`Terminal::input_fd()`], the
+    /// `O_NONBLOCK` flag is cleared from the original file description as part of the replacement,
+    /// so `draw()` stops failing with `EAGAIN` after this method returns.
+    ///
+    /// # Notes
+    ///
+    /// - The returned file descriptor is owned by the `Terminal` and is closed when the `Terminal`
+    ///   is dropped. `tokio::io::unix::AsyncFd` caches the file descriptor number it is given, so
+    ///   if the number is reused after the `Terminal` closes it, the `AsyncFd` keeps monitoring an
+    ///   unrelated file descriptor. Pass a duplicated file descriptor to wrappers that take
+    ///   ownership rather than the returned one. `mio::unix::SourceFd(&fd)` borrows the descriptor
+    ///   and can be used directly.
+    /// - Call this method before registering the file descriptor with an external event loop
+    ///   (e.g. `mio` or `AsyncFd`), because [`Terminal::input_fd()`] changes after the
+    ///   replacement. Buffered input is preserved, so calling [`Terminal::read_input()`] beforehand
+    ///   does not lose data.
+    /// - Call this method only once. Subsequent calls return `Err` and leave the previously
+    ///   returned file descriptor valid (the `Terminal` keeps owning it).
+    /// - The new file descriptor is a fresh open of the terminal device that stdin is connected
+    ///   to (determined via `ttyname()`). The device path is opened directly instead of
+    ///   `/dev/tty`: on macOS, kqueue-based event loops (e.g. `mio` / `tokio::io::unix::AsyncFd`)
+    ///   cannot monitor file descriptors obtained from `/dev/tty`, whereas they work on the
+    ///   underlying device node. If the device path cannot be determined or opened, this method
+    ///   returns `Err`; in that case, running [`Terminal::poll_event()`] in a `spawn_blocking`
+    ///   task is an alternative.
+    /// - After the replacement, the stdin file descriptor (fd 0) is closed as well. The descriptor
+    ///   number may be reused afterwards, so do not use `std::io::stdin()` directly together with
+    ///   this method.
+    /// - This method is only for combining [`Terminal::read_input()`] with external event loops.
+    ///   It is unnecessary if [`Terminal::poll_event()`] is sufficient.
+    pub fn set_input_nonblocking(&mut self) -> std::io::Result<RawFd> {
+        if unsafe { INPUT_FD } != 0 {
+            return Err(Error::other("input fd has already been replaced"));
+        }
+
+        let path = unsafe {
+            let name = libc::ttyname(self.input_fd());
+            if name.is_null() {
+                let err = Error::last_os_error();
+                let _ = self.clear_input_nonblocking();
+                return Err(err);
+            }
+            std::ffi::CStr::from_ptr(name).to_bytes_with_nul().to_vec()
+        };
+        let fd = unsafe { libc::open(path.as_ptr().cast(), libc::O_RDONLY | libc::O_CLOEXEC) };
+        if fd < 0 {
+            let err = Error::last_os_error();
+            let _ = self.clear_input_nonblocking();
+            return Err(err);
+        }
+
+        if let Err(err) = crate::set_nonblocking(fd) {
+            unsafe { libc::close(fd) };
+            let _ = self.clear_input_nonblocking();
+            return Err(err);
+        }
+
+        if let Err(err) = self.clear_input_nonblocking() {
+            unsafe { libc::close(fd) };
+            return Err(err);
+        }
+
+        self.input.replace_inner(unsafe { File::from_raw_fd(fd) });
+        unsafe { INPUT_FD = fd };
+        Ok(fd)
+    }
+
+    fn clear_input_nonblocking(&self) -> std::io::Result<()> {
+        let flags = unsafe { libc::fcntl(self.input_fd(), libc::F_GETFL, 0) };
+        if flags < 0 {
+            return Err(Error::last_os_error());
+        }
+        if unsafe { libc::fcntl(self.input_fd(), libc::F_SETFL, flags & !libc::O_NONBLOCK) } < 0 {
+            return Err(Error::last_os_error());
+        }
+        Ok(())
     }
 
     /// Waits for a terminal resize event to occur and returns the new terminal size.

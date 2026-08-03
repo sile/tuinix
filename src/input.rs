@@ -124,6 +124,10 @@ impl<R: Read> InputReader<R> {
         &self.inner
     }
 
+    pub(crate) fn replace_inner(&mut self, inner: R) {
+        self.inner = inner;
+    }
+
     pub fn read_input(&mut self) -> std::io::Result<Option<TerminalInput>> {
         if self.buf_offset > 0
             && let Some(input) = self.read_input_from_buf()?
@@ -1019,6 +1023,36 @@ mod tests {
         let result = parse_input(&[0xFF]).unwrap();
         assert_eq!(result.0, None);
         assert_eq!(result.1, 1);
+    }
+
+    #[test]
+    fn test_replace_inner_preserves_buffer() {
+        use std::io::Cursor;
+
+        let mut reader = InputReader::new(Cursor::new(&b"ab"[..]));
+
+        // Read the first input. The remaining byte is kept in the internal buffer.
+        let first = reader.read_input().unwrap();
+        assert_eq!(
+            first,
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: false,
+                code: KeyCode::Char('a'),
+            }))
+        );
+
+        // Replacing the inner reader must preserve the buffered data.
+        reader.replace_inner(Cursor::new(&b""[..]));
+        let second = reader.read_input().unwrap();
+        assert_eq!(
+            second,
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: false,
+                code: KeyCode::Char('b'),
+            }))
+        );
     }
 
     #[test]
