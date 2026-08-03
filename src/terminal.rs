@@ -181,11 +181,11 @@ impl Terminal {
         let original_termios = unsafe { termios.assume_init() };
 
         let input_tty_path = unsafe {
-            let name = libc::ttyname(stdin.as_raw_fd());
-            if name.is_null() {
+            let mut path = [0u8; libc::PATH_MAX as usize];
+            if libc::ttyname_r(stdin.as_raw_fd(), path.as_mut_ptr().cast(), path.len()) != 0 {
                 None
             } else {
-                Some(std::ffi::CStr::from_ptr(name).to_bytes_with_nul().to_vec())
+                Some(path)
             }
         };
 
@@ -220,9 +220,11 @@ impl Terminal {
             // enough to restore the terminal state regardless of which fd is
             // currently used for the input.
             let mut stdout = std::io::stdout();
-            let path = input_tty_path
-                .as_deref()
-                .unwrap_or(b"/dev/tty\0".as_slice());
+            let default_path = b"/dev/tty\0";
+            let path = match &input_tty_path {
+                Some(p) => p.as_slice(),
+                None => default_path,
+            };
             let fd = unsafe { libc::open(path.as_ptr().cast(), libc::O_RDONLY | libc::O_NOCTTY) };
             if fd >= 0 {
                 unsafe {
@@ -330,7 +332,8 @@ impl Terminal {
     ///
     /// If you want to use I/O polling mechanisms other than [`libc::select()`],
     /// please use the following methods directly:
-    /// - [`Terminal::input_fd()`] and [`Terminal::read_input()`] for input events
+    /// - [`Terminal::input_fd()`] and [`Terminal::read_input()`] for input events (call
+    ///   [`Terminal::set_input_nonblocking()`] first, as required by external event loops)
     /// - [`Terminal::signal_fd()`] and [`Terminal::wait_for_resize()`] for resize events
     ///
     /// # Parameters
@@ -453,6 +456,11 @@ impl Terminal {
     /// By default, this method blocks until input is available. To use it in non-blocking
     /// mode, first call [`Terminal::set_input_nonblocking()`].
     ///
+    /// Note that an incomplete escape sequence (e.g. a lone `ESC` byte) stays in the internal
+    /// buffer and is reported as `Ok(None)` until the rest of the sequence arrives. With a
+    /// non-blocking input, a standalone `ESC` key event is therefore only reported once the
+    /// following key is pressed, and may then be interpreted as an `Alt` key combination.
+    ///
     /// While [`Terminal::poll_event()`] is generally recommended for receiving terminal input events,
     /// you may need to call this method directly when using external I/O polling crates like `mio`.
     ///
@@ -515,7 +523,10 @@ impl Terminal {
     ///   child processes keep working as usual.
     pub fn set_input_nonblocking(&mut self) -> std::io::Result<RawFd> {
         if self.input_replaced {
-            return Err(Error::other("Input fd has already been replaced"));
+            return Err(Error::new(
+                ErrorKind::InvalidInput,
+                "Input fd has already been replaced",
+            ));
         }
 
         let fd = match open_nonblocking_input(self.input_fd()) {
@@ -544,6 +555,9 @@ impl Terminal {
     ///
     /// By default, this method blocks until input is available. To use it in non-blocking
     /// mode, first call [`set_nonblocking()`](crate::set_nonblocking) on [`Terminal::signal_fd()`].
+    /// Unlike the input fd, the signal fd is a pipe that does not share an open file description
+    /// with the output, so applying [`set_nonblocking()`](crate::set_nonblocking) to it has no
+    /// side effects on [`Terminal::draw()`].
     ///
     /// While [`Terminal::poll_event()`] is generally recommended for detecting terminal resize events,
     /// you may need to call this method directly when using external I/O polling crates like `mio`.
@@ -792,14 +806,16 @@ fn set_sigwinch_handler() -> std::io::Result<File> {
 /// Opens a fresh, independent file description of the terminal device that `input_fd` is
 /// connected to, and makes it non-blocking. The original file description is not modified.
 fn open_nonblocking_input(input_fd: RawFd) -> std::io::Result<RawFd> {
-    let path = unsafe {
-        let name = libc::ttyname(input_fd);
-        if name.is_null() {
-            return Err(Error::last_os_error());
-        }
-        std::ffi::CStr::from_ptr(name).to_bytes_with_nul().to_vec()
+    let mut path = [0u8; libc::PATH_MAX as usize];
+    if unsafe { libc::ttyname_r(input_fd, path.as_mut_ptr().cast(), path.len()) } != 0 {
+        return Err(Error::last_os_error());
+    }
+    let fd = unsafe {
+        libc::open(
+            path.as_ptr().cast(),
+            libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOCTTY,
+        )
     };
-    let fd = unsafe { libc::open(path.as_ptr().cast(), libc::O_RDONLY | libc::O_CLOEXEC) };
     if fd < 0 {
         return Err(Error::last_os_error());
     }

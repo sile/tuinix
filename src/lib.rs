@@ -8,6 +8,7 @@
 //! - Drawing styled text with ANSI colors
 //! - Handling terminal resize events
 //! - Creating efficient terminal frames with differential updates
+//! - Non-blocking input for use with external event loops (`mio` / `tokio`)
 //!
 //! ## Basic Example
 //!
