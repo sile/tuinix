@@ -84,8 +84,7 @@ static mut SIGWINCH_PIPE_FD: RawFd = 0;
 ///
 ///     // Get file descriptors and set to non-blocking mode
 ///     let stdin_fd = terminal.set_input_nonblocking()?;
-///     let signal_fd = terminal.signal_fd();
-///     terminal.set_signal_nonblocking()?;
+///     let signal_fd = terminal.set_signal_nonblocking()?;
 ///
 ///     // Register with mio poll
 ///     poll.registry().register(
@@ -269,13 +268,16 @@ impl Terminal {
         self.signal.as_raw_fd()
     }
 
-    /// Makes the terminal resize signal file descriptor non-blocking.
+    /// Makes the terminal resize signal file descriptor non-blocking, and returns the file
+    /// descriptor.
     ///
     /// The signal fd is a pipe that does not share an open file description with the output, so
     /// making it non-blocking has no side effects on [`Terminal::draw()`]. This is required when
     /// combining [`Terminal::wait_for_resize()`] with external event loops.
-    pub fn set_signal_nonblocking(&mut self) -> std::io::Result<()> {
-        crate::set_fd_nonblocking(self.signal_fd(), true)
+    pub fn set_signal_nonblocking(&mut self) -> std::io::Result<RawFd> {
+        let fd = self.signal_fd();
+        crate::set_fd_nonblocking(fd, true)?;
+        Ok(fd)
     }
 
     /// Enables mouse input reporting in the terminal.

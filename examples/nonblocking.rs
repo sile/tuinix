@@ -22,10 +22,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // terminal device that stdin is connected to, so making it non-blocking
     // does not affect stdout.
     let stdin_fd = terminal.set_input_nonblocking()?;
-    let signal_fd = terminal.signal_fd();
-
-    // Set the signal file descriptor to non-blocking mode
-    terminal.set_signal_nonblocking()?;
+    let signal_fd = terminal.set_signal_nonblocking()?;
 
     // Register the file descriptors with mio
     poll.registry().register(
