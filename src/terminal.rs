@@ -72,7 +72,7 @@ static mut SIGWINCH_PIPE_FD: RawFd = 0;
 /// use std::time::Duration;
 ///
 /// use mio::{Events, Interest, Poll, Token};
-/// use tuinix::{Terminal, TerminalFrame, set_nonblocking, try_nonblocking, try_uninterrupted};
+/// use tuinix::{Terminal, TerminalFrame, try_nonblocking, try_uninterrupted};
 ///
 /// fn main() -> std::io::Result<()> {
 ///     // Initialize terminal
@@ -85,7 +85,7 @@ static mut SIGWINCH_PIPE_FD: RawFd = 0;
 ///     // Get file descriptors and set to non-blocking mode
 ///     let stdin_fd = terminal.set_input_nonblocking()?;
 ///     let signal_fd = terminal.signal_fd();
-///     set_nonblocking(signal_fd)?;
+///     terminal.set_signal_nonblocking()?;
 ///
 ///     // Register with mio poll
 ///     poll.registry().register(
@@ -267,6 +267,15 @@ impl Terminal {
     /// Returns the file descriptor that receives terminal resize signal notifications.
     pub fn signal_fd(&self) -> RawFd {
         self.signal.as_raw_fd()
+    }
+
+    /// Makes the terminal resize signal file descriptor non-blocking.
+    ///
+    /// The signal fd is a pipe that does not share an open file description with the output, so
+    /// making it non-blocking has no side effects on [`Terminal::draw()`]. This is required when
+    /// combining [`Terminal::wait_for_resize()`] with external event loops.
+    pub fn set_signal_nonblocking(&mut self) -> std::io::Result<()> {
+        crate::set_fd_nonblocking(self.signal_fd(), true)
     }
 
     /// Enables mouse input reporting in the terminal.
@@ -482,13 +491,15 @@ impl Terminal {
     /// descriptor.
     ///
     /// This is the recommended way to make the input non-blocking (e.g. for use with `mio` or
-    /// `tokio::io::unix::AsyncFd`). See the warning on
-    /// [`set_nonblocking()`](crate::set_nonblocking) for why applying that function directly to
-    /// [`Terminal::input_fd()`] can break [`Terminal::draw()`].
+    /// `tokio::io::unix::AsyncFd`). Making the input fd non-blocking directly (e.g. via `fcntl`
+    /// with `O_NONBLOCK`) also affects the output fd, because both share an open file description
+    /// in typical interactive terminals, which may cause [`Terminal::draw()`] to fail with
+    /// `EAGAIN` / `EWOULDBLOCK`. This method avoids that by opening a fresh, independent file
+    /// description for the input.
     ///
-    /// If `set_nonblocking()` has already been applied to [`Terminal::input_fd()`], the
-    /// `O_NONBLOCK` flag is cleared from the original file description as part of this method
-    /// (also on failure), so `draw()` stops failing with `EAGAIN` after this method returns.
+    /// If the input fd has already been made non-blocking, the `O_NONBLOCK` flag is cleared from
+    /// the original file description as part of this method (also on failure), so `draw()` stops
+    /// failing with `EAGAIN` after this method returns.
     ///
     /// # Errors
     ///
@@ -554,10 +565,9 @@ impl Terminal {
     /// Waits for a terminal resize event to occur and returns the new terminal size.
     ///
     /// By default, this method blocks until input is available. To use it in non-blocking
-    /// mode, first call [`set_nonblocking()`](crate::set_nonblocking) on [`Terminal::signal_fd()`].
+    /// mode, first call [`Terminal::set_signal_nonblocking()`].
     /// Unlike the input fd, the signal fd is a pipe that does not share an open file description
-    /// with the output, so applying [`set_nonblocking()`](crate::set_nonblocking) to it has no
-    /// side effects on [`Terminal::draw()`].
+    /// with the output, so making it non-blocking has no side effects on [`Terminal::draw()`].
     ///
     /// While [`Terminal::poll_event()`] is generally recommended for detecting terminal resize events,
     /// you may need to call this method directly when using external I/O polling crates like `mio`.
@@ -819,7 +829,7 @@ fn open_nonblocking_input(input_fd: RawFd) -> std::io::Result<RawFd> {
     if fd < 0 {
         return Err(Error::last_os_error());
     }
-    if let Err(err) = crate::set_nonblocking(fd) {
+    if let Err(err) = crate::set_fd_nonblocking(fd, true) {
         unsafe { libc::close(fd) };
         return Err(err);
     }

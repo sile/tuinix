@@ -1,8 +1,8 @@
 use mio::{Events, Interest, Poll, Token};
 use std::{fmt::Write, time::Duration};
 use tuinix::{
-    KeyCode, Terminal, TerminalColor, TerminalFrame, TerminalInput, TerminalStyle, set_nonblocking,
-    try_nonblocking, try_uninterrupted,
+    KeyCode, Terminal, TerminalColor, TerminalFrame, TerminalInput, TerminalStyle, try_nonblocking,
+    try_uninterrupted,
 };
 
 // Define tokens for our event sources
@@ -25,7 +25,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let signal_fd = terminal.signal_fd();
 
     // Set the signal file descriptor to non-blocking mode
-    set_nonblocking(signal_fd)?;
+    terminal.set_signal_nonblocking()?;
 
     // Register the file descriptors with mio
     poll.registry().register(

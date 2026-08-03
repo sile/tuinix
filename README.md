@@ -88,7 +88,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 For integration with external event loop libraries like `mio`, see the [nonblocking.rs](examples/nonblocking.rs) example.
 
-Note that applying `set_nonblocking` directly to the terminal input fd also affects the output
-fd, because both share an open file description in typical interactive terminals. This can make
-`draw()` fail with `EAGAIN` / `EWOULDBLOCK`. Use `Terminal::set_input_nonblocking()` instead to
-make the input non-blocking.
+Note that making the terminal input fd non-blocking directly (e.g. via `fcntl` with
+`O_NONBLOCK`) also affects the output fd, because both share an open file description in typical
+interactive terminals. This can make `draw()` fail with `EAGAIN` / `EWOULDBLOCK`. Use
+`Terminal::set_input_nonblocking()` instead to make the input non-blocking.

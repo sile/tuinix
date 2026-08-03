@@ -96,30 +96,6 @@ pub use input::{KeyCode, KeyInput, MouseEvent, MouseInput, TerminalInput};
 pub use style::{TerminalColor, TerminalStyle};
 pub use terminal::{Terminal, TerminalEvent};
 
-/// Sets a file descriptor to non-blocking mode.
-///
-/// This function modifies the flags of the given file descriptor (`fd`) to
-/// include the `O_NONBLOCK` flag, which makes operations on the file descriptor
-/// non-blocking.
-///
-/// When a file descriptor is in non-blocking mode, operations that would normally
-/// block until data is available (such as `read`) or until resources are ready
-/// (such as `write`) will instead immediately return with [`std::io::ErrorKind::WouldBlock`]
-/// if the operation cannot be completed without blocking. This allows the calling
-/// thread to continue execution and check for availability later, which is
-/// particularly useful in asynchronous I/O patterns.
-///
-/// # Warning
-///
-/// Applying this to [`Terminal::input_fd()`] also affects [`Terminal::output_fd()`]
-/// when both share the same open file description (typical for interactive terminals
-/// on macOS and Linux), which may cause [`Terminal::draw()`] to fail with
-/// `EAGAIN` / `EWOULDBLOCK`. To make the terminal input non-blocking, use
-/// [`Terminal::set_input_nonblocking()`] instead.
-pub fn set_nonblocking(fd: RawFd) -> std::io::Result<()> {
-    set_fd_nonblocking(fd, true)
-}
-
 pub(crate) fn set_fd_nonblocking(fd: RawFd, nonblock: bool) -> std::io::Result<()> {
     unsafe {
         let flags = libc::fcntl(fd, libc::F_GETFL, 0);
@@ -141,7 +117,7 @@ pub(crate) fn set_fd_nonblocking(fd: RawFd, nonblock: bool) -> std::io::Result<(
 /// Handles the result of a non-blocking I/O operation by converting [`ErrorKind::WouldBlock`] errors to `Ok(None)`.
 ///
 /// This utility function is designed to work with non-blocking I/O operations (typically used after
-/// calling [`Terminal::set_input_nonblocking()`] and [`set_nonblocking()`] on [`Terminal::signal_fd()`]). When a non-blocking operation returns a
+/// calling [`Terminal::set_input_nonblocking()`] and [`Terminal::set_signal_nonblocking()`]). When a non-blocking operation returns a
 /// [`ErrorKind::WouldBlock`] error, indicating that the operation would need to block to complete, this function
 /// converts it to `Ok(None)` for easier handling in caller code.
 pub fn try_nonblocking<T>(result: std::io::Result<T>) -> std::io::Result<Option<T>> {
