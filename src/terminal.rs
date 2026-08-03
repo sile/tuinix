@@ -264,6 +264,9 @@ impl Terminal {
     }
 
     /// Returns the file descriptor that receives terminal resize signal notifications.
+    ///
+    /// Make it non-blocking with [`Terminal::set_signal_nonblocking()`] when using external
+    /// event loops.
     pub fn signal_fd(&self) -> RawFd {
         self.signal.as_raw_fd()
     }
@@ -345,7 +348,8 @@ impl Terminal {
     /// please use the following methods directly:
     /// - [`Terminal::input_fd()`] and [`Terminal::read_input()`] for input events (call
     ///   [`Terminal::set_input_nonblocking()`] first, as required by external event loops)
-    /// - [`Terminal::signal_fd()`] and [`Terminal::wait_for_resize()`] for resize events
+    /// - [`Terminal::signal_fd()`] and [`Terminal::wait_for_resize()`] for resize events (call
+    ///   [`Terminal::set_signal_nonblocking()`] first, as required by external event loops)
     ///
     /// # Parameters
     ///
