@@ -116,12 +116,21 @@ pub use terminal::{Terminal, TerminalEvent};
 /// `EAGAIN` / `EWOULDBLOCK`. To make the terminal input non-blocking, use
 /// [`Terminal::set_input_nonblocking()`] instead.
 pub fn set_nonblocking(fd: RawFd) -> std::io::Result<()> {
+    set_fd_nonblocking(fd, true)
+}
+
+pub(crate) fn set_fd_nonblocking(fd: RawFd, nonblock: bool) -> std::io::Result<()> {
     unsafe {
         let flags = libc::fcntl(fd, libc::F_GETFL, 0);
         if flags < 0 {
             return Err(std::io::Error::last_os_error());
         }
-        if libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) < 0 {
+        let new_flags = if nonblock {
+            flags | libc::O_NONBLOCK
+        } else {
+            flags & !libc::O_NONBLOCK
+        };
+        if libc::fcntl(fd, libc::F_SETFL, new_flags) < 0 {
             return Err(std::io::Error::last_os_error());
         }
         Ok(())

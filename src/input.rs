@@ -1026,7 +1026,7 @@ mod tests {
     }
 
     #[test]
-    fn test_replace_inner_preserves_buffer() {
+    fn test_replace_inner_preserves_buffer_then_reads_new_inner() {
         use std::io::Cursor;
 
         let mut reader = InputReader::new(Cursor::new(&b"ab"[..]));
@@ -1042,8 +1042,9 @@ mod tests {
             }))
         );
 
-        // Replacing the inner reader must preserve the buffered data.
-        reader.replace_inner(Cursor::new(&b""[..]));
+        // Replacing the inner reader must preserve the buffered data and then
+        // continue reading from the new inner reader.
+        reader.replace_inner(Cursor::new(&b"c"[..]));
         let second = reader.read_input().unwrap();
         assert_eq!(
             second,
@@ -1053,6 +1054,52 @@ mod tests {
                 code: KeyCode::Char('b'),
             }))
         );
+        let third = reader.read_input().unwrap();
+        assert_eq!(
+            third,
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: false,
+                code: KeyCode::Char('c'),
+            }))
+        );
+    }
+
+    #[test]
+    fn test_replace_inner_combines_partial_sequence_with_new_inner() {
+        use std::io::Cursor;
+
+        // An incomplete escape sequence stays in the buffer.
+        let mut reader = InputReader::new(Cursor::new(&[0x1b, b'['][..]));
+        let none = reader.read_input().unwrap();
+        assert_eq!(none, None);
+
+        // The continuation arrives from the new inner reader.
+        reader.replace_inner(Cursor::new(&b"A"[..]));
+        let input = reader.read_input().unwrap();
+        assert_eq!(
+            input,
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: false,
+                code: KeyCode::Up,
+            }))
+        );
+    }
+
+    #[test]
+    fn test_replace_inner_propagates_new_inner_eof() {
+        use std::io::Cursor;
+
+        let mut reader = InputReader::new(Cursor::new(&b"ab"[..]));
+        assert!(reader.read_input().unwrap().is_some());
+
+        reader.replace_inner(Cursor::new(&b""[..]));
+        assert!(reader.read_input().unwrap().is_some());
+
+        // After the buffer is consumed, EOF from the new inner reader propagates.
+        let err = reader.read_input().unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
     }
 
     #[test]
