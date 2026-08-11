@@ -314,7 +314,7 @@ impl TerminalChar {
 
 #[cfg(test)]
 mod tests {
-    use std::fmt::Write;
+    use std::{cell::Cell, collections::BTreeMap, fmt::Write};
 
     use unicode_width::UnicodeWidthChar;
 
@@ -326,6 +326,312 @@ mod tests {
         fn estimate_char_width(&self, c: char) -> usize {
             c.width().unwrap_or_default()
         }
+    }
+
+    const WIDE_CHARS: &[char] = &[
+        'あ', 'い', 'う', 'え', 'お', '界', '日', '本', '漢', '字', '語',
+    ];
+
+    const ZERO_WIDTH_CHARS: &[char] = &['\u{301}', '\u{200d}', '\u{20dd}'];
+
+    fn sample_pbt_style(ctx: &mut noprop::TestCaseContext) -> TerminalStyle {
+        const SETTERS: [fn(TerminalStyle) -> TerminalStyle; 7] = [
+            TerminalStyle::bold,
+            TerminalStyle::italic,
+            TerminalStyle::underline,
+            TerminalStyle::blink,
+            TerminalStyle::reverse,
+            TerminalStyle::dim,
+            TerminalStyle::strikethrough,
+        ];
+        let mut style = TerminalStyle::new();
+        for setter in SETTERS {
+            if noprop::sample_bool(ctx) {
+                style = setter(style);
+            }
+        }
+        if noprop::sample_bool(ctx) {
+            style = style.fg_color(crate::TerminalColor::new(
+                noprop::sample_u8(ctx),
+                noprop::sample_u8(ctx),
+                noprop::sample_u8(ctx),
+            ));
+        }
+        if noprop::sample_bool(ctx) {
+            style = style.bg_color(crate::TerminalColor::new(
+                noprop::sample_u8(ctx),
+                noprop::sample_u8(ctx),
+                noprop::sample_u8(ctx),
+            ));
+        }
+        style
+    }
+
+    /// Draws a random string that mixes visible ASCII, newlines, style
+    /// escape sequences, wide characters, and zero-width characters.
+    ///
+    /// Visible characters exclude space so that no stored character
+    /// can be confused with `TerminalChar::BLANK`.
+    fn sample_pbt_text(ctx: &mut noprop::TestCaseContext) -> String {
+        let mut text = String::new();
+        let n_chars =
+            noprop::sample_with_boundaries(ctx, &[0usize, 48], noprop::Ratio::one_nth(5), |ctx| {
+                noprop::sample_usize_in(ctx, 0..=48)
+            });
+        for _ in 0..n_chars {
+            match noprop::sample_weighted_index(ctx, &[4, 1, 1, 1, 1]) {
+                0 => {
+                    text.push(
+                        char::from_u32(noprop::sample_usize_in(ctx, 0x21..=0x7e) as u32)
+                            .expect("valid ASCII"),
+                    );
+                }
+                1 => text.push('\n'),
+                2 => text.push_str(&sample_pbt_style(ctx).to_string()),
+                3 => text.push(noprop::sample_choice(ctx, WIDE_CHARS)),
+                _ => text.push(noprop::sample_choice(ctx, ZERO_WIDTH_CHARS)),
+            }
+        }
+        text
+    }
+
+    /// A model of `TerminalFrame::write_str`: tracks the cursor, the
+    /// stored characters, the current style, and which interesting
+    /// behaviors were observed.
+    struct FrameModel {
+        tail: TerminalPosition,
+        data: BTreeMap<TerminalPosition, TerminalChar>,
+        current_style: TerminalStyle,
+        escape_sequence: String,
+        clipped: bool,
+        newline: bool,
+        zero_width: bool,
+    }
+
+    impl FrameModel {
+        fn new() -> Self {
+            Self {
+                tail: TerminalPosition::ZERO,
+                data: BTreeMap::new(),
+                current_style: TerminalStyle::new(),
+                escape_sequence: String::new(),
+                clipped: false,
+                newline: false,
+                zero_width: false,
+            }
+        }
+
+        fn write(&mut self, s: &str, size: TerminalSize, estimator: &impl EstimateCharWidth) {
+            for c in s.chars() {
+                if !self.escape_sequence.is_empty() {
+                    self.escape_sequence.push(c);
+                    if c.is_ascii_alphabetic() {
+                        self.current_style = self
+                            .escape_sequence
+                            .parse()
+                            .expect("escape sequence should be generated via `TerminalStyle`");
+                        self.escape_sequence.clear();
+                    }
+                    continue;
+                }
+                match c {
+                    '\x1b' => self.escape_sequence.push(c),
+                    '\n' => {
+                        self.tail.row += 1;
+                        self.tail.col = 0;
+                        self.newline = true;
+                    }
+                    c => {
+                        let Some(width) = NonZeroUsize::new(estimator.estimate_char_width(c))
+                        else {
+                            self.zero_width = true;
+                            continue;
+                        };
+                        if self.tail.row < size.rows && self.tail.col + width.get() <= size.cols {
+                            self.data.insert(
+                                self.tail,
+                                TerminalChar {
+                                    style: self.current_style,
+                                    width,
+                                    value: c,
+                                },
+                            );
+                        } else {
+                            self.clipped = true;
+                        }
+                        self.tail.col += width.get();
+                    }
+                }
+            }
+        }
+    }
+
+    fn sample_pbt_size(ctx: &mut noprop::TestCaseContext) -> TerminalSize {
+        TerminalSize::rows_cols(
+            noprop::sample_with_boundaries(ctx, &[0usize, 12], noprop::Ratio::one_nth(5), |ctx| {
+                noprop::sample_usize_in(ctx, 0..=12)
+            }),
+            noprop::sample_with_boundaries(ctx, &[0usize, 12], noprop::Ratio::one_nth(5), |ctx| {
+                noprop::sample_usize_in(ctx, 0..=12)
+            }),
+        )
+    }
+
+    /// The cursor and the stored characters of a frame after
+    /// `write_str` must match the model, including wide characters,
+    /// zero-width characters, style changes, newlines, and clipping at
+    /// the frame boundary.
+    #[test]
+    fn pbt_write_content_matches_model() -> noprop::TestResult {
+        let observed_wide = Cell::new(false);
+        let observed_zero_width = Cell::new(false);
+        let observed_styled = Cell::new(false);
+        let observed_clipped = Cell::new(false);
+        let observed_newline = Cell::new(false);
+        let seed = noprop::seed_from_env_or_time("TUINIX_PBT_SEED")?;
+        let mut runner = noprop::Runner::new(seed);
+        runner.run(256, |ctx| {
+            let size = sample_pbt_size(ctx);
+            let text = sample_pbt_text(ctx);
+            let mut model = FrameModel::new();
+            model.write(&text, size, &UnicodeCharWidthEstimator);
+            let mut frame =
+                TerminalFrame::with_char_width_estimator(size, UnicodeCharWidthEstimator);
+            frame.write_str(&text).unwrap();
+            assert_eq!(frame.cursor(), model.tail, "cursor mismatch for {text:?}");
+            let actual: BTreeMap<_, _> = frame
+                .chars()
+                .filter(|(_, c)| *c != TerminalChar::BLANK)
+                .collect();
+            assert_eq!(actual, model.data, "content mismatch for {text:?}");
+            if model.data.values().any(|c| c.width.get() > 1) {
+                observed_wide.set(true);
+            }
+            if model.data.values().any(|c| c.style != TerminalStyle::new()) {
+                observed_styled.set(true);
+            }
+            if model.clipped {
+                observed_clipped.set(true);
+            }
+            if model.newline {
+                observed_newline.set(true);
+            }
+            if model.zero_width {
+                observed_zero_width.set(true);
+            }
+            Ok(())
+        })?;
+        assert!(
+            observed_wide.get(),
+            "no case wrote a wide character\n{runner}"
+        );
+        assert!(
+            observed_zero_width.get(),
+            "no case wrote a zero-width character\n{runner}"
+        );
+        assert!(
+            observed_styled.get(),
+            "no case wrote a styled character\n{runner}"
+        );
+        assert!(
+            observed_clipped.get(),
+            "no case clipped a character\n{runner}"
+        );
+        assert!(observed_newline.get(), "no case wrote a newline\n{runner}");
+        Ok(())
+    }
+
+    /// `TerminalFrame::draw` must match a model that replays the
+    /// overlap handling: a partially overlapped character is removed,
+    /// the cells covered by the drawn character are cleared, and
+    /// characters drawn outside the frame are ignored.
+    #[test]
+    fn pbt_draw_matches_model() -> noprop::TestResult {
+        let observed_overlap = Cell::new(false);
+        let observed_clipped = Cell::new(false);
+        let seed = noprop::seed_from_env_or_time("TUINIX_PBT_SEED")?;
+        let mut runner = noprop::Runner::new(seed);
+        runner.run(256, |ctx| {
+            // Half of the cases force a partial overlap structurally: a
+            // wide character whose second cell is overwritten by a drawn
+            // character. Relying on random generation alone made the
+            // overlap gate flaky, since a partial overlap requires a
+            // width-2 character to align with the first column of a
+            // drawn character.
+            let structured = noprop::sample_bool(ctx);
+            let (size, dest_text, src_text, position) = if structured {
+                (
+                    TerminalSize::rows_cols(1, 4),
+                    "あ".to_string(),
+                    "x".to_string(),
+                    TerminalPosition::row_col(0, 1),
+                )
+            } else {
+                (
+                    sample_pbt_size(ctx),
+                    sample_pbt_text(ctx),
+                    sample_pbt_text(ctx),
+                    TerminalPosition::row_col(
+                        noprop::sample_usize_in(ctx, 0..=16),
+                        noprop::sample_usize_in(ctx, 0..=16),
+                    ),
+                )
+            };
+            let mut dest =
+                TerminalFrame::with_char_width_estimator(size, UnicodeCharWidthEstimator);
+            dest.write_str(&dest_text).unwrap();
+            let mut model = FrameModel::new();
+            model.write(&dest_text, size, &UnicodeCharWidthEstimator);
+            let mut expected = model.data;
+            let mut src = TerminalFrame::with_char_width_estimator(size, UnicodeCharWidthEstimator);
+            src.write_str(&src_text).unwrap();
+            let mut removals = 0usize;
+            let mut skipped = 0usize;
+            for (src_pos, c) in src.chars() {
+                let target_pos = position + src_pos;
+                if !size.contains(target_pos) {
+                    skipped += 1;
+                    continue;
+                }
+                if let Some((&prev_pos, prev_c)) = expected.range(..target_pos).next_back() {
+                    let end_pos = prev_pos + TerminalPosition::col(prev_c.width.get());
+                    if target_pos < end_pos {
+                        expected.remove(&prev_pos);
+                        removals += 1;
+                    }
+                }
+                for i in 0..c.width.get() {
+                    expected.remove(&(target_pos + TerminalPosition::col(i)));
+                }
+                expected.insert(target_pos, c);
+            }
+            dest.draw(position, &src);
+            let actual: BTreeMap<_, _> = dest
+                .chars()
+                .filter(|(_, c)| *c != TerminalChar::BLANK)
+                .collect();
+            let expected: BTreeMap<_, _> = expected
+                .into_iter()
+                .filter(|(_, c)| *c != TerminalChar::BLANK)
+                .collect();
+            assert_eq!(actual, expected, "draw mismatch at {position:?}");
+            if removals > 0 {
+                observed_overlap.set(true);
+            }
+            if skipped > 0 {
+                observed_clipped.set(true);
+            }
+            Ok(())
+        })?;
+        assert!(
+            observed_overlap.get(),
+            "no case removed an overlapped character\n{runner}"
+        );
+        assert!(
+            observed_clipped.get(),
+            "no case drew outside the frame\n{runner}"
+        );
+        Ok(())
     }
 
     #[test]
