@@ -18,14 +18,16 @@ use std::fmt::Write;
 
 /// Runs a property with a time-based seed, overridable via the
 /// `TUINIX_PBT_SEED` environment variable for deterministic
-/// reproduction of a reported failure.
-fn run<F>(cases: usize, f: F) -> noprop::TestResult
+/// reproduction of a reported failure. The runner is returned so that
+/// coverage-gate assertions can embed its seed in the failure message.
+fn run<F>(cases: usize, f: F) -> noprop::TestResult<noprop::Runner>
 where
     F: Fn(&mut noprop::TestCaseContext) -> noprop::TestResult,
 {
     let seed = noprop::seed_from_env_or_time("TUINIX_PBT_SEED")?;
-    noprop::Runner::new(seed).run(cases, f)?;
-    Ok(())
+    let mut runner = noprop::Runner::new(seed);
+    runner.run(cases, f)?;
+    Ok(runner)
 }
 
 fn sample_color(ctx: &mut noprop::TestCaseContext) -> tuinix::TerminalColor {
@@ -69,7 +71,7 @@ fn style_roundtrip_matches_display() -> noprop::TestResult {
     let observed_styled = Cell::new(false);
     let observed_fg = Cell::new(false);
     let observed_bg = Cell::new(false);
-    run(256, |ctx| {
+    let runner = run(256, |ctx| {
         let style = sample_style(ctx);
         let text = style.to_string();
         let parsed = text
@@ -87,9 +89,12 @@ fn style_roundtrip_matches_display() -> noprop::TestResult {
         }
         Ok(())
     })?;
-    assert!(observed_styled.get(), "no case exercised a styled style");
-    assert!(observed_fg.get(), "no case exercised an fg color");
-    assert!(observed_bg.get(), "no case exercised a bg color");
+    assert!(
+        observed_styled.get(),
+        "no case exercised a styled style\n{runner}"
+    );
+    assert!(observed_fg.get(), "no case exercised an fg color\n{runner}");
+    assert!(observed_bg.get(), "no case exercised a bg color\n{runner}");
     Ok(())
 }
 
@@ -237,7 +242,7 @@ fn region_operations_match_model() -> noprop::TestResult {
     let observed_empty = Cell::new(false);
     let observed_zero = Cell::new(false);
     let observed_max = Cell::new(false);
-    run(256, |ctx| {
+    let runner = run(256, |ctx| {
         let position = tuinix::TerminalPosition::row_col(
             noprop::sample_usize_in(ctx, 0..=10),
             noprop::sample_usize_in(ctx, 0..=10),
@@ -285,11 +290,14 @@ fn region_operations_match_model() -> noprop::TestResult {
         Ok(())
     })?;
     for (op, gate) in REGION_OPS.iter().zip(&observed) {
-        assert!(gate.get(), "no case exercised {op:?}");
+        assert!(gate.get(), "no case exercised {op:?}\n{runner}");
     }
-    assert!(observed_empty.get(), "no case produced an empty region");
-    assert!(observed_zero.get(), "no case used amount 0");
-    assert!(observed_max.get(), "no case used the max amount");
+    assert!(
+        observed_empty.get(),
+        "no case produced an empty region\n{runner}"
+    );
+    assert!(observed_zero.get(), "no case used amount 0\n{runner}");
+    assert!(observed_max.get(), "no case used the max amount\n{runner}");
     Ok(())
 }
 
@@ -355,7 +363,7 @@ fn frame_write_cursor_matches_model() -> noprop::TestResult {
     let observed_escape = Cell::new(false);
     let observed_control = Cell::new(false);
     let observed_clipped = Cell::new(false);
-    run(256, |ctx| {
+    let runner = run(256, |ctx| {
         let size = tuinix::TerminalSize::rows_cols(
             noprop::sample_with_boundaries(ctx, &[0usize, 12], noprop::Ratio::one_nth(5), |ctx| {
                 noprop::sample_usize_in(ctx, 0..=12)
@@ -420,10 +428,19 @@ fn frame_write_cursor_matches_model() -> noprop::TestResult {
         }
         Ok(())
     })?;
-    assert!(observed_text.get(), "no case wrote any text");
-    assert!(observed_newline.get(), "no case wrote a newline");
-    assert!(observed_escape.get(), "no case wrote an escape sequence");
-    assert!(observed_control.get(), "no case wrote a control character");
-    assert!(observed_clipped.get(), "no case clipped a character");
+    assert!(observed_text.get(), "no case wrote any text\n{runner}");
+    assert!(observed_newline.get(), "no case wrote a newline\n{runner}");
+    assert!(
+        observed_escape.get(),
+        "no case wrote an escape sequence\n{runner}"
+    );
+    assert!(
+        observed_control.get(),
+        "no case wrote a control character\n{runner}"
+    );
+    assert!(
+        observed_clipped.get(),
+        "no case clipped a character\n{runner}"
+    );
     Ok(())
 }

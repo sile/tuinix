@@ -521,14 +521,23 @@ mod tests {
             }
             Ok(())
         })?;
-        assert!(observed_wide.get(), "no case wrote a wide character");
+        assert!(
+            observed_wide.get(),
+            "no case wrote a wide character\n{runner}"
+        );
         assert!(
             observed_zero_width.get(),
-            "no case wrote a zero-width character"
+            "no case wrote a zero-width character\n{runner}"
         );
-        assert!(observed_styled.get(), "no case wrote a styled character");
-        assert!(observed_clipped.get(), "no case clipped a character");
-        assert!(observed_newline.get(), "no case wrote a newline");
+        assert!(
+            observed_styled.get(),
+            "no case wrote a styled character\n{runner}"
+        );
+        assert!(
+            observed_clipped.get(),
+            "no case clipped a character\n{runner}"
+        );
+        assert!(observed_newline.get(), "no case wrote a newline\n{runner}");
         Ok(())
     }
 
@@ -543,12 +552,31 @@ mod tests {
         let seed = noprop::seed_from_env_or_time("TUINIX_PBT_SEED")?;
         let mut runner = noprop::Runner::new(seed);
         runner.run(256, |ctx| {
-            let size = sample_pbt_size(ctx);
-            let position = TerminalPosition::row_col(
-                noprop::sample_usize_in(ctx, 0..=16),
-                noprop::sample_usize_in(ctx, 0..=16),
-            );
-            let dest_text = sample_pbt_text(ctx);
+            // Half of the cases force a partial overlap structurally: a
+            // wide character whose second cell is overwritten by a drawn
+            // character. Relying on random generation alone made the
+            // overlap gate flaky, since a partial overlap requires a
+            // width-2 character to align with the first column of a
+            // drawn character.
+            let structured = noprop::sample_bool(ctx);
+            let (size, dest_text, src_text, position) = if structured {
+                (
+                    TerminalSize::rows_cols(1, 4),
+                    "あ".to_string(),
+                    "x".to_string(),
+                    TerminalPosition::row_col(0, 1),
+                )
+            } else {
+                (
+                    sample_pbt_size(ctx),
+                    sample_pbt_text(ctx),
+                    sample_pbt_text(ctx),
+                    TerminalPosition::row_col(
+                        noprop::sample_usize_in(ctx, 0..=16),
+                        noprop::sample_usize_in(ctx, 0..=16),
+                    ),
+                )
+            };
             let mut dest =
                 TerminalFrame::with_char_width_estimator(size, UnicodeCharWidthEstimator);
             dest.write_str(&dest_text).unwrap();
@@ -556,7 +584,6 @@ mod tests {
             model.write(&dest_text, size, &UnicodeCharWidthEstimator);
             let mut expected = model.data;
             let mut src = TerminalFrame::with_char_width_estimator(size, UnicodeCharWidthEstimator);
-            let src_text = sample_pbt_text(ctx);
             src.write_str(&src_text).unwrap();
             let mut removals = 0usize;
             let mut skipped = 0usize;
@@ -598,9 +625,12 @@ mod tests {
         })?;
         assert!(
             observed_overlap.get(),
-            "no case removed an overlapped character"
+            "no case removed an overlapped character\n{runner}"
         );
-        assert!(observed_clipped.get(), "no case drew outside the frame");
+        assert!(
+            observed_clipped.get(),
+            "no case drew outside the frame\n{runner}"
+        );
         Ok(())
     }
 
