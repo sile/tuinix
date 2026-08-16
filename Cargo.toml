@@ -17,5 +17,5 @@ libc = "0.2.172"
 
 [dev-dependencies]
 mio = { version = "1.0.3", features = ["os-ext", "os-poll"] }
-noprop = "0.1"
+noprop = "0.2"
 unicode-width = "0.2.0"
