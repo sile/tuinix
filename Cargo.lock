@@ -34,7 +34,7 @@ checksum = "73026775e276cb339c67cdf71b2a8c067991fbe1cfbf25e17c7420afe6f829f7"
 
 [[package]]
 name = "tuinix"
-version = "0.3.2"
+version = "0.4.0"
 dependencies = [
  "libc",
  "mio",
