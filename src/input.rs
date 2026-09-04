@@ -417,17 +417,11 @@ fn parse_utf8_char(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usiz
     }
 
     match std::str::from_utf8(&bytes[0..width]) {
-        Ok(s) => {
-            if let Some(c) = s.chars().next() {
-                Ok((
-                    Some(create_key_input(false, false, KeyCode::Char(c))),
-                    width,
-                ))
-            } else {
-                Ok((None, 1)) // Invalid UTF-8, discard first byte
-            }
-        }
-        Err(_) => Ok((None, 1)), // Invalid UTF-8, discard first byte
+        Ok(s) if let Some(c) = s.chars().next() => Ok((
+            Some(create_key_input(false, false, KeyCode::Char(c))),
+            width,
+        )),
+        _ => Ok((None, 1)), // Invalid UTF-8, discard first byte
     }
 }
 
