@@ -30,18 +30,17 @@ use crate::{TerminalPosition, TerminalSize, TerminalStyle};
 ///
 /// ```
 /// use std::fmt::Write;
-/// use tuinix::{TerminalFrame, TerminalSize, TerminalStyle};
 ///
 /// // Create a new frame with specified dimensions
-/// let size = TerminalSize::rows_cols(24, 80);
-/// let mut frame: TerminalFrame = TerminalFrame::new(size);
+/// let size = tuinix::TerminalSize::rows_cols(24, 80);
+/// let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(size);
 ///
 /// // Write text to the frame
 /// writeln!(frame, "Hello, world!")?;
 ///
 /// // Use styling
-/// let bold = TerminalStyle::new().bold();
-/// let reset = TerminalStyle::new();
+/// let bold = tuinix::TerminalStyle::new().bold();
+/// let reset = tuinix::TerminalStyle::new();
 /// writeln!(frame, "{bold}This text is bold{reset}")?;
 ///
 /// // To render this frame to the terminal:
@@ -92,9 +91,8 @@ impl<W> TerminalFrame<W> {
     ///
     /// ```
     /// use std::fmt::Write;
-    /// use tuinix::{TerminalFrame, TerminalPosition, TerminalSize};
     ///
-    /// let mut frame: TerminalFrame = TerminalFrame::new(TerminalSize::rows_cols(10, 20));
+    /// let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(tuinix::TerminalSize::rows_cols(10, 20));
     /// write!(frame, "Hello")?;
     ///
     /// assert_eq!(frame.cursor().col, 5);
@@ -118,17 +116,16 @@ impl<W> TerminalFrame<W> {
     ///
     /// ```
     /// use std::fmt::Write;
-    /// use tuinix::{TerminalFrame, TerminalPosition, TerminalSize};
     ///
     /// // Create a main frame
-    /// let mut main_frame: TerminalFrame = TerminalFrame::new(TerminalSize::rows_cols(24, 80));
+    /// let mut main_frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(tuinix::TerminalSize::rows_cols(24, 80));
     ///
     /// // Create a smaller frame to be drawn onto the main frame
-    /// let mut sub_frame: TerminalFrame = TerminalFrame::new(TerminalSize::rows_cols(5, 20));
+    /// let mut sub_frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(tuinix::TerminalSize::rows_cols(5, 20));
     /// write!(sub_frame, "This is a sub-frame")?;
     ///
     /// // Draw the sub-frame at position (2, 10) on the main frame
-    /// main_frame.draw(TerminalPosition::row_col(2, 10), &sub_frame);
+    /// main_frame.draw(tuinix::TerminalPosition::row_col(2, 10), &sub_frame);
     /// # Ok::<(), std::fmt::Error>(())
     /// ```
     pub fn draw<X>(&mut self, position: TerminalPosition, frame: &TerminalFrame<X>) {
@@ -497,7 +494,7 @@ mod tests {
             model.write(&text, size, &UnicodeCharWidthEstimator);
             let mut frame =
                 TerminalFrame::with_char_width_estimator(size, UnicodeCharWidthEstimator);
-            frame.write_str(&text).unwrap();
+            frame.write_str(&text).expect("write succeeds");
             assert_eq!(frame.cursor(), model.tail, "cursor mismatch for {text:?}");
             let actual: BTreeMap<_, _> = frame
                 .chars()
@@ -579,12 +576,12 @@ mod tests {
             };
             let mut dest =
                 TerminalFrame::with_char_width_estimator(size, UnicodeCharWidthEstimator);
-            dest.write_str(&dest_text).unwrap();
+            dest.write_str(&dest_text).expect("write succeeds");
             let mut model = FrameModel::new();
             model.write(&dest_text, size, &UnicodeCharWidthEstimator);
             let mut expected = model.data;
             let mut src = TerminalFrame::with_char_width_estimator(size, UnicodeCharWidthEstimator);
-            src.write_str(&src_text).unwrap();
+            src.write_str(&src_text).expect("write succeeds");
             let mut removals = 0usize;
             let mut skipped = 0usize;
             for (src_pos, c) in src.chars() {
@@ -640,7 +637,7 @@ mod tests {
         let mut frame = TerminalFrame::with_char_width_estimator(size, UnicodeCharWidthEstimator);
 
         // Write Japanese characters "おはよう" (good morning)
-        write!(frame, "おはよう").unwrap();
+        write!(frame, "おはよう").expect("write succeeds");
 
         // Check the cursor position - each character should take 2 columns
         assert_eq!(frame.cursor().col, 8); // 4 characters × 2 columns each = 8

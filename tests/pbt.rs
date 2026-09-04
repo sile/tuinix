@@ -405,7 +405,7 @@ fn frame_write_cursor_matches_model() -> noprop::TestResult {
         };
         model.write(&text, size);
         let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(size);
-        write!(frame, "{text}").unwrap();
+        write!(frame, "{text}").expect("write succeeds");
         assert_eq!(
             frame.cursor(),
             tuinix::TerminalPosition::row_col(model.row, model.col),

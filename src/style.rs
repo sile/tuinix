@@ -13,26 +13,25 @@ use std::{
 ///
 /// ```
 /// use std::fmt::Write;
-/// use tuinix::{TerminalColor, TerminalFrame, TerminalSize, TerminalStyle};
 ///
 /// // Create a basic terminal frame
-/// let size = TerminalSize::rows_cols(10, 40);
-/// let mut frame: TerminalFrame = TerminalFrame::new(size);
+/// let size = tuinix::TerminalSize::rows_cols(10, 40);
+/// let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(size);
 ///
 /// // Create a simple green, bold text style
-/// let style = TerminalStyle::new()
+/// let style = tuinix::TerminalStyle::new()
 ///     .bold()
-///     .fg_color(TerminalColor::GREEN);
+///     .fg_color(tuinix::TerminalColor::GREEN);
 ///
 /// // Write styled text to the frame
-/// writeln!(frame, "{}This text is bold and green{}", style, TerminalStyle::RESET)?;
+/// writeln!(frame, "{}This text is bold and green{}", style, tuinix::TerminalStyle::RESET)?;
 ///
 /// // Create another style for highlighting
-/// let highlight = TerminalStyle::new()
-///     .bg_color(TerminalColor::YELLOW)
-///     .fg_color(TerminalColor::BLACK);
+/// let highlight = tuinix::TerminalStyle::new()
+///     .bg_color(tuinix::TerminalColor::YELLOW)
+///     .fg_color(tuinix::TerminalColor::BLACK);
 ///
-/// writeln!(frame, "{}Important information{}", highlight, TerminalStyle::RESET)?;
+/// writeln!(frame, "{}Important information{}", highlight, tuinix::TerminalStyle::RESET)?;
 /// # Ok::<(), std::fmt::Error>(())
 /// ```
 ///
@@ -44,20 +43,19 @@ use std::{
 ///
 /// ```
 /// use std::fmt::Write;
-/// use tuinix::{TerminalFrame, TerminalSize, TerminalStyle};
 ///
-/// let size = TerminalSize::rows_cols(24, 80);
-/// let mut frame: TerminalFrame = TerminalFrame::new(size);
+/// let size = tuinix::TerminalSize::rows_cols(24, 80);
+/// let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(size);
 ///
 /// // This will produce text that is ONLY underlined, not bold+underlined
-/// let bold = TerminalStyle::new().bold();
-/// let underline = TerminalStyle::new().underline();
+/// let bold = tuinix::TerminalStyle::new().bold();
+/// let underline = tuinix::TerminalStyle::new().underline();
 ///
 /// writeln!(frame, "{}This is bold.", bold)?;
 /// writeln!(frame, "{}This is only underlined (not bold).", underline)?;
 ///
 /// // To apply multiple styles, combine them in a single TerminalStyle instance
-/// let bold_and_underlined = TerminalStyle::new().bold().underline();
+/// let bold_and_underlined = tuinix::TerminalStyle::new().bold().underline();
 /// writeln!(frame, " {}This is both bold and underlined.", bold_and_underlined)?;
 /// # Ok::<(), std::fmt::Error>(())
 /// ```
@@ -115,11 +113,10 @@ impl TerminalStyle {
     /// # Examples
     ///
     /// ```
-    /// use tuinix::{TerminalColor, TerminalStyle};
     ///
-    /// let style = TerminalStyle::new()
+    /// let style = tuinix::TerminalStyle::new()
     ///     .bold()
-    ///     .fg_color(TerminalColor::GREEN);
+    ///     .fg_color(tuinix::TerminalColor::GREEN);
     /// ```
     pub const fn new() -> Self {
         Self::RESET

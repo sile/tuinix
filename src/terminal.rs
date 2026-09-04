@@ -38,15 +38,14 @@ static mut SIGWINCH_PIPE_FD: RawFd = 0;
 /// draw it to the screen, and handle input events with a timeout.
 ///
 /// ```no_run
-/// use tuinix::{Terminal, TerminalFrame, TerminalSize};
 /// use std::time::Duration;
 ///
 /// fn main() -> std::io::Result<()> {
-///     let mut terminal = Terminal::new()?;
+///     let mut terminal = tuinix::Terminal::new()?;
 ///     let size = terminal.size();
 ///
 ///     // Create and draw a frame
-///     let mut frame: TerminalFrame = TerminalFrame::new(size);
+///     let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(size);
 ///     // Add content to frame...
 ///     terminal.draw(frame)?;
 ///
@@ -71,16 +70,13 @@ static mut SIGWINCH_PIPE_FD: RawFd = 0;
 /// ```no_run
 /// use std::time::Duration;
 ///
-/// use mio::{Events, Interest, Poll, Token};
-/// use tuinix::{Terminal, TerminalFrame, try_nonblocking, try_uninterrupted};
-///
 /// fn main() -> std::io::Result<()> {
 ///     // Initialize terminal
-///     let mut terminal = Terminal::new()?;
+///     let mut terminal = tuinix::Terminal::new()?;
 ///
 ///     // Create mio Poll instance
-///     let mut poll = Poll::new()?;
-///     let mut events = Events::with_capacity(10);
+///     let mut poll = mio::Poll::new()?;
+///     let mut events = mio::Events::with_capacity(10);
 ///
 ///     // Get file descriptors and set to non-blocking mode
 ///     let stdin_fd = terminal.set_input_nonblocking()?;
@@ -89,34 +85,34 @@ static mut SIGWINCH_PIPE_FD: RawFd = 0;
 ///     // Register with mio poll
 ///     poll.registry().register(
 ///         &mut mio::unix::SourceFd(&stdin_fd),
-///         Token(0),
-///         Interest::READABLE
+///         mio::Token(0),
+///         mio::Interest::READABLE
 ///     )?;
 ///     poll.registry().register(
 ///         &mut mio::unix::SourceFd(&signal_fd),
-///         Token(1),
-///         Interest::READABLE
+///         mio::Token(1),
+///         mio::Interest::READABLE
 ///     )?;
 ///
 ///     // Event loop
 ///     loop {
 ///         // Wait for events with timeout
 ///         let timeout = Duration::from_millis(100);
-///         if try_uninterrupted(poll.poll(&mut events, Some(timeout)))?.is_none() {
+///         if tuinix::try_uninterrupted(poll.poll(&mut events, Some(timeout)))?.is_none() {
 ///             continue;
 ///         }
 ///
 ///         for event in events.iter() {
 ///             match event.token() {
-///                 Token(0) => {
+///                 mio::Token(0) => {
 ///                     // Handle input without blocking
-///                     while let Some(input) = try_nonblocking(terminal.read_input())? {
+///                     while let Some(input) = tuinix::try_nonblocking(terminal.read_input())? {
 ///                         // Process input event
 ///                     }
 ///                 },
-///                 Token(1) => {
+///                 mio::Token(1) => {
 ///                     // Handle terminal resize without blocking
-///                     while let Some(size) = try_nonblocking(terminal.wait_for_resize())? {
+///                     while let Some(size) = tuinix::try_nonblocking(terminal.wait_for_resize())? {
 ///                         // Terminal was resized, update UI
 ///                     }
 ///                 },
@@ -291,16 +287,15 @@ impl Terminal {
     /// # Examples
     ///
     /// ```no_run
-    /// use tuinix::{Terminal, TerminalEvent, TerminalInput};
     /// use std::time::Duration;
     ///
-    /// let mut terminal = Terminal::new()?;
+    /// let mut terminal = tuinix::Terminal::new()?;
     /// terminal.enable_mouse_input()?;
     ///
     /// loop {
     ///     if let Some(event) = terminal.poll_event(&[], &[], Some(Duration::from_millis(100)))? {
     ///         match event {
-    ///             TerminalEvent::Input(TerminalInput::Mouse(mouse)) => {
+    ///             tuinix::TerminalEvent::Input(tuinix::TerminalInput::Mouse(mouse)) => {
     ///                 println!("Mouse event: {:?} at ({}, {})",
     ///                          mouse.event, mouse.position.col, mouse.position.row);
     ///             }
@@ -595,12 +590,11 @@ impl Terminal {
     /// # Examples
     ///
     /// ```no_run
-    /// use tuinix::{Terminal, TerminalPosition};
     ///
-    /// let mut terminal = Terminal::new()?;
+    /// let mut terminal = tuinix::Terminal::new()?;
     ///
     /// // Show cursor at row 5, column 10
-    /// terminal.set_cursor(Some(TerminalPosition::row_col(5, 10)));
+    /// terminal.set_cursor(Some(tuinix::TerminalPosition::row_col(5, 10)));
     ///
     /// // Hide cursor
     /// terminal.set_cursor(None);
@@ -622,16 +616,15 @@ impl Terminal {
     ///
     /// ```no_run
     /// use std::fmt::Write;
-    /// use tuinix::{Terminal, TerminalPosition, TerminalFrame};
     ///
-    /// let mut terminal = Terminal::new()?;
-    /// let mut frame: TerminalFrame = TerminalFrame::new(terminal.size());
+    /// let mut terminal = tuinix::Terminal::new()?;
+    /// let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(terminal.size());
     ///
     /// // Write some text
     /// writeln!(frame, "Hello, terminal world!")?;
     ///
     /// // Display the cursor at the beginning of the next line
-    /// terminal.set_cursor(Some(TerminalPosition::row(1)));
+    /// terminal.set_cursor(Some(tuinix::TerminalPosition::row(1)));
     ///
     /// // Render the frame to the terminal
     /// terminal.draw(frame)?;
