@@ -6,30 +6,61 @@ use crate::{TerminalPosition, TerminalSize, TerminalStyle};
 ///
 /// `width` is the number of terminal columns the cell occupies. A stored cell must have
 /// a width of at least `1`; a width of `0` is reserved for zero-width (combining)
-/// characters, which are dropped by [`TerminalFrame::push_cell`].
+/// characters, which are rejected by [`TerminalChar::new`].
+///
+/// Cells are immutable: their fields are private and are read through the
+/// [`value`](Self::value), [`width`](Self::width) and [`style`](Self::style) accessors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TerminalChar {
     /// The character displayed by this cell.
-    pub value: char,
+    value: char,
 
     /// The number of terminal columns this cell occupies (`1` or more).
-    pub width: usize,
+    width: usize,
 
     /// The style applied to this cell.
-    pub style: TerminalStyle,
+    style: TerminalStyle,
 }
 
 impl TerminalChar {
     /// A blank cell (a single space with no styling).
-    pub const BLANK: Self = Self::new(' ', 1, TerminalStyle::new());
+    pub const BLANK: Self = Self {
+        value: ' ',
+        width: 1,
+        style: TerminalStyle::new(),
+    };
 
     /// Makes a new styled cell with the given width.
-    pub const fn new(value: char, width: usize, style: TerminalStyle) -> Self {
-        Self {
-            value,
-            width,
-            style,
+    ///
+    /// Returns `None` when the cell cannot be represented in a frame: if `value` is a
+    /// control character, or `width` is `0`. Control characters are written with the
+    /// dedicated methods ([`TerminalFrame::push_newline`], [`TerminalFrame::push_tab`]),
+    /// and a zero-width cell would occupy no column.
+    pub fn new(value: char, width: usize, style: TerminalStyle) -> Option<Self> {
+        if value.is_control() || width == 0 {
+            None
+        } else {
+            Some(Self {
+                value,
+                width,
+                style,
+            })
         }
+    }
+
+    /// The character displayed by this cell.
+    pub fn value(&self) -> char {
+        self.value
+    }
+
+    /// The number of terminal columns this cell occupies.
+    pub fn width(&self) -> usize {
+        self.width
+    }
+
+    /// The style applied to this cell.
+    pub fn style(&self) -> TerminalStyle {
+        self.style
     }
 }
 
@@ -42,11 +73,11 @@ impl TerminalChar {
 /// computes character widths, so the library stays free of any character-width
 /// dependency (such as `unicode-width`).
 ///
-/// Cells are written with [`push_char`](Self::push_char) / [`push_cell`](Self::push_cell)
-/// and advanced sequentially from an internal cursor. Use [`push_newline`](Self::push_newline)
-/// to move to the next line and [`push_tab`](Self::push_tab) to advance to a tab stop.
-/// A frame can be composed onto another with [`draw`](Self::draw), and its contents
-/// inspected with [`chars`](Self::chars).
+/// Cells are written with [`push_char`](Self::push_char) and advanced sequentially
+/// from an internal cursor. Use [`push_newline`](Self::push_newline) to move to the
+/// next line and [`push_tab`](Self::push_tab) to advance to a tab stop. A frame can be
+/// composed onto another with [`draw`](Self::draw), and its contents inspected with
+/// [`chars`](Self::chars).
 ///
 /// # Examples
 ///
@@ -57,13 +88,13 @@ impl TerminalChar {
 /// let mut frame = TerminalFrame::new(size);
 ///
 /// let bold = TerminalStyle::new().bold();
-/// frame.push_char('H', 1, bold);
-/// frame.push_char('i', 1, bold);
-/// frame.push_cell(TerminalChar::new('!', 1, bold));
+/// frame.push_char(TerminalChar::new('H', 1, bold).expect("valid cell"));
+/// frame.push_char(TerminalChar::new('i', 1, bold).expect("valid cell"));
+/// frame.push_char(TerminalChar::new('!', 1, bold).expect("valid cell"));
 /// frame.push_newline();
 ///
 /// // A full-width (CJK) character occupies two columns.
-/// frame.push_char('\u{3042}', 2, TerminalStyle::new());
+/// frame.push_char(TerminalChar::new('\u{3042}', 2, TerminalStyle::new()).expect("valid cell"));
 ///
 /// assert_eq!(frame.cursor().col, 2);
 /// ```
@@ -96,45 +127,24 @@ impl TerminalFrame {
 
     /// Writes a single styled cell at the current cursor and advances the cursor.
     ///
-    /// `width` is the number of terminal columns the character occupies: `2` for
-    /// full-width characters (e.g. CJK, emoji), `1` for normal characters. A width of
-    /// `0` is treated as a zero-width (combining) character and is silently dropped
-    /// (combining marks are not yet supported).
+    /// Returns `true` when the cell was stored, and `false` when it was clipped because
+    /// it did not fit within the frame: the cell would extend past the right edge of the
+    /// current row, or there was no row left beneath the cursor. Clipped cells are not
+    /// stored, but the cursor still advances by the cell's width, matching terminal
+    /// wrapping semantics.
     ///
-    /// `value` must be a printable character. Control characters (newline, tab, etc.)
-    /// are not cells: use [`push_newline`](Self::push_newline) and
-    /// [`push_tab`](Self::push_tab) for those. Passing a control character here is a
-    /// no-op (and panics in debug builds).
-    ///
-    /// Cells that do not fit within the frame are clipped: they are not stored, but the
-    /// cursor still advances by `width`, matching terminal wrapping semantics.
-    pub fn push_char(&mut self, value: char, width: usize, style: TerminalStyle) {
-        if width == 0 {
-            return;
+    /// The cell is expected to be valid: its width is at least `1` and its character is
+    /// not a control character. Use [`TerminalChar::new`] to construct one, which rejects
+    /// invalid cells.
+    pub fn push_char(&mut self, ch: TerminalChar) -> bool {
+        if self.tail.row < self.size.rows && self.tail.col + ch.width <= self.size.cols {
+            self.data.insert(self.tail, ch);
+            self.tail.col += ch.width;
+            true
+        } else {
+            self.tail.col += ch.width;
+            false
         }
-        if value.is_control() {
-            debug_assert!(
-                !value.is_control(),
-                "push_char accepts only printable characters (use push_newline / push_tab)"
-            );
-            return;
-        }
-        if self.tail.row < self.size.rows && self.tail.col + width <= self.size.cols {
-            self.data.insert(
-                self.tail,
-                TerminalChar {
-                    value,
-                    width,
-                    style,
-                },
-            );
-        }
-        self.tail.col += width;
-    }
-
-    /// Writes a prebuilt cell at the current cursor and advances the cursor.
-    pub fn push_cell(&mut self, cell: TerminalChar) {
-        self.push_char(cell.value, cell.width, cell.style);
     }
 
     /// Moves the cursor to the beginning of the next line.
@@ -255,6 +265,11 @@ mod tests {
         }
     }
 
+    /// Builds a valid cell for the tests.
+    fn cell(value: char, width: usize) -> TerminalChar {
+        TerminalChar::new(value, width, TerminalStyle::new()).expect("valid cell")
+    }
+
     /// Pushes a string of text onto the frame, handling newlines and per-character widths.
     fn push_text(frame: &mut TerminalFrame, text: &str) {
         for c in text.chars() {
@@ -263,7 +278,7 @@ mod tests {
                 _ => {
                     let width = char_width(c);
                     if width > 0 {
-                        frame.push_char(c, width, TerminalStyle::new());
+                        frame.push_char(cell(c, width));
                     }
                 }
             }
@@ -307,9 +322,9 @@ mod tests {
     fn cursor_advances_by_width() {
         let size = TerminalSize::rows_cols(2, 4);
         let mut frame = TerminalFrame::new(size);
-        frame.push_char('a', 1, TerminalStyle::new());
-        frame.push_char('b', 1, TerminalStyle::new());
-        frame.push_char('\u{3042}', 2, TerminalStyle::new());
+        frame.push_char(cell('a', 1));
+        frame.push_char(cell('b', 1));
+        frame.push_char(cell('\u{3042}', 2));
         assert_eq!(frame.cursor(), TerminalPosition::row_col(0, 4));
         frame.push_newline();
         assert_eq!(frame.cursor(), TerminalPosition::row_col(1, 0));
@@ -321,7 +336,7 @@ mod tests {
         let mut frame = TerminalFrame::new(size);
 
         // From column 1, advance to the next stop (8).
-        frame.push_char('a', 1, TerminalStyle::new());
+        frame.push_char(cell('a', 1));
         frame.push_tab(8);
         assert_eq!(frame.cursor(), TerminalPosition::row_col(0, 8));
 
@@ -330,7 +345,7 @@ mod tests {
         assert_eq!(frame.cursor(), TerminalPosition::row_col(0, 16));
 
         // A non-aligned column advances to the next stop.
-        frame.push_char('b', 1, TerminalStyle::new()); // col 17
+        frame.push_char(cell('b', 1)); // col 17
         frame.push_tab(8);
         assert_eq!(frame.cursor(), TerminalPosition::row_col(0, 24));
     }
@@ -339,8 +354,8 @@ mod tests {
     fn wide_char_continuation_is_blank_or_skipped() {
         let size = TerminalSize::rows_cols(1, 4);
         let mut frame = TerminalFrame::new(size);
-        frame.push_char('\u{3042}', 2, TerminalStyle::new());
-        frame.push_char('x', 1, TerminalStyle::new());
+        frame.push_char(cell('\u{3042}', 2));
+        frame.push_char(cell('x', 1));
 
         assert_eq!(
             frame
@@ -371,11 +386,11 @@ mod tests {
     fn clips_cells_at_right_edge() {
         let size = TerminalSize::rows_cols(1, 3);
         let mut frame = TerminalFrame::new(size);
-        frame.push_char('a', 1, TerminalStyle::new());
-        frame.push_char('b', 1, TerminalStyle::new());
-        frame.push_char('c', 1, TerminalStyle::new());
+        assert!(frame.push_char(cell('a', 1)));
+        assert!(frame.push_char(cell('b', 1)));
+        assert!(frame.push_char(cell('c', 1)));
         // The row is full; the next cell is clipped but the cursor still advances.
-        frame.push_char('d', 1, TerminalStyle::new());
+        assert!(!frame.push_char(cell('d', 1)));
 
         assert_eq!(frame.cursor(), TerminalPosition::row_col(0, 4));
         let stored: Vec<_> = frame
@@ -390,12 +405,12 @@ mod tests {
     fn draw_removes_partial_overlap_and_clips() {
         let size = TerminalSize::rows_cols(1, 4);
         let mut dest = TerminalFrame::new(size);
-        dest.push_char('\u{3042}', 2, TerminalStyle::new()); // wide char at col 0-1
-        dest.push_char('y', 1, TerminalStyle::new());
+        dest.push_char(cell('\u{3042}', 2)); // wide char at col 0-1
+        dest.push_char(cell('y', 1));
 
         // A one-cell source drawn over the continuation column of the wide char.
         let mut src = TerminalFrame::new(TerminalSize::rows_cols(1, 1));
-        src.push_char('x', 1, TerminalStyle::new());
+        src.push_char(cell('x', 1));
 
         // Draw 'x' over column 1, which is the continuation of the wide char.
         dest.draw(TerminalPosition::row_col(0, 1), &src);

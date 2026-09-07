@@ -620,7 +620,7 @@ impl Terminal {
     ///
     /// // Write some text
     /// for c in "Hello, terminal world!".chars() {
-    ///     frame.push_char(c, 1, tuinix::TerminalStyle::new());
+    ///     frame.push_char(tuinix::TerminalChar::new(c, 1, tuinix::TerminalStyle::new()).expect("valid cell"));
     /// }
     ///
     /// // Display the cursor at the beginning of the next line
@@ -651,12 +651,12 @@ impl Terminal {
             if skipped || last_row != position.row {
                 move_cursor(&mut self.output, position)?;
             }
-            if Some(c.style) != last_style {
-                write!(self.output, "{}", c.style)?;
+            if Some(c.style()) != last_style {
+                write!(self.output, "{}", c.style())?;
             }
-            write!(self.output, "{}", c.value)?;
+            write!(self.output, "{}", c.value())?;
 
-            last_style = Some(c.style);
+            last_style = Some(c.style());
             last_row = position.row;
             skipped = false;
         }

@@ -10,7 +10,9 @@ fn write_text(frame: &mut tuinix::TerminalFrame, text: &str, style: tuinix::Term
             '\n' => frame.push_newline(),
             '\t' => frame.push_tab(8),
             c if c.is_control() => {}
-            c => frame.push_char(c, 1, style),
+            c => {
+                frame.push_char(tuinix::TerminalChar::new(c, 1, style).expect("valid cell"));
+            }
         }
     }
 }

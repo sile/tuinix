@@ -8,9 +8,8 @@
 //!   match an independent `(position, size)` model, and `contains`
 //!   agrees with a cell-set model on random probe points.
 //! - The cursor of [`TerminalFrame`] after `push_char` / `push_newline`
-//!   matches a model: zero-width cells do not move the cursor, `\n`
-//!   resets the column, and other cells advance it by their width
-//!   regardless of clipping.
+//!   matches a model: a cell advances the cursor by its width, and `\n`
+//!   resets the column, regardless of clipping.
 
 use std::cell::Cell;
 use std::collections::BTreeSet;
@@ -320,9 +319,8 @@ fn sample_op(ctx: &mut noprop::TestCaseContext) -> Op {
     }
 }
 
-/// A cursor-position model for [`Op`]: a zero-width cell is dropped,
-/// `\n` resets the column, and any other cell advances the column by
-/// its width regardless of clipping.
+/// A cursor-position model for [`Op`]: a cell advances the column by
+/// its width, and `\n` resets the column, regardless of clipping.
 #[derive(Debug)]
 struct CursorModel {
     row: usize,
@@ -385,7 +383,12 @@ fn frame_push_cursor_matches_model() -> noprop::TestResult {
             model.apply(op, size);
             match op {
                 Op::Newline => frame.push_newline(),
-                Op::Cell(c, width) => frame.push_char(c, width, tuinix::TerminalStyle::new()),
+                Op::Cell(c, width) => {
+                    frame.push_char(
+                        tuinix::TerminalChar::new(c, width, tuinix::TerminalStyle::new())
+                            .expect("valid cell"),
+                    );
+                }
             }
         }
         assert_eq!(
