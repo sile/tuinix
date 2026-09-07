@@ -391,8 +391,7 @@ mod tests {
                         self.newline = true;
                     }
                     c => {
-                        let Some(width) = NonZeroUsize::new(c.width().unwrap_or_default())
-                        else {
+                        let Some(width) = NonZeroUsize::new(c.width().unwrap_or_default()) else {
                             self.zero_width = true;
                             continue;
                         };
