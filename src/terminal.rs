@@ -630,7 +630,7 @@ impl Terminal {
     /// terminal.draw(frame)?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn draw<W>(&mut self, frame: TerminalFrame<W>) -> std::io::Result<()> {
+    pub fn draw(&mut self, frame: TerminalFrame) -> std::io::Result<()> {
         let frame = frame.finish();
         self.hide_cursor()?;
 

@@ -10,7 +10,7 @@ A Rust library for building terminal user interface (TUI) applications on Unix s
 
 ## Overview
 
-`tuinix` provides a lightweight foundation for building terminal-based user interfaces with minimal dependencies (only `libc` is required). The library offers a clean API for:
+`tuinix` provides a lightweight foundation for building terminal-based user interfaces with minimal dependencies (only `libc` and `unicode-width` are required). The library offers a clean API for:
 
 - Managing terminal state (raw mode, alternate screen)
 - Capturing and processing keyboard input

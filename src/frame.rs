@@ -1,5 +1,7 @@
 use std::{collections::BTreeMap, num::NonZeroUsize};
 
+use unicode_width::UnicodeWidthChar;
+
 use crate::{TerminalPosition, TerminalSize, TerminalStyle};
 
 /// A frame buffer representing the terminal display state.
@@ -48,32 +50,23 @@ use crate::{TerminalPosition, TerminalSize, TerminalStyle};
 /// # Ok::<_, std::fmt::Error>(())
 /// ```
 #[derive(Debug, Default, Clone)]
-pub struct TerminalFrame<W = FixedCharWidthEstimator> {
+pub struct TerminalFrame {
     size: TerminalSize,
     data: BTreeMap<TerminalPosition, TerminalChar>,
     tail: TerminalPosition,
     current_style: TerminalStyle,
     escape_sequence: String,
-    char_width_estimator: W,
 }
 
-impl<W: Default> TerminalFrame<W> {
-    /// Makes a new frame with the given size and default character width estimator.
+impl TerminalFrame {
+    /// Makes a new frame with the given size.
     pub fn new(size: TerminalSize) -> Self {
-        Self::with_char_width_estimator(size, W::default())
-    }
-}
-
-impl<W> TerminalFrame<W> {
-    /// Makes a new frame with the given size and char width estimator.
-    pub fn with_char_width_estimator(size: TerminalSize, char_width_estimator: W) -> Self {
         Self {
             size,
             data: BTreeMap::new(),
             tail: TerminalPosition::ZERO,
             current_style: TerminalStyle::new(),
             escape_sequence: String::new(),
-            char_width_estimator,
         }
     }
 
@@ -128,7 +121,7 @@ impl<W> TerminalFrame<W> {
     /// main_frame.draw(tuinix::TerminalPosition::row_col(2, 10), &sub_frame);
     /// # Ok::<(), std::fmt::Error>(())
     /// ```
-    pub fn draw<X>(&mut self, position: TerminalPosition, frame: &TerminalFrame<X>) {
+    pub fn draw(&mut self, position: TerminalPosition, frame: &TerminalFrame) {
         for (src_pos, c) in frame.chars() {
             let target_pos = position + src_pos;
             if !self.size.contains(target_pos) {
@@ -191,19 +184,18 @@ impl<W> TerminalFrame<W> {
             })
     }
 
-    pub(crate) fn finish(self) -> TerminalFrame<FixedCharWidthEstimator> {
+    pub(crate) fn finish(self) -> TerminalFrame {
         TerminalFrame {
             size: self.size,
             data: self.data,
             tail: self.tail,
             current_style: self.current_style,
             escape_sequence: self.escape_sequence,
-            char_width_estimator: FixedCharWidthEstimator,
         }
     }
 }
 
-impl<W: EstimateCharWidth> std::fmt::Write for TerminalFrame<W> {
+impl std::fmt::Write for TerminalFrame {
     fn write_str(&mut self, s: &str) -> std::fmt::Result {
         for c in s.chars() {
             if !self.escape_sequence.is_empty() {
@@ -225,8 +217,9 @@ impl<W: EstimateCharWidth> std::fmt::Write for TerminalFrame<W> {
                 continue;
             }
 
-            let Some(width) = NonZeroUsize::new(self.char_width_estimator.estimate_char_width(c))
-            else {
+            // The width is resolved internally by the `unicode-width` crate;
+            // a zero-width character (e.g. a combining mark) is skipped.
+            let Some(width) = NonZeroUsize::new(c.width().unwrap_or_default()) else {
                 continue;
             };
 
@@ -247,52 +240,19 @@ impl<W: EstimateCharWidth> std::fmt::Write for TerminalFrame<W> {
     }
 }
 
-/// Trait for estimating the display width of characters in a terminal.
-///
-/// This trait provides a way to determine how much horizontal space a character
-/// will occupy when rendered in a terminal.
+/// The horizontal width of each written character is resolved internally by the
+/// `unicode-width` crate, so callers no longer need to supply a width estimator.
 ///
 /// # Limitations
 ///
-/// - Tab characters (`\t`): The width of a tab depends on the current cursor position
-///   and tab stop settings, not just the character itself. Since this trait only
-///   takes a single character as input without position context, it cannot
-///   accurately determine the visual width of tab characters.
-/// - Zero-width combining characters: Characters like accents and diacritical marks
-///   that modify previous characters (e.g., `é` can be represented as `e` followed
-///   by the combining acute accent `\u{0301}`) have no width on their own but change
-///   the appearance of preceding characters. The current interface cannot properly
-///   handle these because it examines each character in isolation without
-///   considering adjacent characters.
-pub trait EstimateCharWidth {
-    /// Estimates the display width of a character.
-    ///
-    /// Returns the number of columns the character will occupy in the terminal.
-    fn estimate_char_width(&self, c: char) -> usize;
-}
-
-/// A character width estimator that assumes most characters have a fixed width of 1 column.
-///
-/// This simple implementation of [`EstimateCharWidth`] assigns:
-/// - Width of 0 to all control characters (they don't take visual space)
-/// - Width of 1 to all other characters
-///
-/// # Limitations
-///
-/// This estimator doesn't correctly handle:
-/// - Wide characters like CJK (Chinese, Japanese, Korean) that take 2 columns
-/// - Emojis and other complex Unicode characters
-///
-/// For better support of these characters, consider implementing a more
-/// sophisticated width estimator based on Unicode width calculation libraries.
-#[derive(Debug, Default, Clone)]
-pub struct FixedCharWidthEstimator;
-
-impl EstimateCharWidth for FixedCharWidthEstimator {
-    fn estimate_char_width(&self, c: char) -> usize {
-        if c.is_control() { 0 } else { 1 }
-    }
-}
+/// - Tab characters (`\t`): The width of a tab depends on the current cursor
+///   position and tab stop settings, not just the character itself. Since width
+///   is resolved per character without position context, tab characters are
+///   treated as zero-width and therefore skipped.
+/// - Multi-code-point graphemes (combining marks, ZWJ emoji sequences): Width is
+///   still resolved one `char` at a time, so a grapheme made of several code
+///   points is measured per code point. A standalone combining mark has width 0
+///   and is skipped, but a ZWJ emoji sequence is not collapsed into a single cell.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TerminalChar {
@@ -316,14 +276,6 @@ mod tests {
     use unicode_width::UnicodeWidthChar;
 
     use super::*;
-
-    struct UnicodeCharWidthEstimator;
-
-    impl EstimateCharWidth for UnicodeCharWidthEstimator {
-        fn estimate_char_width(&self, c: char) -> usize {
-            c.width().unwrap_or_default()
-        }
-    }
 
     const WIDE_CHARS: &[char] = &[
         'あ', 'い', 'う', 'え', 'お', '界', '日', '本', '漢', '字', '語',
@@ -418,7 +370,7 @@ mod tests {
             }
         }
 
-        fn write(&mut self, s: &str, size: TerminalSize, estimator: &impl EstimateCharWidth) {
+        fn write(&mut self, s: &str, size: TerminalSize) {
             for c in s.chars() {
                 if !self.escape_sequence.is_empty() {
                     self.escape_sequence.push(c);
@@ -439,7 +391,7 @@ mod tests {
                         self.newline = true;
                     }
                     c => {
-                        let Some(width) = NonZeroUsize::new(estimator.estimate_char_width(c))
+                        let Some(width) = NonZeroUsize::new(c.width().unwrap_or_default())
                         else {
                             self.zero_width = true;
                             continue;
@@ -491,9 +443,8 @@ mod tests {
             let size = sample_pbt_size(ctx);
             let text = sample_pbt_text(ctx);
             let mut model = FrameModel::new();
-            model.write(&text, size, &UnicodeCharWidthEstimator);
-            let mut frame =
-                TerminalFrame::with_char_width_estimator(size, UnicodeCharWidthEstimator);
+            model.write(&text, size);
+            let mut frame = TerminalFrame::new(size);
             frame.write_str(&text).expect("write succeeds");
             assert_eq!(frame.cursor(), model.tail, "cursor mismatch for {text:?}");
             let actual: BTreeMap<_, _> = frame
@@ -574,13 +525,12 @@ mod tests {
                     ),
                 )
             };
-            let mut dest =
-                TerminalFrame::with_char_width_estimator(size, UnicodeCharWidthEstimator);
+            let mut dest = TerminalFrame::new(size);
             dest.write_str(&dest_text).expect("write succeeds");
             let mut model = FrameModel::new();
-            model.write(&dest_text, size, &UnicodeCharWidthEstimator);
+            model.write(&dest_text, size);
             let mut expected = model.data;
-            let mut src = TerminalFrame::with_char_width_estimator(size, UnicodeCharWidthEstimator);
+            let mut src = TerminalFrame::new(size);
             src.write_str(&src_text).expect("write succeeds");
             let mut removals = 0usize;
             let mut skipped = 0usize;
@@ -634,7 +584,7 @@ mod tests {
     #[test]
     fn unicode_char_width() {
         let size = TerminalSize::rows_cols(10, 20);
-        let mut frame = TerminalFrame::with_char_width_estimator(size, UnicodeCharWidthEstimator);
+        let mut frame = TerminalFrame::new(size);
 
         // Write Japanese characters "おはよう" (good morning)
         write!(frame, "おはよう").expect("write succeeds");

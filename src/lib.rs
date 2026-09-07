@@ -1,7 +1,7 @@
 //! A library for building terminal user interface (TUI) applications on Unix systems with minimum dependencies.
 //!
 //! `tuinix` provides a lightweight foundation for building terminal-based user interfaces with minimal
-//! dependencies (only `libc` is required). The library offers a clean API for:
+//! dependencies (`libc` and `unicode-width` only). The library offers a clean API for:
 //!
 //! - Managing terminal state (raw mode, alternate screen)
 //! - Capturing and processing keyboard input
@@ -88,7 +88,7 @@ mod input;
 mod style;
 mod terminal;
 
-pub use frame::{EstimateCharWidth, FixedCharWidthEstimator, TerminalFrame};
+pub use frame::TerminalFrame;
 pub use geometry::{TerminalPosition, TerminalRegion, TerminalSize};
 pub use input::{KeyCode, KeyInput, MouseEvent, MouseInput, TerminalInput};
 pub use style::{TerminalColor, TerminalStyle};
