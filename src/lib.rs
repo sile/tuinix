@@ -16,7 +16,7 @@
 //! drawing styled text, processing keyboard events, and handling terminal resizing.
 //!
 //! ```no_run
-//! use std::{fmt::Write, time::Duration};
+//! use std::time::Duration;
 //!
 //! fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     // Initialize terminal
@@ -28,13 +28,19 @@
 //!     // Add styled content to the frame
 //!     let title_style = tuinix::TerminalStyle::new().bold().fg_color(tuinix::TerminalColor::GREEN);
 //!
-//!     writeln!(
-//!         frame,
-//!         "{}Welcome to tuinix!{}",
-//!         title_style,
-//!         tuinix::TerminalStyle::RESET
-//!     )?;
-//!     writeln!(frame, "\nPress any key ('q' to quit)")?;
+//!     fn write_text(frame: &mut tuinix::TerminalFrame, text: &str, style: tuinix::TerminalStyle) {
+//!         for c in text.chars() {
+//!             match c {
+//!                 '\n' => frame.push_newline(),
+//!                 '\t' => frame.push_tab(8),
+//!                 c if c.is_control() => {}
+//!                 c => frame.push_char(c, 1, style),
+//!             }
+//!         }
+//!     }
+//!
+//!     write_text(&mut frame, "Welcome to tuinix!", title_style);
+//!     write_text(&mut frame, "\nPress any key ('q' to quit)", tuinix::TerminalStyle::new());
 //!
 //!     // Draw the frame to the terminal
 //!     terminal.draw(frame)?;
@@ -54,15 +60,15 @@
 //!
 //!                 // Display the input
 //!                 let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(terminal.size());
-//!                 writeln!(frame, "Key pressed: {:?}", input)?;
-//!                 writeln!(frame, "\nPress any key ('q' to quit)")?;
+//!                 write_text(&mut frame, &format!("Key pressed: {:?}", input), tuinix::TerminalStyle::new());
+//!                 write_text(&mut frame, "\nPress any key ('q' to quit)", tuinix::TerminalStyle::new());
 //!                 terminal.draw(frame)?;
 //!             }
 //!             Some(tuinix::TerminalEvent::Resize(size)) => {
 //!                 // Terminal was resized, update UI if needed
 //!                 let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(size);
-//!                 writeln!(frame, "Terminal resized to {}x{}", size.cols, size.rows)?;
-//!                 writeln!(frame, "\nPress any key ('q' to quit)")?;
+//!                 write_text(&mut frame, &format!("Terminal resized to {}x{}", size.cols, size.rows), tuinix::TerminalStyle::new());
+//!                 write_text(&mut frame, "\nPress any key ('q' to quit)", tuinix::TerminalStyle::new());
 //!                 terminal.draw(frame)?;
 //!             }
 //!             Some(tuinix::TerminalEvent::FdReady { .. }) => unreachable!(),
@@ -88,7 +94,7 @@ mod input;
 mod style;
 mod terminal;
 
-pub use frame::{EstimateCharWidth, FixedCharWidthEstimator, TerminalFrame};
+pub use frame::{TerminalChar, TerminalFrame};
 pub use geometry::{TerminalPosition, TerminalRegion, TerminalSize};
 pub use input::{KeyCode, KeyInput, MouseEvent, MouseInput, TerminalInput};
 pub use style::{TerminalColor, TerminalStyle};

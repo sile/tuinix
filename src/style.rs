@@ -12,8 +12,6 @@ use std::{
 /// # Examples
 ///
 /// ```
-/// use std::fmt::Write;
-///
 /// // Create a basic terminal frame
 /// let size = tuinix::TerminalSize::rows_cols(10, 40);
 /// let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(size);
@@ -24,15 +22,18 @@ use std::{
 ///     .fg_color(tuinix::TerminalColor::GREEN);
 ///
 /// // Write styled text to the frame
-/// writeln!(frame, "{}This text is bold and green{}", style, tuinix::TerminalStyle::RESET)?;
+/// for c in "This text is bold and green".chars() {
+///     frame.push_char(c, 1, style);
+/// }
 ///
 /// // Create another style for highlighting
 /// let highlight = tuinix::TerminalStyle::new()
 ///     .bg_color(tuinix::TerminalColor::YELLOW)
 ///     .fg_color(tuinix::TerminalColor::BLACK);
 ///
-/// writeln!(frame, "{}Important information{}", highlight, tuinix::TerminalStyle::RESET)?;
-/// # Ok::<(), std::fmt::Error>(())
+/// for c in "Important information".chars() {
+///     frame.push_char(c, 1, highlight);
+/// }
 /// ```
 ///
 /// # Style Application
@@ -42,8 +43,6 @@ use std::{
 /// in text that is both bold and underlined - only the underline will be applied.
 ///
 /// ```
-/// use std::fmt::Write;
-///
 /// let size = tuinix::TerminalSize::rows_cols(24, 80);
 /// let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(size);
 ///
@@ -51,13 +50,18 @@ use std::{
 /// let bold = tuinix::TerminalStyle::new().bold();
 /// let underline = tuinix::TerminalStyle::new().underline();
 ///
-/// writeln!(frame, "{}This is bold.", bold)?;
-/// writeln!(frame, "{}This is only underlined (not bold).", underline)?;
+/// for c in "This is bold.".chars() {
+///     frame.push_char(c, 1, bold);
+/// }
+/// for c in "This is only underlined (not bold).".chars() {
+///     frame.push_char(c, 1, underline);
+/// }
 ///
 /// // To apply multiple styles, combine them in a single TerminalStyle instance
 /// let bold_and_underlined = tuinix::TerminalStyle::new().bold().underline();
-/// writeln!(frame, " {}This is both bold and underlined.", bold_and_underlined)?;
-/// # Ok::<(), std::fmt::Error>(())
+/// for c in "This is both bold and underlined.".chars() {
+///     frame.push_char(c, 1, bold_and_underlined);
+/// }
 /// ```
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TerminalStyle {

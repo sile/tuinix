@@ -1,4 +1,15 @@
-use std::{fmt::Write, time::Duration};
+use std::time::Duration;
+
+fn write_text(frame: &mut tuinix::TerminalFrame, text: &str, style: tuinix::TerminalStyle) {
+    for c in text.chars() {
+        match c {
+            '\n' => frame.push_newline(),
+            '\t' => frame.push_tab(8),
+            c if c.is_control() => {}
+            c => frame.push_char(c, 1, style),
+        }
+    }
+}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize terminal
@@ -12,13 +23,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .bold()
         .fg_color(tuinix::TerminalColor::GREEN);
 
-    writeln!(
-        frame,
-        "{}Welcome to tuinix!{}",
-        title_style,
-        tuinix::TerminalStyle::RESET
-    )?;
-    writeln!(frame, "\nPress any key ('q' to quit)")?;
+    write_text(&mut frame, "Welcome to tuinix!\n", title_style);
+    write_text(
+        &mut frame,
+        "\nPress any key ('q' to quit)\n",
+        tuinix::TerminalStyle::new(),
+    );
 
     // Draw the frame to the terminal
     terminal.draw(frame)?;
@@ -38,15 +48,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 // Display the input
                 let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(terminal.size());
-                writeln!(frame, "Key pressed: {input:?}")?;
-                writeln!(frame, "\nPress any key ('q' to quit)")?;
+                write_text(
+                    &mut frame,
+                    &format!("Key pressed: {:?}\n", input),
+                    tuinix::TerminalStyle::new(),
+                );
+                write_text(
+                    &mut frame,
+                    "\nPress any key ('q' to quit)\n",
+                    tuinix::TerminalStyle::new(),
+                );
                 terminal.draw(frame)?;
             }
             Some(tuinix::TerminalEvent::Resize(size)) => {
                 // Terminal was resized, update UI if needed
                 let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(size);
-                writeln!(frame, "Terminal resized to {}x{}", size.cols, size.rows)?;
-                writeln!(frame, "\nPress any key ('q' to quit)")?;
+                write_text(
+                    &mut frame,
+                    &format!("Terminal resized to {}x{}\n", size.cols, size.rows),
+                    tuinix::TerminalStyle::new(),
+                );
+                write_text(
+                    &mut frame,
+                    "\nPress any key ('q' to quit)\n",
+                    tuinix::TerminalStyle::new(),
+                );
                 terminal.draw(frame)?;
             }
             Some(tuinix::TerminalEvent::FdReady { .. }) => unreachable!(),
