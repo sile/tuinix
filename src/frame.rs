@@ -139,10 +139,6 @@ impl TerminalFrame {
     /// edge of the current row, or there was no row left beneath the cursor. Clipped
     /// characters are not stored, but the cursor still advances by the character's width,
     /// so a caller that wants to wrap the line does so itself.
-    ///
-    /// The character is expected to be valid: its width is at least `1` and its glyph is
-    /// not a control character. Use [`TerminalChar::new()`] to construct one, which rejects
-    /// invalid characters.
     pub fn push_char(&mut self, ch: TerminalChar) -> bool {
         if self.tail.row < self.size.rows && self.tail.col + ch.width <= self.size.cols {
             self.data.insert(self.tail, ch);
@@ -175,12 +171,9 @@ impl TerminalFrame {
     ///
     /// # Panics
     ///
-    /// Panics in debug builds if `tab_width` is `0`.
+    /// Panics if `tab_width` is `0`.
     pub fn push_tab(&mut self, tab_width: usize) {
-        debug_assert!(tab_width > 0, "tab_width must be greater than zero");
-        if tab_width == 0 {
-            return;
-        }
+        assert!(tab_width > 0, "tab_width must be greater than zero");
         let col = self.tail.col;
         // Distance from `col` to the next tab stop. When `col` is already sitting on a
         // stop this is 0, so the `if` below moves to the *following* stop instead: a tab
