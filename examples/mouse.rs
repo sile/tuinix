@@ -1,4 +1,45 @@
-use std::{fmt::Write, time::Duration};
+use std::time::Duration;
+
+// NOTE: This is an ASCII-oriented demo helper: every character is assigned a width of 1.
+// Non-ASCII characters (for example CJK or emoji) would need the caller to supply their
+// actual width, because TerminalFrame does not compute character widths itself.
+fn write_text(frame: &mut tuinix::TerminalFrame, text: &str, style: tuinix::TerminalStyle) {
+    for c in text.chars() {
+        match c {
+            '\n' => frame.push_newline(),
+            '\t' => frame.push_tab(8),
+            c if c.is_control() => {}
+            c => {
+                frame.push_char(tuinix::TerminalChar::new(c, 1, style).expect("valid cell"));
+            }
+        }
+    }
+}
+
+fn draw_header(
+    frame: &mut tuinix::TerminalFrame,
+    title_style: tuinix::TerminalStyle,
+    info_style: tuinix::TerminalStyle,
+) {
+    write_text(frame, "Mouse Input Demo\n", title_style);
+    write_text(frame, "\nInstructions:\n", info_style);
+    write_text(
+        frame,
+        "• Click anywhere to see mouse events\n",
+        tuinix::TerminalStyle::new(),
+    );
+    write_text(
+        frame,
+        "• Try left, right, and middle mouse buttons\n",
+        tuinix::TerminalStyle::new(),
+    );
+    write_text(
+        frame,
+        "• Try scrolling with the mouse wheel\n",
+        tuinix::TerminalStyle::new(),
+    );
+    write_text(frame, "• Press 'q' to quit\n", tuinix::TerminalStyle::new());
+}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize terminal
@@ -14,28 +55,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let title_style = tuinix::TerminalStyle::new().bold();
     let info_style = tuinix::TerminalStyle::new().underline();
 
-    writeln!(
-        frame,
-        "{}Mouse Input Demo{}",
-        title_style,
-        tuinix::TerminalStyle::RESET
-    )?;
-    writeln!(
-        frame,
-        "\n{}Instructions:{}",
-        info_style,
-        tuinix::TerminalStyle::RESET
-    )?;
-    writeln!(frame, "• Click anywhere to see mouse events")?;
-    writeln!(frame, "• Try left, right, and middle mouse buttons")?;
-    writeln!(frame, "• Try scrolling with the mouse wheel")?;
-    writeln!(frame, "• Press 'q' to quit")?;
-    writeln!(
-        frame,
-        "\n{}Last mouse event: None{}",
-        info_style,
-        tuinix::TerminalStyle::RESET
-    )?;
+    draw_header(&mut frame, title_style, info_style);
+    write_text(&mut frame, "\nLast mouse event: None\n", info_style);
 
     // Draw the initial frame to the terminal
     terminal.draw(frame)?;
@@ -54,68 +75,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         // Display the key input
                         let mut frame: tuinix::TerminalFrame =
                             tuinix::TerminalFrame::new(terminal.size());
-                        writeln!(
-                            frame,
-                            "{}Mouse Input Demo{}",
-                            title_style,
-                            tuinix::TerminalStyle::RESET
-                        )?;
-                        writeln!(
-                            frame,
-                            "\n{}Instructions:{}",
+                        draw_header(&mut frame, title_style, info_style);
+                        write_text(
+                            &mut frame,
+                            &format!("\nLast event: Key pressed: {:?}\n", key_input),
                             info_style,
-                            tuinix::TerminalStyle::RESET
-                        )?;
-                        writeln!(frame, "• Click anywhere to see mouse events")?;
-                        writeln!(frame, "• Try left, right, and middle mouse buttons")?;
-                        writeln!(frame, "• Try scrolling with the mouse wheel")?;
-                        writeln!(frame, "• Press 'q' to quit")?;
-                        writeln!(
-                            frame,
-                            "\n{}Last event: Key pressed: {:?}{}",
-                            info_style,
-                            key_input,
-                            tuinix::TerminalStyle::RESET
-                        )?;
+                        );
                         terminal.draw(frame)?;
                     }
                     tuinix::TerminalInput::Mouse(mouse_input) => {
                         // Display the mouse input with detailed information
                         let mut frame: tuinix::TerminalFrame =
                             tuinix::TerminalFrame::new(terminal.size());
-                        writeln!(
-                            frame,
-                            "{}Mouse Input Demo{}",
-                            title_style,
-                            tuinix::TerminalStyle::RESET
-                        )?;
-                        writeln!(
-                            frame,
-                            "\n{}Instructions:{}",
-                            info_style,
-                            tuinix::TerminalStyle::RESET
-                        )?;
-                        writeln!(frame, "• Click anywhere to see mouse events")?;
-                        writeln!(frame, "• Try left, right, and middle mouse buttons")?;
-                        writeln!(frame, "• Try scrolling with the mouse wheel")?;
-                        writeln!(frame, "• Press 'q' to quit")?;
+                        draw_header(&mut frame, title_style, info_style);
 
                         // Format mouse event details
                         let event_style = tuinix::TerminalStyle::new()
                             .bold()
                             .fg_color(tuinix::TerminalColor::GREEN);
-                        writeln!(
-                            frame,
-                            "\n{}Mouse Event Details:{}",
-                            event_style,
-                            tuinix::TerminalStyle::RESET
-                        )?;
-                        writeln!(frame, "  Event: {:?}", mouse_input.event)?;
-                        writeln!(
-                            frame,
-                            "  Position: column {}, row {}",
-                            mouse_input.position.col, mouse_input.position.row
-                        )?;
+                        write_text(&mut frame, "\nMouse Event Details:\n", event_style);
+                        write_text(
+                            &mut frame,
+                            &format!("  Event: {:?}\n", mouse_input.event),
+                            tuinix::TerminalStyle::new(),
+                        );
+                        write_text(
+                            &mut frame,
+                            &format!(
+                                "  Position: column {}, row {}\n",
+                                mouse_input.position.col, mouse_input.position.row
+                            ),
+                            tuinix::TerminalStyle::new(),
+                        );
 
                         // Show modifiers if any are pressed
                         let mut modifiers = Vec::new();
@@ -130,34 +121,66 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
 
                         if !modifiers.is_empty() {
-                            writeln!(frame, "  Modifiers: {}", modifiers.join(" + "))?;
+                            write_text(
+                                &mut frame,
+                                &format!("  Modifiers: {}\n", modifiers.join(" + ")),
+                                tuinix::TerminalStyle::new(),
+                            );
                         } else {
-                            writeln!(frame, "  Modifiers: None")?;
+                            write_text(
+                                &mut frame,
+                                "  Modifiers: None\n",
+                                tuinix::TerminalStyle::new(),
+                            );
                         }
 
                         // Add event-specific information
                         match mouse_input.event {
-                            tuinix::MouseEvent::LeftPress => {
-                                writeln!(frame, "  → Left button pressed")?
-                            }
-                            tuinix::MouseEvent::LeftRelease => {
-                                writeln!(frame, "  → Left button released")?
-                            }
-                            tuinix::MouseEvent::RightPress => {
-                                writeln!(frame, "  → Right button pressed")?
-                            }
-                            tuinix::MouseEvent::RightRelease => {
-                                writeln!(frame, "  → Right button released")?
-                            }
-                            tuinix::MouseEvent::MiddlePress => {
-                                writeln!(frame, "  → Middle button pressed")?
-                            }
-                            tuinix::MouseEvent::MiddleRelease => {
-                                writeln!(frame, "  → Middle button released")?
-                            }
-                            tuinix::MouseEvent::Drag => writeln!(frame, "  → Mouse dragged")?,
-                            tuinix::MouseEvent::ScrollUp => writeln!(frame, "  → Scrolled up")?,
-                            tuinix::MouseEvent::ScrollDown => writeln!(frame, "  → Scrolled down")?,
+                            tuinix::MouseEvent::LeftPress => write_text(
+                                &mut frame,
+                                "  → Left button pressed\n",
+                                tuinix::TerminalStyle::new(),
+                            ),
+                            tuinix::MouseEvent::LeftRelease => write_text(
+                                &mut frame,
+                                "  → Left button released\n",
+                                tuinix::TerminalStyle::new(),
+                            ),
+                            tuinix::MouseEvent::RightPress => write_text(
+                                &mut frame,
+                                "  → Right button pressed\n",
+                                tuinix::TerminalStyle::new(),
+                            ),
+                            tuinix::MouseEvent::RightRelease => write_text(
+                                &mut frame,
+                                "  → Right button released\n",
+                                tuinix::TerminalStyle::new(),
+                            ),
+                            tuinix::MouseEvent::MiddlePress => write_text(
+                                &mut frame,
+                                "  → Middle button pressed\n",
+                                tuinix::TerminalStyle::new(),
+                            ),
+                            tuinix::MouseEvent::MiddleRelease => write_text(
+                                &mut frame,
+                                "  → Middle button released\n",
+                                tuinix::TerminalStyle::new(),
+                            ),
+                            tuinix::MouseEvent::Drag => write_text(
+                                &mut frame,
+                                "  → Mouse dragged\n",
+                                tuinix::TerminalStyle::new(),
+                            ),
+                            tuinix::MouseEvent::ScrollUp => write_text(
+                                &mut frame,
+                                "  → Scrolled up\n",
+                                tuinix::TerminalStyle::new(),
+                            ),
+                            tuinix::MouseEvent::ScrollDown => write_text(
+                                &mut frame,
+                                "  → Scrolled down\n",
+                                tuinix::TerminalStyle::new(),
+                            ),
                         }
 
                         terminal.draw(frame)?;
@@ -167,30 +190,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Some(tuinix::TerminalEvent::Resize(size)) => {
                 // Terminal was resized, update UI
                 let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(size);
-                writeln!(
-                    frame,
-                    "{}Mouse Input Demo{}",
-                    title_style,
-                    tuinix::TerminalStyle::RESET
-                )?;
-                writeln!(
-                    frame,
-                    "\n{}Instructions:{}",
+                draw_header(&mut frame, title_style, info_style);
+                write_text(
+                    &mut frame,
+                    &format!("\nTerminal resized to {}x{}\n", size.cols, size.rows),
                     info_style,
-                    tuinix::TerminalStyle::RESET
-                )?;
-                writeln!(frame, "• Click anywhere to see mouse events")?;
-                writeln!(frame, "• Try left, right, and middle mouse buttons")?;
-                writeln!(frame, "• Try scrolling with the mouse wheel")?;
-                writeln!(frame, "• Press 'q' to quit")?;
-                writeln!(
-                    frame,
-                    "\n{}Terminal resized to {}x{}{}",
-                    info_style,
-                    size.cols,
-                    size.rows,
-                    tuinix::TerminalStyle::RESET
-                )?;
+                );
                 terminal.draw(frame)?;
             }
             Some(tuinix::TerminalEvent::FdReady { .. }) => unreachable!(),

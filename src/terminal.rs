@@ -615,13 +615,13 @@ impl Terminal {
     /// # Examples
     ///
     /// ```no_run
-    /// use std::fmt::Write;
-    ///
     /// let mut terminal = tuinix::Terminal::new()?;
     /// let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(terminal.size());
     ///
     /// // Write some text
-    /// writeln!(frame, "Hello, terminal world!")?;
+    /// for c in "Hello, terminal world!".chars() {
+    ///     frame.push_char(tuinix::TerminalChar::new(c, 1, tuinix::TerminalStyle::new()).expect("valid cell"));
+    /// }
     ///
     /// // Display the cursor at the beginning of the next line
     /// terminal.set_cursor(Some(tuinix::TerminalPosition::row(1)));
@@ -630,8 +630,7 @@ impl Terminal {
     /// terminal.draw(frame)?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn draw<W>(&mut self, frame: TerminalFrame<W>) -> std::io::Result<()> {
-        let frame = frame.finish();
+    pub fn draw(&mut self, frame: TerminalFrame) -> std::io::Result<()> {
         self.hide_cursor()?;
 
         let move_cursor = |output: &mut BufWriter<_>, position: TerminalPosition| {
@@ -652,12 +651,12 @@ impl Terminal {
             if skipped || last_row != position.row {
                 move_cursor(&mut self.output, position)?;
             }
-            if Some(c.style) != last_style {
-                write!(self.output, "{}", c.style)?;
+            if Some(c.style()) != last_style {
+                write!(self.output, "{}", c.style())?;
             }
-            write!(self.output, "{}", c.value)?;
+            write!(self.output, "{}", c.value())?;
 
-            last_style = Some(c.style);
+            last_style = Some(c.style());
             last_row = position.row;
             skipped = false;
         }
