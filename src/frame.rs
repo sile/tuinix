@@ -4,12 +4,12 @@ use crate::{TerminalPosition, TerminalSize, TerminalStyle};
 
 /// A single styled character in a [`TerminalFrame`].
 ///
-/// The number of grid columns a character occupies, its [`width`](Self::width), is
+/// The number of grid columns a character occupies, its [`width()`](Self::width), is
 /// always `1` or more. A character wider than one column spans several adjacent
 /// columns; the frame stores it only at its starting column.
 ///
 /// Zero-width (combining) characters are not supported, and neither are control
-/// characters; [`TerminalChar::new`] rejects both.
+/// characters; [`TerminalChar::new()`] rejects both.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TerminalChar {
     /// The character itself.
@@ -25,8 +25,8 @@ pub struct TerminalChar {
 impl TerminalChar {
     /// A blank character (a single space with no styling), used for unwritten positions.
     ///
-    /// This is the sentinel returned for unwritten positions by [`TerminalFrame::chars`].
-    /// Pushing it is the same as writing a plain space, so [`TerminalFrame::push_char`] does
+    /// This is the sentinel returned for unwritten positions by [`TerminalFrame::chars()`].
+    /// Pushing it is the same as writing a plain space, so [`TerminalFrame::push_char()`] does
     /// not treat it specially.
     pub const BLANK: Self = Self {
         value: ' ',
@@ -38,7 +38,7 @@ impl TerminalChar {
     ///
     /// Returns `None` when the character cannot be represented in a frame: if `value` is a
     /// control character, or `width` is `0`. Control characters are written with the
-    /// dedicated methods ([`TerminalFrame::push_newline`], [`TerminalFrame::push_tab`]),
+    /// dedicated methods ([`TerminalFrame::push_newline()`], [`TerminalFrame::push_tab()`]),
     /// and a zero-width character would occupy no column.
     pub const fn new(value: char, width: usize, style: TerminalStyle) -> Option<Self> {
         if value.is_control() || width == 0 {
@@ -71,7 +71,7 @@ impl TerminalChar {
     ///
     /// A blank character is a single space with no styling, equal to
     /// [`TerminalChar::BLANK`]. Use this to filter out unwritten positions when
-    /// iterating with [`TerminalFrame::chars`].
+    /// iterating with [`TerminalFrame::chars()`].
     pub fn is_blank(self) -> bool {
         self == Self::BLANK
     }
@@ -79,19 +79,14 @@ impl TerminalChar {
 
 /// A frame buffer representing the terminal display state.
 ///
-/// [`TerminalFrame`] is a concrete, width-agnostic buffer of styled characters. Each
-/// character stores the glyph, the number of terminal columns it occupies, and the
-/// style.
+/// [`TerminalFrame`] is a buffer of styled characters. Each character stores the
+/// glyph, the number of terminal columns it occupies, and the style.
 ///
-/// The caller supplies the correct width for each character: the frame itself never
-/// computes character widths, so the library stays free of any character-width
-/// dependency (such as `unicode-width`).
-///
-/// Characters are written with [`push_char`](Self::push_char) and advanced sequentially
-/// from an internal cursor. Use [`push_newline`](Self::push_newline) to move to the
-/// next line and [`push_tab`](Self::push_tab) to advance to a tab stop. A frame can be
-/// composed onto another with [`draw`](Self::draw), and its contents inspected with
-/// [`chars`](Self::chars).
+/// Characters are written with [`push_char()`](Self::push_char) and advanced sequentially
+/// from an internal cursor. Use [`push_newline()`](Self::push_newline) to move to the
+/// next line and [`push_tab()`](Self::push_tab) to advance to a tab stop. A frame can be
+/// composed onto another with [`draw()`](Self::draw), and its contents inspected with
+/// [`chars()`](Self::chars).
 ///
 /// # Examples
 ///
@@ -148,7 +143,7 @@ impl TerminalFrame {
     /// so a caller that wants to wrap the line does so itself.
     ///
     /// The character is expected to be valid: its width is at least `1` and its glyph is
-    /// not a control character. Use [`TerminalChar::new`] to construct one, which rejects
+    /// not a control character. Use [`TerminalChar::new()`] to construct one, which rejects
     /// invalid characters.
     pub fn push_char(&mut self, ch: TerminalChar) -> bool {
         if self.tail.row < self.size.rows && self.tail.col + ch.width <= self.size.cols {
@@ -174,11 +169,11 @@ impl TerminalFrame {
     ///
     /// Tab stops are placed every `tab_width` columns, starting at column `0`. This only
     /// moves the cursor: the columns that are skipped are left blank and need not be
-    /// written explicitly (as with [`push_newline`](Self::push_newline), existing content
+    /// written explicitly (as with [`push_newline()`](Self::push_newline), existing content
     /// is neither cleared nor shifted).
     ///
-    /// As with [`push_char`](Self::push_char), the cursor may be advanced past the right
-    /// edge of the frame; use [`push_newline`](Self::push_newline) to wrap.
+    /// As with [`push_char()`](Self::push_char), the cursor may be advanced past the right
+    /// edge of the frame; use [`push_newline()`](Self::push_newline) to wrap.
     ///
     /// # Panics
     ///
@@ -246,7 +241,7 @@ impl TerminalFrame {
     /// column; the continuation columns of a wide character are skipped.
     ///
     /// Unwritten positions are yielded as [`TerminalChar::BLANK`]. Use
-    /// [`TerminalChar::is_blank`] to visit only the characters that were written:
+    /// [`TerminalChar::is_blank()`] to visit only the characters that were written:
     ///
     /// ```
     /// use tuinix::{TerminalChar, TerminalFrame, TerminalSize};
