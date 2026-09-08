@@ -91,19 +91,17 @@ impl TerminalChar {
 /// # Examples
 ///
 /// ```
-/// use tuinix::{TerminalChar, TerminalFrame, TerminalSize, TerminalStyle};
+/// let size = tuinix::TerminalSize::rows_cols(24, 80);
+/// let mut frame = tuinix::TerminalFrame::new(size);
 ///
-/// let size = TerminalSize::rows_cols(24, 80);
-/// let mut frame = TerminalFrame::new(size);
-///
-/// let bold = TerminalStyle::new().bold();
-/// frame.push_char(TerminalChar::new('H', 1, bold).expect("valid cell"));
-/// frame.push_char(TerminalChar::new('i', 1, bold).expect("valid cell"));
-/// frame.push_char(TerminalChar::new('!', 1, bold).expect("valid cell"));
+/// let bold = tuinix::TerminalStyle::new().bold();
+/// frame.push_char(tuinix::TerminalChar::new('H', 1, bold).expect("valid cell"));
+/// frame.push_char(tuinix::TerminalChar::new('i', 1, bold).expect("valid cell"));
+/// frame.push_char(tuinix::TerminalChar::new('!', 1, bold).expect("valid cell"));
 /// frame.push_newline();
 ///
 /// // A full-width (CJK) character occupies two columns.
-/// frame.push_char(TerminalChar::new('\u{3042}', 2, TerminalStyle::new()).expect("valid character"));
+/// frame.push_char(tuinix::TerminalChar::new('\u{3042}', 2, tuinix::TerminalStyle::new()).expect("valid character"));
 ///
 /// assert_eq!(frame.cursor().col, 2);
 /// ```
@@ -244,10 +242,8 @@ impl TerminalFrame {
     /// [`TerminalChar::is_blank()`] to visit only the characters that were written:
     ///
     /// ```
-    /// use tuinix::{TerminalChar, TerminalFrame, TerminalSize};
-    ///
-    /// let mut frame = TerminalFrame::new(TerminalSize::rows_cols(2, 4));
-    /// frame.push_char(TerminalChar::new('a', 1, Default::default()).expect("valid cell"));
+    /// let mut frame = tuinix::TerminalFrame::new(tuinix::TerminalSize::rows_cols(2, 4));
+    /// frame.push_char(tuinix::TerminalChar::new('a', 1, Default::default()).expect("valid cell"));
     ///
     /// let written = frame.chars().filter(|(_, c)| !c.is_blank()).count();
     /// assert_eq!(written, 1);
