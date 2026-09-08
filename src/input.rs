@@ -1722,7 +1722,7 @@ mod tests {
     }
 
     fn sample_encodable_key(ctx: &mut noprop::TestCaseContext) -> KeyInput {
-        match noprop::sample_weighted_index(ctx, &[3, 2, 5]) {
+        match noprop::sample_weighted_index(ctx, &[3, 2, 4, 1]) {
             0 => {
                 let code = noprop::sample_choice(ctx, &SPECIAL_CODES);
                 let (ctrl, alt) = noprop::sample_choice(ctx, encodable_modifiers(code));
@@ -1736,7 +1736,7 @@ mod tests {
                 );
                 KeyInput { ctrl, alt, code }
             }
-            _ => {
+            2 => {
                 let ctrl = noprop::sample_bool(ctx);
                 let alt = noprop::sample_bool(ctx);
                 let code = if ctrl {
@@ -1744,16 +1744,18 @@ mod tests {
                 } else if alt {
                     KeyCode::Char(noprop::sample_choice(ctx, ALT_CHARS))
                 } else {
-                    match noprop::sample_weighted_index(ctx, &[4, 1]) {
-                        0 => KeyCode::Char(
-                            char::from_u32(noprop::sample_usize_in(ctx, 0x21..=0x7e) as u32)
-                                .expect("valid ASCII"),
-                        ),
-                        _ => KeyCode::Char(noprop::sample_choice(ctx, MULTIBYTE_CHARS)),
-                    }
+                    KeyCode::Char(
+                        char::from_u32(noprop::sample_usize_in(ctx, 0x21..=0x7e) as u32)
+                            .expect("valid ASCII"),
+                    )
                 };
                 KeyInput { ctrl, alt, code }
             }
+            _ => KeyInput {
+                ctrl: false,
+                alt: false,
+                code: KeyCode::Char(noprop::sample_choice(ctx, MULTIBYTE_CHARS)),
+            },
         }
     }
 
