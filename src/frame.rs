@@ -40,7 +40,7 @@ impl TerminalChar {
     /// control character, or `width` is `0`. Control characters are written with the
     /// dedicated methods ([`TerminalFrame::push_newline`], [`TerminalFrame::push_tab`]),
     /// and a zero-width character would occupy no column.
-    pub fn new(value: char, width: usize, style: TerminalStyle) -> Option<Self> {
+    pub const fn new(value: char, width: usize, style: TerminalStyle) -> Option<Self> {
         if value.is_control() || width == 0 {
             None
         } else {
@@ -53,17 +53,17 @@ impl TerminalChar {
     }
 
     /// The character itself.
-    pub fn value(&self) -> char {
+    pub const fn value(self) -> char {
         self.value
     }
 
     /// The number of terminal columns this character occupies.
-    pub fn width(&self) -> usize {
+    pub const fn width(self) -> usize {
         self.width
     }
 
     /// The style applied to this character.
-    pub fn style(&self) -> TerminalStyle {
+    pub const fn style(self) -> TerminalStyle {
         self.style
     }
 
@@ -72,8 +72,8 @@ impl TerminalChar {
     /// A blank character is a single space with no styling, equal to
     /// [`TerminalChar::BLANK`]. Use this to filter out unwritten positions when
     /// iterating with [`TerminalFrame::chars`].
-    pub fn is_blank(&self) -> bool {
-        *self == Self::BLANK
+    pub fn is_blank(self) -> bool {
+        self == Self::BLANK
     }
 }
 
