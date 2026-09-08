@@ -4,12 +4,12 @@ use crate::{TerminalPosition, TerminalSize, TerminalStyle};
 
 /// A single styled character in a [`TerminalFrame`].
 ///
-/// `width` is the number of terminal columns the character occupies. A stored character
-/// must have a width of at least `1`; a width of `0` is reserved for zero-width
-/// (combining) characters, which are rejected by [`TerminalChar::new`].
+/// The number of grid columns a character occupies, its [`width`](Self::width), is
+/// always `1` or more. A character wider than one column spans several adjacent
+/// columns; the frame stores it only at its starting column.
 ///
-/// Characters are immutable: their fields are private and are read through the
-/// [`value`](Self::value), [`width`](Self::width) and [`style`](Self::style) accessors.
+/// Zero-width (combining) characters are not supported, and neither are control
+/// characters; [`TerminalChar::new`] rejects both.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TerminalChar {
     /// The character itself.
