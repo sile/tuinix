@@ -24,6 +24,10 @@ pub struct TerminalChar {
 
 impl TerminalChar {
     /// A blank character (a single space with no styling), used for unwritten positions.
+    ///
+    /// This is the sentinel returned for unwritten positions by [`TerminalFrame::chars`].
+    /// Pushing it is the same as writing a plain space, so [`TerminalFrame::push_char`] does
+    /// not treat it specially.
     pub const BLANK: Self = Self {
         value: ' ',
         width: 1,
@@ -185,6 +189,9 @@ impl TerminalFrame {
             return;
         }
         let col = self.tail.col;
+        // Distance from `col` to the next tab stop. When `col` is already sitting on a
+        // stop this is 0, so the `if` below moves to the *following* stop instead: a tab
+        // always advances by at least one full stop and never lands on the current column.
         self.tail.col += (tab_width - col % tab_width) % tab_width;
         if self.tail.col == col {
             self.tail.col += tab_width;
