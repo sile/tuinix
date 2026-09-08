@@ -62,6 +62,15 @@ impl TerminalChar {
     pub fn style(&self) -> TerminalStyle {
         self.style
     }
+
+    /// Returns `true` if this is the blank character used for unwritten positions.
+    ///
+    /// A blank character is a single space with no styling, equal to
+    /// [`TerminalChar::BLANK`]. Use this to filter out unwritten positions when
+    /// iterating with [`TerminalFrame::chars`].
+    pub fn is_blank(&self) -> bool {
+        *self == Self::BLANK
+    }
 }
 
 /// A frame buffer representing the terminal display state.
@@ -227,6 +236,19 @@ impl TerminalFrame {
     /// Iterates over every cell position in row-major order (top-left first), yielding
     /// the position and the character. Wide characters are yielded only at their starting
     /// column; the continuation columns of a wide character are skipped.
+    ///
+    /// Unwritten positions are yielded as [`TerminalChar::BLANK`]. Use
+    /// [`TerminalChar::is_blank`] to visit only the characters that were written:
+    ///
+    /// ```
+    /// use tuinix::{TerminalChar, TerminalFrame, TerminalSize};
+    ///
+    /// let mut frame = TerminalFrame::new(TerminalSize::rows_cols(2, 4));
+    /// frame.push_char(TerminalChar::new('a', 1, Default::default()).expect("valid cell"));
+    ///
+    /// let written = frame.chars().filter(|(_, c)| !c.is_blank()).count();
+    /// assert_eq!(written, 1);
+    /// ```
     pub fn chars(&self) -> impl '_ + Iterator<Item = (TerminalPosition, TerminalChar)> {
         let mut next_pos = TerminalPosition::ZERO;
         (0..self.size.rows)
