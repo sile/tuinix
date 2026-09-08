@@ -336,9 +336,6 @@ impl CursorModel {
                 self.col = 0;
             }
             Op::Cell(_, width) => {
-                if width == 0 {
-                    return;
-                }
                 if self.row >= size.rows || self.col + width > size.cols {
                     self.clipped = true;
                 }

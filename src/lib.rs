@@ -28,6 +28,9 @@
 //!     // Add styled content to the frame
 //!     let title_style = tuinix::TerminalStyle::new().bold().fg_color(tuinix::TerminalColor::GREEN);
 //!
+//!     // NOTE: This is an ASCII-oriented demo helper: every character is assigned a width of 1.
+//!     // Non-ASCII characters (for example CJK or emoji) would need the caller to supply their
+//!     // actual width, because TerminalFrame does not compute character widths itself.
 //!     fn write_text(frame: &mut tuinix::TerminalFrame, text: &str, style: tuinix::TerminalStyle) {
 //!         for c in text.chars() {
 //!             match c {

@@ -141,7 +141,7 @@ impl TerminalFrame {
     /// because it did not fit within the frame: the character would extend past the right
     /// edge of the current row, or there was no row left beneath the cursor. Clipped
     /// characters are not stored, but the cursor still advances by the character's width,
-    /// matching terminal wrapping semantics.
+    /// so a caller that wants to wrap the line does so itself.
     ///
     /// The character is expected to be valid: its width is at least `1` and its glyph is
     /// not a control character. Use [`TerminalChar::new`] to construct one, which rejects
@@ -193,13 +193,14 @@ impl TerminalFrame {
 
     /// Draws the contents of another frame onto this one at the given position.
     ///
-    /// Characters that fall outside this frame are ignored. A character that partially
-    /// overlaps a wide character causes that wide character to be removed, so none of its
-    /// columns are left behind as a partial glyph.
+    /// Characters that fall outside this frame, or that would extend past the right edge
+    /// of a row, are ignored. A character that partially overlaps a wide character causes
+    /// that wide character to be removed, so none of its columns are left behind as a
+    /// partial glyph.
     pub fn draw(&mut self, position: TerminalPosition, frame: &TerminalFrame) {
         for (src_pos, c) in frame.chars() {
             let target_pos = position + src_pos;
-            if !self.size.contains(target_pos) {
+            if target_pos.row >= self.size.rows || target_pos.col + c.width > self.size.cols {
                 continue;
             }
 
@@ -283,6 +284,8 @@ mod tests {
             0
         } else if WIDE_CHARS.contains(&c) {
             2
+        } else if ZERO_WIDTH_CHARS.contains(&c) {
+            0
         } else {
             1
         }
@@ -493,7 +496,7 @@ mod tests {
             let mut skipped = 0usize;
             for (src_pos, c) in src.chars() {
                 let target_pos = position + src_pos;
-                if !size.contains(target_pos) {
+                if target_pos.row >= size.rows || target_pos.col + c.width > size.cols {
                     skipped += 1;
                     continue;
                 }
