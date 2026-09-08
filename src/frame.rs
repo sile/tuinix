@@ -186,6 +186,11 @@ impl TerminalFrame {
 
     /// Draws the contents of another frame onto this one at the given position.
     ///
+    /// The source frame is pasted as a rectangle: every cell position in the source is
+    /// written to the corresponding position in this frame, including unwritten cells,
+    /// which are pasted as a plain blank character ([`TerminalChar::BLANK`]) and therefore
+    /// overwrite whatever was in the destination at that position.
+    ///
     /// Characters that fall outside this frame, or that would extend past the right edge
     /// of a row, are ignored. A character that partially overlaps a wide character causes
     /// that wide character to be removed, so none of its columns are left behind as a
