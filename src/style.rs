@@ -360,6 +360,8 @@ impl TerminalColor {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+
     use super::*;
 
     #[test]
@@ -373,5 +375,114 @@ mod tests {
             .expect("invalid");
         assert_eq!(style.fg_color, Some(TerminalColor::BLACK));
         assert_eq!(style.bg_color, Some(TerminalColor::YELLOW));
+    }
+
+    /// `TerminalStyle` must round-trip through its own `Display` and
+    /// `FromStr` implementations: formatting a style and re-parsing the
+    /// escape sequence must reproduce the same style.
+    #[test]
+    fn pbt_style_display_parse_roundtrip() -> noprop::TestResult {
+        let observed_default = Cell::new(false);
+        let observed_flag = Cell::new(false);
+        let observed_fg = Cell::new(false);
+        let observed_bg = Cell::new(false);
+        let seed = noprop::seed_from_env_or_time("TUINIX_PBT_SEED")?;
+        let mut runner = noprop::Runner::new(seed);
+        runner.run(256, |ctx| {
+            let style = sample_pbt_style(ctx);
+            let text = style.to_string();
+            let parsed: TerminalStyle = text.parse().expect("Display output must be parseable");
+            assert_eq!(parsed, style, "round-trip mismatch: {style:?} -> {text:?}");
+            if style == TerminalStyle::default() {
+                observed_default.set(true);
+            }
+            if style.bold
+                || style.italic
+                || style.underline
+                || style.blink
+                || style.reverse
+                || style.dim
+                || style.strikethrough
+            {
+                observed_flag.set(true);
+            }
+            if style.fg_color.is_some() {
+                observed_fg.set(true);
+            }
+            if style.bg_color.is_some() {
+                observed_bg.set(true);
+            }
+            Ok(())
+        })?;
+        assert!(
+            observed_default.get(),
+            "no case exercised the default style\n{runner}"
+        );
+        assert!(
+            observed_flag.get(),
+            "no case exercised a text flag\n{runner}"
+        );
+        assert!(observed_fg.get(), "no case exercised an fg color\n{runner}");
+        assert!(observed_bg.get(), "no case exercised a bg color\n{runner}");
+        Ok(())
+    }
+
+    fn sample_pbt_style(ctx: &mut noprop::TestCaseContext) -> TerminalStyle {
+        match noprop::sample_weighted_index(ctx, &[1, 9]) {
+            0 => TerminalStyle::default(),
+            _ => {
+                let mut style = TerminalStyle::default();
+                if noprop::sample_bool(ctx) {
+                    style.bold = true;
+                }
+                if noprop::sample_bool(ctx) {
+                    style.italic = true;
+                }
+                if noprop::sample_bool(ctx) {
+                    style.underline = true;
+                }
+                if noprop::sample_bool(ctx) {
+                    style.blink = true;
+                }
+                if noprop::sample_bool(ctx) {
+                    style.reverse = true;
+                }
+                if noprop::sample_bool(ctx) {
+                    style.dim = true;
+                }
+                if noprop::sample_bool(ctx) {
+                    style.strikethrough = true;
+                }
+                if noprop::sample_bool(ctx) {
+                    style.fg_color = Some(sample_pbt_color(ctx));
+                }
+                if noprop::sample_bool(ctx) {
+                    style.bg_color = Some(sample_pbt_color(ctx));
+                }
+                style
+            }
+        }
+    }
+
+    fn sample_pbt_color(ctx: &mut noprop::TestCaseContext) -> TerminalColor {
+        let r = noprop::sample_with_boundaries(
+            ctx,
+            &[0u8, 128, 255],
+            noprop::Ratio::one_nth(5),
+            |ctx| noprop::sample_usize_in(ctx, 0..=255) as u8,
+        );
+        let g = noprop::sample_with_boundaries(
+            ctx,
+            &[0u8, 128, 255],
+            noprop::Ratio::one_nth(5),
+            |ctx| noprop::sample_usize_in(ctx, 0..=255) as u8,
+        );
+        let b = noprop::sample_with_boundaries(
+            ctx,
+            &[0u8, 128, 255],
+            noprop::Ratio::one_nth(5),
+            |ctx| noprop::sample_usize_in(ctx, 0..=255) as u8,
+        );
+        TerminalColor::new(r, g, b)
     }
 }

@@ -287,3 +287,257 @@ impl TerminalRegion {
             .expand_right(amount)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+
+    use super::*;
+
+    /// `TerminalPosition::add` and `sub` must follow the documented
+    /// component-wise semantics: `add` uses plain addition, `sub` uses
+    /// saturating subtraction.
+    #[test]
+    fn pbt_position_add_sub_match_definitions() -> noprop::TestResult {
+        let seed = noprop::seed_from_env_or_time("TUINIX_PBT_SEED")?;
+        let mut runner = noprop::Runner::new(seed);
+        runner.run(256, |ctx| {
+            let p = sample_pbt_position(ctx);
+            let q = sample_pbt_position(ctx);
+            let sum = p + q;
+            assert_eq!(sum.row, p.row + q.row, "add row mismatch: {p:?} + {q:?}");
+            assert_eq!(sum.col, p.col + q.col, "add col mismatch: {p:?} + {q:?}");
+            let diff = p - q;
+            assert_eq!(
+                diff.row,
+                p.row.saturating_sub(q.row),
+                "sub row mismatch: {p:?} - {q:?}"
+            );
+            assert_eq!(
+                diff.col,
+                p.col.saturating_sub(q.col),
+                "sub col mismatch: {p:?} - {q:?}"
+            );
+            Ok(())
+        })?;
+        Ok(())
+    }
+
+    /// The `take_*`, `drop_*`, and `expand_*` region operations must
+    /// clamp by the requested amount, keep the untouched dimension, and
+    /// (for take/drop) stay within the original region; `expand_*` must
+    /// grow outward by the requested amount. `contains()` must agree
+    /// with the resulting region.
+    #[test]
+    fn pbt_region_take_drop_expand_match_definitions() -> noprop::TestResult {
+        let observed_take = Cell::new(false);
+        let observed_drop = Cell::new(false);
+        let observed_expand = Cell::new(false);
+        let seed = noprop::seed_from_env_or_time("TUINIX_PBT_SEED")?;
+        let mut runner = noprop::Runner::new(seed);
+        runner.run(256, |ctx| {
+            let region = sample_pbt_region(ctx);
+            let amount = noprop::sample_usize_in(ctx, 0..=8);
+            match noprop::sample_weighted_index(ctx, &[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]) {
+                0 => {
+                    observed_take.set(true);
+                    let taken = region.take_top(amount);
+                    assert_eq!(taken.size.rows, region.size.rows.min(amount));
+                    assert_eq!(taken.position, region.position);
+                    assert_eq!(taken.size.cols, region.size.cols);
+                    assert_contained(ctx, region, taken);
+                }
+                1 => {
+                    observed_take.set(true);
+                    let taken = region.take_bottom(amount);
+                    assert_eq!(taken.size.rows, region.size.rows.min(amount));
+                    assert_eq!(taken.position.col, region.position.col);
+                    assert_eq!(
+                        taken.position.row,
+                        region.position.row + region.size.rows - taken.size.rows
+                    );
+                    assert_eq!(taken.size.cols, region.size.cols);
+                    assert_contained(ctx, region, taken);
+                }
+                2 => {
+                    observed_take.set(true);
+                    let taken = region.take_left(amount);
+                    assert_eq!(taken.size.cols, region.size.cols.min(amount));
+                    assert_eq!(taken.position, region.position);
+                    assert_eq!(taken.size.rows, region.size.rows);
+                    assert_contained(ctx, region, taken);
+                }
+                3 => {
+                    observed_take.set(true);
+                    let taken = region.take_right(amount);
+                    assert_eq!(taken.size.cols, region.size.cols.min(amount));
+                    assert_eq!(taken.position.row, region.position.row);
+                    assert_eq!(
+                        taken.position.col,
+                        region.position.col + region.size.cols - taken.size.cols
+                    );
+                    assert_eq!(taken.size.rows, region.size.rows);
+                    assert_contained(ctx, region, taken);
+                }
+                4 => {
+                    observed_drop.set(true);
+                    let dropped = region.drop_top(amount);
+                    assert_eq!(dropped.size.rows, region.size.rows.saturating_sub(amount));
+                    assert_eq!(dropped.position.col, region.position.col);
+                    assert_eq!(
+                        dropped.position.row,
+                        if amount < region.size.rows {
+                            region.position.row + amount
+                        } else {
+                            region.position.row
+                        }
+                    );
+                    assert_eq!(dropped.size.cols, region.size.cols);
+                    assert_contained(ctx, region, dropped);
+                }
+                5 => {
+                    observed_drop.set(true);
+                    let dropped = region.drop_bottom(amount);
+                    assert_eq!(dropped.size.rows, region.size.rows.saturating_sub(amount));
+                    assert_eq!(dropped.position, region.position);
+                    assert_eq!(dropped.size.cols, region.size.cols);
+                    assert_contained(ctx, region, dropped);
+                }
+                6 => {
+                    observed_drop.set(true);
+                    let dropped = region.drop_left(amount);
+                    assert_eq!(dropped.size.cols, region.size.cols.saturating_sub(amount));
+                    assert_eq!(dropped.position.row, region.position.row);
+                    assert_eq!(
+                        dropped.position.col,
+                        if amount < region.size.cols {
+                            region.position.col + amount
+                        } else {
+                            region.position.col
+                        }
+                    );
+                    assert_eq!(dropped.size.rows, region.size.rows);
+                    assert_contained(ctx, region, dropped);
+                }
+                7 => {
+                    observed_drop.set(true);
+                    let dropped = region.drop_right(amount);
+                    assert_eq!(dropped.size.cols, region.size.cols.saturating_sub(amount));
+                    assert_eq!(dropped.position, region.position);
+                    assert_eq!(dropped.size.rows, region.size.rows);
+                    assert_contained(ctx, region, dropped);
+                }
+                8 => {
+                    observed_expand.set(true);
+                    let expanded = region.expand_top(amount);
+                    assert_eq!(expanded.size.rows, region.size.rows.saturating_add(amount));
+                    assert_eq!(
+                        expanded.position.row,
+                        region.position.row.saturating_sub(amount)
+                    );
+                    assert_eq!(expanded.position.col, region.position.col);
+                    assert_eq!(expanded.size.cols, region.size.cols);
+                }
+                9 => {
+                    observed_expand.set(true);
+                    let expanded = region.expand_bottom(amount);
+                    assert_eq!(expanded.size.rows, region.size.rows.saturating_add(amount));
+                    assert_eq!(expanded.position, region.position);
+                    assert_eq!(expanded.size.cols, region.size.cols);
+                }
+                10 => {
+                    observed_expand.set(true);
+                    let expanded = region.expand_left(amount);
+                    assert_eq!(expanded.size.cols, region.size.cols.saturating_add(amount));
+                    assert_eq!(
+                        expanded.position.col,
+                        region.position.col.saturating_sub(amount)
+                    );
+                    assert_eq!(expanded.position.row, region.position.row);
+                    assert_eq!(expanded.size.rows, region.size.rows);
+                }
+                _ => {
+                    observed_expand.set(true);
+                    let expanded = region.expand_right(amount);
+                    assert_eq!(expanded.size.cols, region.size.cols.saturating_add(amount));
+                    assert_eq!(expanded.position, region.position);
+                    assert_eq!(expanded.size.rows, region.size.rows);
+                }
+            }
+            Ok(())
+        })?;
+        assert!(
+            observed_take.get(),
+            "no case exercised a take_* operation\n{runner}"
+        );
+        assert!(
+            observed_drop.get(),
+            "no case exercised a drop_* operation\n{runner}"
+        );
+        assert!(
+            observed_expand.get(),
+            "no case exercised an expand_* operation\n{runner}"
+        );
+        Ok(())
+    }
+
+    fn sample_pbt_position(ctx: &mut noprop::TestCaseContext) -> TerminalPosition {
+        let row = noprop::sample_with_boundaries(
+            ctx,
+            &[0usize, 1000],
+            noprop::Ratio::one_nth(5),
+            |ctx| noprop::sample_usize_in(ctx, 0..=1000),
+        );
+        let col = noprop::sample_with_boundaries(
+            ctx,
+            &[0usize, 1000],
+            noprop::Ratio::one_nth(5),
+            |ctx| noprop::sample_usize_in(ctx, 0..=1000),
+        );
+        TerminalPosition::row_col(row, col)
+    }
+
+    fn sample_pbt_region(ctx: &mut noprop::TestCaseContext) -> TerminalRegion {
+        let row =
+            noprop::sample_with_boundaries(ctx, &[0usize, 8], noprop::Ratio::one_nth(5), |ctx| {
+                noprop::sample_usize_in(ctx, 0..=8)
+            });
+        let col =
+            noprop::sample_with_boundaries(ctx, &[0usize, 8], noprop::Ratio::one_nth(5), |ctx| {
+                noprop::sample_usize_in(ctx, 0..=8)
+            });
+        let rows =
+            noprop::sample_with_boundaries(ctx, &[0usize, 8], noprop::Ratio::one_nth(5), |ctx| {
+                noprop::sample_usize_in(ctx, 0..=8)
+            });
+        let cols =
+            noprop::sample_with_boundaries(ctx, &[0usize, 8], noprop::Ratio::one_nth(5), |ctx| {
+                noprop::sample_usize_in(ctx, 0..=8)
+            });
+        TerminalRegion {
+            position: TerminalPosition::row_col(row, col),
+            size: TerminalSize::rows_cols(rows, cols),
+        }
+    }
+
+    /// A position sampled inside `extracted` must also be inside
+    /// `original` — the take_*/drop_* regions are sub-regions of the
+    /// original. Empty regions have no positions so the check is
+    /// vacuous.
+    fn assert_contained(
+        ctx: &mut noprop::TestCaseContext,
+        original: TerminalRegion,
+        extracted: TerminalRegion,
+    ) {
+        if extracted.size.is_empty() {
+            return;
+        }
+        let row = extracted.position.row + noprop::sample_usize_in(ctx, 0..extracted.size.rows);
+        let col = extracted.position.col + noprop::sample_usize_in(ctx, 0..extracted.size.cols);
+        let p = TerminalPosition::row_col(row, col);
+        assert!(
+            original.contains(p),
+            "extracted region must be within original:\n  original = {original:?}\n  extracted = {extracted:?}\n  sample = {p:?}"
+        );
+    }
+}
