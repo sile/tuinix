@@ -302,6 +302,10 @@ fn parse_complex_csi_key(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>
 }
 
 fn parse_modified_arrow_key(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> {
+    if !bytes[4].is_ascii_digit() {
+        return Ok((None, 6));
+    }
+
     let modifier = bytes[4] - b'0';
     let alt = modifier & 0x2 != 0;
     let ctrl = modifier & 0x4 != 0;
@@ -343,6 +347,10 @@ fn parse_special_key_with_modifier(
         b'6' => KeyCode::PageDown,
         _ => return Ok((None, 6)),
     };
+
+    if !bytes[4].is_ascii_digit() {
+        return Ok((None, 6));
+    }
 
     let modifier = bytes[4] - b'0';
     let alt = modifier & 0x2 != 0;
@@ -1843,14 +1851,10 @@ mod tests {
     /// consume at most the input length, and must consume at least one
     /// byte whenever it reports an input.
     ///
-    /// Known defect, tracked separately and not fixed here: feeding
-    /// `ESC [ 1 ; ! A` (or any non-digit byte at the modifier
-    /// position) panics with `attempt to subtract with overflow` in
-    /// `parse_modified_arrow_key` / `parse_special_key_with_modifier`
-    /// (`bytes[4] - b'0'`). Reproduced with
-    /// `TUINIX_PBT_SEED=0x18cac336d9f9c4d0`, case 0. Random generation
-    /// makes this input so unlikely that this test still passes; the
-    /// defect should be exercised from that seed once it is fixed.
+    /// Regression guard: feeding `ESC [ 1 ; ! A` (a non-digit byte at
+    /// the modifier position) must not panic. Such a sequence returns
+    /// `(None, 6)` as an unknown CSI sequence from
+    /// `parse_modified_arrow_key` / `parse_special_key_with_modifier`.
     #[test]
     fn pbt_parse_input_invariants() -> noprop::TestResult {
         let observed_partial = Cell::new(false);
@@ -1863,10 +1867,11 @@ mod tests {
             // exercised structurally instead of by chance.
             let structured = noprop::sample_bool(ctx);
             let bytes = if structured {
-                match noprop::sample_usize_in(ctx, 0..3) {
+                match noprop::sample_usize_in(ctx, 0..4) {
                     0 => vec![0x1b],
                     1 => vec![0x1b, b'['],
-                    _ => vec![0x1b, b'O'],
+                    2 => vec![0x1b, b'O'],
+                    _ => vec![0x1b, b'[', b'1', b';', b'!', b'A'],
                 }
             } else {
                 sample_pbt_bytes(ctx)
