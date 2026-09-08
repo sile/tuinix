@@ -2,40 +2,40 @@ use std::collections::BTreeMap;
 
 use crate::{TerminalPosition, TerminalSize, TerminalStyle};
 
-/// A single styled cell in a [`TerminalFrame`].
+/// A single styled character in a [`TerminalFrame`].
 ///
-/// `width` is the number of terminal columns the cell occupies. A stored cell must have
-/// a width of at least `1`; a width of `0` is reserved for zero-width (combining)
-/// characters, which are rejected by [`TerminalChar::new`].
+/// `width` is the number of terminal columns the character occupies. A stored character
+/// must have a width of at least `1`; a width of `0` is reserved for zero-width
+/// (combining) characters, which are rejected by [`TerminalChar::new`].
 ///
-/// Cells are immutable: their fields are private and are read through the
+/// Characters are immutable: their fields are private and are read through the
 /// [`value`](Self::value), [`width`](Self::width) and [`style`](Self::style) accessors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TerminalChar {
-    /// The character displayed by this cell.
+    /// The character itself.
     value: char,
 
-    /// The number of terminal columns this cell occupies (`1` or more).
+    /// The number of terminal columns this character occupies (`1` or more).
     width: usize,
 
-    /// The style applied to this cell.
+    /// The style applied to this character.
     style: TerminalStyle,
 }
 
 impl TerminalChar {
-    /// A blank cell (a single space with no styling).
+    /// A blank character (a single space with no styling), used for unwritten positions.
     pub const BLANK: Self = Self {
         value: ' ',
         width: 1,
         style: TerminalStyle::new(),
     };
 
-    /// Makes a new styled cell with the given width.
+    /// Makes a new styled character with the given width.
     ///
-    /// Returns `None` when the cell cannot be represented in a frame: if `value` is a
+    /// Returns `None` when the character cannot be represented in a frame: if `value` is a
     /// control character, or `width` is `0`. Control characters are written with the
     /// dedicated methods ([`TerminalFrame::push_newline`], [`TerminalFrame::push_tab`]),
-    /// and a zero-width cell would occupy no column.
+    /// and a zero-width character would occupy no column.
     pub fn new(value: char, width: usize, style: TerminalStyle) -> Option<Self> {
         if value.is_control() || width == 0 {
             None
@@ -48,17 +48,17 @@ impl TerminalChar {
         }
     }
 
-    /// The character displayed by this cell.
+    /// The character itself.
     pub fn value(&self) -> char {
         self.value
     }
 
-    /// The number of terminal columns this cell occupies.
+    /// The number of terminal columns this character occupies.
     pub fn width(&self) -> usize {
         self.width
     }
 
-    /// The style applied to this cell.
+    /// The style applied to this character.
     pub fn style(&self) -> TerminalStyle {
         self.style
     }
@@ -66,14 +66,15 @@ impl TerminalChar {
 
 /// A frame buffer representing the terminal display state.
 ///
-/// [`TerminalFrame`] is a concrete, width-agnostic buffer of styled cells. Each cell
-/// stores the character, the number of terminal columns it occupies, and the style.
+/// [`TerminalFrame`] is a concrete, width-agnostic buffer of styled characters. Each
+/// character stores the glyph, the number of terminal columns it occupies, and the
+/// style.
 ///
 /// The caller supplies the correct width for each character: the frame itself never
 /// computes character widths, so the library stays free of any character-width
 /// dependency (such as `unicode-width`).
 ///
-/// Cells are written with [`push_char`](Self::push_char) and advanced sequentially
+/// Characters are written with [`push_char`](Self::push_char) and advanced sequentially
 /// from an internal cursor. Use [`push_newline`](Self::push_newline) to move to the
 /// next line and [`push_tab`](Self::push_tab) to advance to a tab stop. A frame can be
 /// composed onto another with [`draw`](Self::draw), and its contents inspected with
@@ -94,7 +95,7 @@ impl TerminalChar {
 /// frame.push_newline();
 ///
 /// // A full-width (CJK) character occupies two columns.
-/// frame.push_char(TerminalChar::new('\u{3042}', 2, TerminalStyle::new()).expect("valid cell"));
+/// frame.push_char(TerminalChar::new('\u{3042}', 2, TerminalStyle::new()).expect("valid character"));
 ///
 /// assert_eq!(frame.cursor().col, 2);
 /// ```
@@ -120,22 +121,22 @@ impl TerminalFrame {
         self.size
     }
 
-    /// Returns the current cursor position (where the next cell would be written).
+    /// Returns the current cursor position (where the next character would be written).
     pub fn cursor(&self) -> TerminalPosition {
         self.tail
     }
 
-    /// Writes a single styled cell at the current cursor and advances the cursor.
+    /// Writes a single styled character at the current cursor and advances the cursor.
     ///
-    /// Returns `true` when the cell was stored, and `false` when it was clipped because
-    /// it did not fit within the frame: the cell would extend past the right edge of the
-    /// current row, or there was no row left beneath the cursor. Clipped cells are not
-    /// stored, but the cursor still advances by the cell's width, matching terminal
-    /// wrapping semantics.
+    /// Returns `true` when the character was stored, and `false` when it was clipped
+    /// because it did not fit within the frame: the character would extend past the right
+    /// edge of the current row, or there was no row left beneath the cursor. Clipped
+    /// characters are not stored, but the cursor still advances by the character's width,
+    /// matching terminal wrapping semantics.
     ///
-    /// The cell is expected to be valid: its width is at least `1` and its character is
+    /// The character is expected to be valid: its width is at least `1` and its glyph is
     /// not a control character. Use [`TerminalChar::new`] to construct one, which rejects
-    /// invalid cells.
+    /// invalid characters.
     pub fn push_char(&mut self, ch: TerminalChar) -> bool {
         if self.tail.row < self.size.rows && self.tail.col + ch.width <= self.size.cols {
             self.data.insert(self.tail, ch);
@@ -184,8 +185,8 @@ impl TerminalFrame {
     /// Draws the contents of another frame onto this one at the given position.
     ///
     /// Characters that fall outside this frame are ignored. A character that partially
-    /// overlaps a wide character causes that wide character to be removed, so its cells
-    /// are not left behind as a partial glyph.
+    /// overlaps a wide character causes that wide character to be removed, so none of its
+    /// columns are left behind as a partial glyph.
     pub fn draw(&mut self, position: TerminalPosition, frame: &TerminalFrame) {
         for (src_pos, c) in frame.chars() {
             let target_pos = position + src_pos;
@@ -206,10 +207,10 @@ impl TerminalFrame {
         }
     }
 
-    /// Returns the cell at `position`, or `None` if that position is covered by the
+    /// Returns the character at `position`, or `None` if that position is covered by the
     /// continuation of a wide character that starts at an earlier column.
     ///
-    /// A blank cell is returned for positions that have never been written.
+    /// A blank character is returned for positions that have never been written.
     pub(crate) fn get_char(&self, position: TerminalPosition) -> Option<TerminalChar> {
         if let Some(ch) = self.data.get(&position).copied() {
             Some(ch)
@@ -224,7 +225,7 @@ impl TerminalFrame {
     }
 
     /// Iterates over every cell position in row-major order (top-left first), yielding
-    /// the position and the cell. Wide characters are yielded only at their starting
+    /// the position and the character. Wide characters are yielded only at their starting
     /// column; the continuation columns of a wide character are skipped.
     pub fn chars(&self) -> impl '_ + Iterator<Item = (TerminalPosition, TerminalChar)> {
         let mut next_pos = TerminalPosition::ZERO;
