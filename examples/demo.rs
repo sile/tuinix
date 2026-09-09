@@ -16,6 +16,26 @@ fn write_text(frame: &mut tuinix::TerminalFrame, text: &str, style: tuinix::Term
     }
 }
 
+/// Wraps a non-blocking I/O call so the event loop keeps running on a resize.
+///
+/// A [`std::io::ErrorKind::WouldBlock`] is converted to `Ok(None)`, meaning "no input
+/// right now". A signal (for example SIGWINCH on resize) may interrupt the call with
+/// [`std::io::ErrorKind::Interrupted`]; in that case the call is retried so the resize
+/// is handled on the next `poll` iteration instead of crashing the loop.
+fn or_none<F, T>(mut call: F) -> std::io::Result<Option<T>>
+where
+    F: FnMut() -> std::io::Result<T>,
+{
+    loop {
+        match call() {
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => return Ok(None),
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+            Ok(v) => return Ok(Some(v)),
+        }
+    }
+}
+
 fn draw_header(
     frame: &mut tuinix::TerminalFrame,
     title_style: tuinix::TerminalStyle,
@@ -87,12 +107,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Wait for a read event on either the input or the signal descriptor.
         let n = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, -1) };
         if n < 0 {
-            return Err(std::io::Error::last_os_error().into());
+            let err = std::io::Error::last_os_error();
+            // A signal (such as SIGWINCH on resize) can interrupt `poll`. Retry instead
+            // of propagating the error, so the signal is handled on the next iteration.
+            if err.kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(err.into());
         }
 
         // Handle a terminal resize.
         if fds[1].revents & libc::POLLIN != 0 {
-            while let Some(new_size) = tuinix::try_nonblocking(driver.poll_resize())? {
+            while let Some(new_size) = or_none(|| driver.poll_resize())? {
                 size = new_size;
                 let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(size);
                 draw_header(&mut frame, title_style, info_style);
@@ -114,7 +140,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Handle available input.
         if fds[0].revents & libc::POLLIN != 0 {
-            while let Some(n) = tuinix::try_nonblocking(driver.read(&mut raw))? {
+            while let Some(n) = or_none(|| driver.read(&mut raw))? {
                 if n == 0 {
                     break;
                 }
