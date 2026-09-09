@@ -131,9 +131,9 @@
 //! }
 //! ```
 //!
-//! For a full example of an event loop driven with `poll`, see the [nonblocking.rs] example.
+//! For a full example of an event loop driven with `poll`, and how to handle keyboard, mouse, and resize events together, see the [demo.rs] example.
 //!
-//! [nonblocking.rs]: https://github.com/sile/tuinix/blob/main/examples/nonblocking.rs
+//! [demo.rs]: https://github.com/sile/tuinix/blob/main/examples/demo.rs
 #![warn(missing_docs)]
 use std::{io::ErrorKind, os::fd::RawFd};
 

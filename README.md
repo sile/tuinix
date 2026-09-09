@@ -143,7 +143,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-For a full example of an event loop driven with `poll`, see the [nonblocking.rs](examples/nonblocking.rs) example.
+For a full example of an event loop driven with `poll`, and how to handle keyboard, mouse, and resize events together, see the [demo.rs](examples/demo.rs) example.
 
 The input file descriptor is opened as a fresh, independent description of the
 terminal device, so making it non-blocking does not affect the output file
