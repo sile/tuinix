@@ -43,8 +43,8 @@ fn draw_header(
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize terminal driver and query its size
-    let (mut driver, size) = tuinix::TerminalDriver::new()?;
-    let mut state = tuinix::TerminalState::new(size);
+    let mut driver = tuinix::TerminalDriver::new()?;
+    let mut state = tuinix::TerminalState::new(driver.size()?);
 
     // Enable mouse input reporting
     driver.enable_mouse_input()?;

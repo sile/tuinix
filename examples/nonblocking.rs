@@ -23,8 +23,8 @@ fn write_text(frame: &mut tuinix::TerminalFrame, text: &str, style: tuinix::Term
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize terminal driver and query its size
-    let (mut driver, size) = tuinix::TerminalDriver::new()?;
-    let mut state = tuinix::TerminalState::new(size);
+    let mut driver = tuinix::TerminalDriver::new()?;
+    let mut state = tuinix::TerminalState::new(driver.size()?);
 
     // Set up mio polling
     let mut poll = mio::Poll::new()?;

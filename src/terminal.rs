@@ -36,14 +36,14 @@ impl TerminalDriver {
     /// Creates a new terminal driver.
     ///
     /// This enters raw mode, switches to the alternate screen, hides the cursor,
-    /// and installs a SIGWINCH handler. It returns the driver together with the
+    /// and installs a SIGWINCH handler. Use [`TerminalDriver::size()`] to query the
     /// initial terminal size.
     ///
     /// # Errors
     ///
     /// Returns an error if another driver instance already exists, if stdin or
     /// stdout is not a terminal, or if a terminal configuration call fails.
-    pub fn new() -> io::Result<(Self, TerminalSize)> {
+    pub fn new() -> io::Result<Self> {
         if TERMINAL_EXISTS.swap(true, Ordering::SeqCst) {
             return Err(Error::other("TerminalDriver instance already exists"));
         }
@@ -85,7 +85,6 @@ impl TerminalDriver {
             original_termios,
             input_replaced: false,
         };
-        let size = this.resize()?;
         this.enable_raw_mode()?;
         this.enable_alternate_screen()?;
         this.hide_cursor()?;
@@ -117,7 +116,7 @@ impl TerminalDriver {
             default_hook(panic_info);
         }));
 
-        Ok((this, size))
+        Ok(this)
     }
 
     /// Returns the input file descriptor.
@@ -186,6 +185,17 @@ impl TerminalDriver {
         Ok(())
     }
 
+    /// Returns the current terminal size.
+    ///
+    /// This queries the terminal for its current dimensions.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the terminal size cannot be queried.
+    pub fn size(&self) -> io::Result<TerminalSize> {
+        self.resize()
+    }
+
     /// Waits for a terminal resize event to occur and returns the new terminal size.
     ///
     /// By default, this method blocks until a resize occurs. To use it in
@@ -249,7 +259,7 @@ impl TerminalDriver {
         crate::set_fd_nonblocking(self.input_fd(), false)
     }
 
-    fn resize(&mut self) -> io::Result<TerminalSize> {
+    fn resize(&self) -> io::Result<TerminalSize> {
         let mut winsize = MaybeUninit::<libc::winsize>::zeroed();
         check_libc_result(unsafe {
             libc::ioctl(self.output_fd(), libc::TIOCGWINSZ, winsize.as_mut_ptr())
@@ -479,7 +489,7 @@ mod tests {
             return;
         }
 
-        let (terminal, _size) = TerminalDriver::new().expect("ok");
+        let terminal = TerminalDriver::new().expect("ok");
 
         // Creating a second driver should fail while the first one exists
         assert!(TerminalDriver::new().is_err());

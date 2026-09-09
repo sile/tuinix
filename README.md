@@ -66,11 +66,11 @@ fn write_text(frame: &mut tuinix::TerminalFrame, text: &str, style: tuinix::Term
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize the terminal driver and query its size
-    let (mut driver, size) = tuinix::TerminalDriver::new()?;
-    let mut state = tuinix::TerminalState::new(size);
+    let mut driver = tuinix::TerminalDriver::new()?;
+    let mut state = tuinix::TerminalState::new(driver.size()?);
 
     // Create a frame with the terminal's dimensions
-    let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(size);
+    let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(state.size());
 
     // Add styled content to the frame
     let title_style = tuinix::TerminalStyle::new().bold().fg_color(tuinix::TerminalColor::GREEN);
