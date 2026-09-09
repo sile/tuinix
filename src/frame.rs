@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::io::Write;
 
 use crate::{TerminalPosition, TerminalSize, TerminalStyle};
 
@@ -263,6 +264,71 @@ impl TerminalFrame {
                     Some((pos, TerminalChar::BLANK))
                 }
             })
+    }
+
+    /// Renders this frame into `out`, clearing `out` first.
+    ///
+    /// `prev` is the frame that was previously rendered to the terminal: the
+    /// produced bytes redraw only the lines that differ from it. When `prev`'s
+    /// size differs from this frame's size, or when `prev` is `None` (the first
+    /// frame), the whole frame is redrawn.
+    ///
+    /// `cursor` is the position where the terminal cursor is shown, or `None` to
+    /// hide it.
+    ///
+    /// The caller writes the produced bytes to the driver and flushes them.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let size = tuinix::TerminalSize::rows_cols(24, 80);
+    /// let mut frame = tuinix::TerminalFrame::new(size);
+    /// frame.push_char(tuinix::TerminalChar::new(
+    ///     'h',
+    ///     1,
+    ///     tuinix::TerminalStyle::new(),
+    /// ).expect("valid cell"));
+    ///
+    /// let mut out = Vec::new();
+    /// frame.render(None, None, &mut out);
+    /// ```
+    pub fn render(
+        &self,
+        prev: Option<&TerminalFrame>,
+        cursor: Option<TerminalPosition>,
+        out: &mut Vec<u8>,
+    ) {
+        out.clear();
+        let _ = write!(out, "\x1b[?25l"); // hide cursor
+
+        let resized = prev.is_none_or(|p| p.size() != self.size());
+        let mut skipped = false;
+        let mut last_style = None;
+        let mut last_row = usize::MAX;
+        for (position, c) in self.chars() {
+            let old = prev.and_then(|p| p.get_char(position));
+            if !resized && Some(c) == old {
+                skipped = true;
+                continue;
+            }
+
+            if skipped || last_row != position.row {
+                let _ = write!(out, "\x1b[{};{}H", position.row + 1, position.col + 1);
+            }
+            if Some(c.style()) != last_style {
+                let _ = write!(out, "{}", c.style());
+            }
+            let _ = write!(out, "{}", c.value());
+
+            last_style = Some(c.style());
+            last_row = position.row;
+            skipped = false;
+        }
+
+        if let Some(position) = cursor {
+            let _ = write!(out, "\x1b[{};{}H", position.row + 1, position.col + 1);
+            let _ = write!(out, "\x1b[?25h"); // show cursor
+        }
     }
 }
 

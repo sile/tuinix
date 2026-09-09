@@ -4,8 +4,6 @@
 //! dependencies (only `libc` is required). The library offers a clean API for:
 //!
 //! - Managing the terminal device (raw mode, alternate screen)
-//! - Keeping the I/O-free state of a terminal application (size, last frame,
-//!   cursor, input buffer)
 //! - Capturing and processing keyboard input
 //! - Drawing styled text with ANSI colors
 //! - Handling terminal resize events
@@ -14,13 +12,14 @@
 //!
 //! ## Architecture
 //!
-//! The library separates the *state* of a terminal application from the *driver*
-//! that talks to the terminal device.
+//! The library separates the *I/O* of a terminal from the *pure data* that an
+//! application works with.
 //!
-//! - [`TerminalState`] is a pure, I/O-free core. It owns the terminal size, the
-//!   last frame that was rendered, the cursor position, and the buffer of unparsed
-//!   input bytes. It knows how to parse raw bytes into input events and how to
-//!   render a frame into a byte buffer, but it never performs I/O itself.
+//! - [`InputStream`] is a pure input parser. It accumulates raw bytes and yields
+//!   parsed [`TerminalInput`] values, but it never performs I/O itself.
+//! - [`TerminalFrame`] is a pure frame buffer. It renders itself into a byte
+//!   buffer, comparing against a previous frame to redraw only what changed, and
+//!   it never performs I/O itself.
 //! - [`TerminalDriver`] owns the file descriptors and terminal modes. It is
 //!   responsible for entering and leaving raw mode and the alternate screen, and
 //!   it implements [`Read`](std::io::Read) and [`Write`](std::io::Write) so an
@@ -28,10 +27,10 @@
 //!   bytes back to it.
 //!
 //! The application is responsible for driving the loop: read raw bytes from the
-//! driver, feed them into [`TerminalState::feed_bytes()`], pull parsed
-//! [`TerminalInput`] values out with [`TerminalState::next_input()`], build a
-//! [`TerminalFrame`], ask the state to render it into a byte buffer with
-//! [`TerminalState::render()`], and write that buffer to the driver.
+//! driver, feed them into [`InputStream::feed()`], pull parsed
+//! [`TerminalInput`] values out with [`InputStream::next()`], build a
+//! [`TerminalFrame`], render it into a byte buffer with
+//! [`TerminalFrame::render()`], and write that buffer to the driver.
 //!
 //! ## Basic Example
 //!
@@ -44,10 +43,13 @@
 //! fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     // Initialize terminal driver and query its size
 //!     let mut driver = tuinix::TerminalDriver::new()?;
-//!     let mut state = tuinix::TerminalState::new(driver.size()?);
+//!     let size = driver.size()?;
+//!     let mut input = tuinix::InputStream::new();
+//!     let mut cursor = None;
+//!     let mut prev = None;
 //!
 //!     // Create a frame with the terminal's dimensions
-//!     let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(state.size());
+//!     let mut frame = tuinix::TerminalFrame::new(size);
 //!
 //!     // Add styled content to the frame
 //!     let title_style = tuinix::TerminalStyle::new().bold().fg_color(tuinix::TerminalColor::GREEN);
@@ -73,31 +75,33 @@
 //!
 //!     // Render the frame to a byte buffer, then write it to the terminal.
 //!     let mut out = Vec::new();
-//!     state.render(frame, &mut out);
+//!     frame.render(prev.as_ref(), cursor, &mut out);
 //!     driver.write_all(&out)?;
 //!     driver.flush()?;
+//!     prev = Some(frame);
 //!
 //!     // Process input events with a timeout
 //!     let mut raw = [0u8; 256];
 //!     loop {
-//!         if state.has_pending_input() && let Some(input) = state.next_input() {
-//!             let tuinix::TerminalInput::Key(input) = input else {
+//!         if input.has_pending() && let Some(event) = input.next() {
+//!             let tuinix::TerminalInput::Key(key_input) = event else {
 //!                 continue;  // Skip mouse events
 //!             };
 //!
 //!             // Check if 'q' was pressed
-//!             if let tuinix::KeyCode::Char('q') = input.code {
+//!             if let tuinix::KeyCode::Char('q') = key_input.code {
 //!                 break;
 //!             }
 //!
 //!             // Display the input
-//!             let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(state.size());
-//!             write_text(&mut frame, &format!("Key pressed: {:?}\n", input), tuinix::TerminalStyle::new());
+//!             let mut frame = tuinix::TerminalFrame::new(size);
+//!             write_text(&mut frame, &format!("Key pressed: {:?}\n", key_input), tuinix::TerminalStyle::new());
 //!             write_text(&mut frame, "\nPress any key ('q' to quit)\n", tuinix::TerminalStyle::new());
 //!             let mut out = Vec::new();
-//!             state.render(frame, &mut out);
+//!             frame.render(prev.as_ref(), cursor, &mut out);
 //!             driver.write_all(&out)?;
 //!             driver.flush()?;
+//!             prev = Some(frame);
 //!         }
 //!
 //!         // Read raw bytes from the driver. In a real application this would be
@@ -107,7 +111,7 @@
 //!         if n == 0 {
 //!             continue;
 //!         }
-//!         state.feed_bytes(&raw[..n]);
+//!         input.feed(&raw[..n]);
 //!     }
 //!
 //!     Ok(())
@@ -123,14 +127,12 @@ use std::{io::ErrorKind, os::fd::RawFd};
 mod frame;
 mod geometry;
 mod input;
-mod state;
 mod style;
 mod terminal;
 
 pub use frame::{TerminalChar, TerminalFrame};
 pub use geometry::{TerminalPosition, TerminalRegion, TerminalSize};
-pub use input::{KeyCode, KeyInput, MouseEvent, MouseInput, TerminalInput};
-pub use state::TerminalState;
+pub use input::{InputStream, KeyCode, KeyInput, MouseEvent, MouseInput, TerminalInput};
 pub use style::{TerminalColor, TerminalStyle};
 pub use terminal::TerminalDriver;
 

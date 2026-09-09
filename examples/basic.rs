@@ -19,10 +19,13 @@ fn write_text(frame: &mut tuinix::TerminalFrame, text: &str, style: tuinix::Term
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize terminal driver and query its size
     let mut driver = tuinix::TerminalDriver::new()?;
-    let mut state = tuinix::TerminalState::new(driver.size()?);
+    let size = driver.size()?;
+    let mut input = tuinix::InputStream::new();
+    let cursor = None;
+    let mut prev = None;
 
     // Create a frame with the terminal's dimensions
-    let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(state.size());
+    let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(size);
 
     // Add styled content to the frame
     let title_style = tuinix::TerminalStyle::new()
@@ -38,30 +41,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Render the frame to a byte buffer, then write it to the terminal.
     let mut out = Vec::new();
-    state.render(frame, &mut out);
+    frame.render(prev.as_ref(), cursor, &mut out);
     driver.write_all(&out)?;
     driver.flush()?;
+    prev = Some(frame);
 
     // Process input events with a timeout
     let mut raw = [0u8; 256];
     loop {
-        if state.has_pending_input()
-            && let Some(input) = state.next_input()
+        if input.has_pending()
+            && let Some(event) = input.next()
         {
-            let tuinix::TerminalInput::Key(input) = input else {
+            let tuinix::TerminalInput::Key(key_input) = event else {
                 continue; // Skip mouse events
             };
 
             // Check if 'q' was pressed
-            if let tuinix::KeyCode::Char('q') = input.code {
+            if let tuinix::KeyCode::Char('q') = key_input.code {
                 break;
             }
 
             // Display the input
-            let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(state.size());
+            let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(size);
             write_text(
                 &mut frame,
-                &format!("Key pressed: {:?}\n", input),
+                &format!("Key pressed: {:?}\n", key_input),
                 tuinix::TerminalStyle::new(),
             );
             write_text(
@@ -70,9 +74,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 tuinix::TerminalStyle::new(),
             );
             let mut out = Vec::new();
-            state.render(frame, &mut out);
+            frame.render(prev.as_ref(), cursor, &mut out);
             driver.write_all(&out)?;
             driver.flush()?;
+            prev = Some(frame);
         }
 
         // Poll for read readiness on the input file descriptor. Here we just
@@ -81,7 +86,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if n == 0 {
             continue;
         }
-        state.feed_bytes(&raw[..n]);
+        input.feed(&raw[..n]);
     }
 
     Ok(())

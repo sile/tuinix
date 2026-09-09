@@ -19,8 +19,8 @@ static mut SIGWINCH_PIPE_FD: RawFd = 0;
 /// and the saved terminal modes, and it is responsible for entering and leaving
 /// raw mode and the alternate screen. This makes it a good target for implementing
 /// [`Read`] and [`Write`], so an application can read raw bytes from the terminal
-/// and write raw output bytes back to it, feeding those bytes in and out of a
-/// [`TerminalState`](crate::TerminalState).
+/// and write raw output bytes back to it, feeding those bytes in and out of an
+/// [`InputStream`](crate::InputStream) and a [`TerminalFrame`](crate::TerminalFrame).
 ///
 /// Only one instance can exist at a time; it is automatically restored to the
 /// original terminal state when dropped.
@@ -159,7 +159,7 @@ impl TerminalDriver {
     /// Enables mouse input reporting in the terminal.
     ///
     /// Mouse events will be reported as raw bytes on the input stream, which the
-    /// application feeds into [`TerminalState::feed_bytes()`](crate::TerminalState::feed_bytes)
+    /// application feeds into [`InputStream::feed()`](crate::InputStream::feed)
     /// so they parse as [`TerminalInput::Mouse`](crate::TerminalInput::Mouse) values.
     pub fn enable_mouse_input(&mut self) -> io::Result<()> {
         // Enable mouse reporting in SGR mode (more reliable than X10/X11 mode)

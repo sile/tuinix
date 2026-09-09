@@ -24,7 +24,10 @@ fn write_text(frame: &mut tuinix::TerminalFrame, text: &str, style: tuinix::Term
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize terminal driver and query its size
     let mut driver = tuinix::TerminalDriver::new()?;
-    let mut state = tuinix::TerminalState::new(driver.size()?);
+    let size = driver.size()?;
+    let mut input = tuinix::InputStream::new();
+    let cursor = None;
+    let mut prev = None;
 
     // Set up mio polling
     let mut poll = mio::Poll::new()?;
@@ -50,7 +53,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     // Draw initial frame
-    let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(state.size());
+    let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(size);
 
     // Add styled content to the frame
     let title_style = tuinix::TerminalStyle::new()
@@ -66,9 +69,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Render the frame to a byte buffer, then write it to the terminal.
     let mut out = Vec::new();
-    state.render(frame, &mut out);
+    frame.render(prev.as_ref(), cursor, &mut out);
     driver.write_all(&out)?;
     driver.flush()?;
+    prev = Some(frame);
 
     // Event loop
     let mut raw = [0u8; 256];
@@ -84,14 +88,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             match event.token() {
                 STDIN_TOKEN => {
                     // Handle keyboard input by reading raw bytes and feeding them
-                    // into the state.
+                    // into the input stream.
                     while let Some(n) = tuinix::try_nonblocking(driver.read(&mut raw))? {
                         if n == 0 {
                             break;
                         }
-                        state.feed_bytes(&raw[..n]);
-                        while let Some(input) = state.next_input() {
-                            let tuinix::TerminalInput::Key(key_input) = input else {
+                        input.feed(&raw[..n]);
+                        while let Some(event) = input.next() {
+                            let tuinix::TerminalInput::Key(key_input) = event else {
                                 continue; // Skip mouse events
                             };
 
@@ -101,8 +105,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
 
                             // Display the input
-                            let mut frame: tuinix::TerminalFrame =
-                                tuinix::TerminalFrame::new(state.size());
+                            let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(size);
                             write_text(
                                 &mut frame,
                                 &format!("Key pressed: {:?}\n", key_input),
@@ -114,20 +117,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 tuinix::TerminalStyle::new(),
                             );
                             let mut out = Vec::new();
-                            state.render(frame, &mut out);
+                            frame.render(prev.as_ref(), cursor, &mut out);
                             driver.write_all(&out)?;
                             driver.flush()?;
+                            prev = Some(frame);
                         }
                     }
                 }
                 SIGNAL_TOKEN => {
                     // Handle terminal resize event
-                    while let Some(size) = tuinix::try_nonblocking(driver.poll_resize())? {
-                        state.set_size(size);
-                        let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(size);
+                    while let Some(new_size) = tuinix::try_nonblocking(driver.poll_resize())? {
+                        let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(new_size);
                         write_text(
                             &mut frame,
-                            &format!("Terminal resized to {}x{}\n", size.cols, size.rows),
+                            &format!("Terminal resized to {}x{}\n", new_size.cols, new_size.rows),
                             tuinix::TerminalStyle::new(),
                         );
                         write_text(
@@ -136,9 +139,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             tuinix::TerminalStyle::new(),
                         );
                         let mut out = Vec::new();
-                        state.render(frame, &mut out);
+                        frame.render(prev.as_ref(), cursor, &mut out);
                         driver.write_all(&out)?;
                         driver.flush()?;
+                        prev = Some(frame);
                     }
                 }
                 _ => unreachable!("Unexpected token"),

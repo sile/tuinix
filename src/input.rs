@@ -102,28 +102,44 @@ pub enum MouseEvent {
     ScrollDown,
 }
 
-/// The pure, I/O-free input buffer that accumulates raw bytes until a complete
+/// The pure, I/O-free input stream that accumulates raw bytes until a complete
 /// input event can be parsed.
 ///
-/// The buffer is driven by the application: it has no awareness of any `Read`
-/// source, so it can live inside the I/O-free core and be fed whatever bytes
-/// the application reads from a terminal or elsewhere.
+/// The stream is driven by the application: it has no awareness of any `Read`
+/// source, so it can live outside the driver and be fed whatever bytes the
+/// application reads from a terminal or elsewhere.
+///
+/// Feed raw bytes with [`InputStream::feed()`](Self::feed), pull parsed
+/// [`TerminalInput`] values with [`InputStream::next()`](Self::next), and check
+/// whether an incomplete sequence is being held with
+/// [`InputStream::has_pending()`](Self::has_pending).
 #[derive(Debug, Default)]
-pub(crate) struct InputBuffer {
+pub struct InputStream {
     buf: Vec<u8>,
 }
 
-impl InputBuffer {
-    /// Appends raw bytes to the buffer.
-    pub fn push(&mut self, bytes: &[u8]) {
+impl InputStream {
+    /// Creates an empty input stream.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Feeds raw bytes into the stream.
+    pub fn feed(&mut self, bytes: &[u8]) {
         self.buf.extend_from_slice(bytes);
     }
 
     /// Parses and returns the next complete input event, consuming its bytes.
     ///
     /// An incomplete sequence (for example a lone `ESC` byte) stays in the
-    /// buffer and yields `None` until the rest of the sequence arrives. Unknown
+    /// stream and yields `None` until the rest of the sequence arrives. Unknown
     /// sequences are dropped, as are bytes that cannot be parsed at all.
+    //
+    // `InputStream` is a stateful parser, not an iterator; the name `next` is
+    // kept for symmetry with `feed`. Implementing `Iterator` would not be a
+    // natural fit here (it would require a meaningful `Item` and a separate
+    // iteration model).
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Option<TerminalInput> {
         loop {
             let (input, consumed) = match parse_input(&self.buf) {
@@ -145,9 +161,9 @@ impl InputBuffer {
         }
     }
 
-    /// Returns `true` if the buffer holds unconsumed bytes.
-    pub fn is_empty(&self) -> bool {
-        self.buf.is_empty()
+    /// Returns `true` when the stream holds unconsumed bytes.
+    pub fn has_pending(&self) -> bool {
+        !self.buf.is_empty()
     }
 }
 
@@ -1024,16 +1040,16 @@ mod tests {
     }
 
     #[test]
-    fn test_input_buffer_preserves_incomplete_sequence_across_pushes() {
-        let mut buffer = InputBuffer::default();
+    fn test_input_stream_preserves_incomplete_sequence_across_pushes() {
+        let mut buffer = InputStream::new();
 
         // An incomplete escape sequence stays in the buffer.
-        buffer.push(&[0x1b, b'[']);
+        buffer.feed(&[0x1b, b'[']);
         assert_eq!(buffer.next(), None);
-        assert!(!buffer.is_empty());
+        assert!(buffer.has_pending());
 
         // The continuation completes the sequence.
-        buffer.push(b"A");
+        buffer.feed(b"A");
         assert_eq!(
             buffer.next(),
             Some(TerminalInput::Key(KeyInput {
@@ -1042,15 +1058,15 @@ mod tests {
                 code: KeyCode::Up,
             }))
         );
-        assert!(buffer.is_empty());
+        assert!(!buffer.has_pending());
     }
 
     #[test]
-    fn test_input_buffer_drains_partial_bytes_in_order() {
-        let mut buffer = InputBuffer::default();
+    fn test_input_stream_drains_partial_bytes_in_order() {
+        let mut buffer = InputStream::new();
 
         // Feed multiple complete inputs plus a trailing incomplete byte.
-        buffer.push(b"ab\x1b[");
+        buffer.feed(b"ab\x1b[");
         assert_eq!(
             buffer.next(),
             Some(TerminalInput::Key(KeyInput {
@@ -1067,17 +1083,17 @@ mod tests {
                 code: KeyCode::Char('b'),
             }))
         );
-        // The partial CSI sequence remains and is reported via is_empty().
+        // The partial CSI sequence remains and is reported via has_pending().
         assert_eq!(buffer.next(), None);
-        assert!(!buffer.is_empty());
+        assert!(buffer.has_pending());
     }
 
     #[test]
-    fn test_input_buffer() {
-        let mut buffer = InputBuffer::default();
+    fn test_input_stream() {
+        let mut buffer = InputStream::new();
 
         // A simple character.
-        buffer.push(b"a");
+        buffer.feed(b"a");
         assert_eq!(
             buffer.next(),
             Some(TerminalInput::Key(KeyInput {
@@ -1088,7 +1104,7 @@ mod tests {
         );
 
         // An arrow key.
-        buffer.push(&[0x1b, b'[', b'A'][..]);
+        buffer.feed(&[0x1b, b'[', b'A'][..]);
         assert_eq!(
             buffer.next(),
             Some(TerminalInput::Key(KeyInput {
@@ -1099,7 +1115,7 @@ mod tests {
         );
 
         // Multiple inputs in one push.
-        buffer.push(b"ab");
+        buffer.feed(b"ab");
         assert_eq!(
             buffer.next(),
             Some(TerminalInput::Key(KeyInput {
@@ -1549,11 +1565,11 @@ mod tests {
     }
 
     #[test]
-    fn test_input_buffer_mouse_events() {
-        let mut buffer = InputBuffer::default();
+    fn test_input_stream_mouse_events() {
+        let mut buffer = InputStream::new();
 
         // A mouse click.
-        buffer.push(b"\x1b[<0;10;5M");
+        buffer.feed(b"\x1b[<0;10;5M");
         assert_eq!(
             buffer.next(),
             Some(TerminalInput::Mouse(MouseInput {
@@ -1566,7 +1582,7 @@ mod tests {
         );
 
         // Multiple mouse events in one push.
-        buffer.push(b"\x1b[<0;10;5M\x1b[<0;10;5m");
+        buffer.feed(b"\x1b[<0;10;5M\x1b[<0;10;5m");
         assert_eq!(
             buffer.next(),
             Some(TerminalInput::Mouse(MouseInput {
@@ -1950,12 +1966,12 @@ mod tests {
         Ok(())
     }
 
-    /// `InputBuffer::next` must agree with a model that applies
+    /// `InputStream::next` must agree with a model that applies
     /// `parse_input` repeatedly to the same bytes: the same event
     /// sequence, stopping at the same incomplete or fully consumed
     /// sequence.
     #[test]
-    fn pbt_input_buffer_matches_parse_model() -> noprop::TestResult {
+    fn pbt_input_stream_matches_parse_model() -> noprop::TestResult {
         let observed_event = Cell::new(false);
         let observed_partial = Cell::new(false);
         let observed_unknown = Cell::new(false);
@@ -1963,15 +1979,15 @@ mod tests {
         let mut runner = noprop::Runner::new(seed);
         runner.run(256, |ctx| {
             let bytes = sample_pbt_fragments(ctx);
-            let mut buffer = InputBuffer::default();
-            buffer.push(&bytes);
+            let mut buffer = InputStream::new();
+            buffer.feed(&bytes);
             let mut actual = Vec::new();
             let actual_partial;
             loop {
                 match buffer.next() {
                     Some(input) => actual.push(input),
                     None => {
-                        actual_partial = !buffer.is_empty();
+                        actual_partial = buffer.has_pending();
                         break;
                     }
                 }
