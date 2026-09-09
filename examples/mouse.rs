@@ -205,7 +205,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if n == 0 {
             continue;
         }
-        state.push_input(&raw[..n]);
+        state.feed_bytes(&raw[..n]);
     }
 
     Ok(())

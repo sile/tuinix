@@ -37,7 +37,7 @@ The library separates the *state* of a terminal application from the
   bytes back to it.
 
 The application is responsible for driving the loop: read raw bytes from the
-driver, feed them into `TerminalState::push_input()`, pull parsed
+driver, feed them into `TerminalState::feed_bytes()`, pull parsed
 `TerminalInput` values out with `TerminalState::next_input()`, build a
 `TerminalFrame`, ask the state to render it into a byte buffer with
 `TerminalState::render()`, and write that buffer to the driver.
@@ -122,7 +122,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if n == 0 {
             continue;
         }
-        state.push_input(&raw[..n]);
+        state.feed_bytes(&raw[..n]);
     }
 
     Ok(())

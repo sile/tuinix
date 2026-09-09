@@ -10,7 +10,7 @@ use crate::{TerminalFrame, TerminalInput, TerminalPosition, TerminalSize, input:
 ///
 /// It is paired with a driver (see [`TerminalDriver`](crate::TerminalDriver)) that
 /// owns the file descriptors and terminal modes. The application reads raw bytes
-/// from the driver, feeds them into [`TerminalState::push_input()`], and writes
+/// from the driver, feeds them into [`TerminalState::feed_bytes()`], and writes
 /// the bytes produced by [`TerminalState::render()`] to the driver.
 pub struct TerminalState {
     size: TerminalSize,
@@ -53,8 +53,8 @@ impl TerminalState {
         self.cursor = position;
     }
 
-    /// Appends raw input bytes to the internal buffer.
-    pub fn push_input(&mut self, bytes: &[u8]) {
+    /// Feeds raw input bytes into the internal buffer.
+    pub fn feed_bytes(&mut self, bytes: &[u8]) {
         self.input.push(bytes);
     }
 

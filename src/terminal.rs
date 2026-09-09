@@ -159,7 +159,7 @@ impl TerminalDriver {
     /// Enables mouse input reporting in the terminal.
     ///
     /// Mouse events will be reported as raw bytes on the input stream, which the
-    /// application feeds into [`TerminalState::push_input()`](crate::TerminalState::push_input)
+    /// application feeds into [`TerminalState::feed_bytes()`](crate::TerminalState::feed_bytes)
     /// so they parse as [`TerminalInput::Mouse`](crate::TerminalInput::Mouse) values.
     pub fn enable_mouse_input(&mut self) -> io::Result<()> {
         // Enable mouse reporting in SGR mode (more reliable than X10/X11 mode)

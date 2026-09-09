@@ -89,7 +89,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         if n == 0 {
                             break;
                         }
-                        state.push_input(&raw[..n]);
+                        state.feed_bytes(&raw[..n]);
                         while let Some(input) = state.next_input() {
                             let tuinix::TerminalInput::Key(key_input) = input else {
                                 continue; // Skip mouse events
