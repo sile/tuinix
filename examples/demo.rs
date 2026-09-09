@@ -1,3 +1,19 @@
+//! A complete, end-to-end example of using `tuinix`.
+//!
+//! This demo drives a [`TerminalDriver`](tuinix::TerminalDriver) from a
+//! `libc::poll` event loop, feeding raw bytes into an
+//! [`InputStream`](tuinix::InputStream) and drawing frames with
+//! [`TerminalFrame::render`](tuinix::TerminalFrame::render). It shows:
+//!
+//! * entering and leaving raw mode (via [`TerminalDriver`](tuinix::TerminalDriver)),
+//! * reading raw terminal bytes and turning them into
+//!   [`TerminalInput`](tuinix::TerminalInput) events,
+//! * handling keyboard input (quitting on `q`),
+//! * reporting mouse events,
+//! * reacting to a terminal resize.
+//!
+//! Run it with `cargo run --example demo`.
+
 use std::io::{Read, Write};
 
 // NOTE: This is an ASCII-oriented demo helper: every character is assigned a width of 1.
@@ -16,22 +32,23 @@ fn write_text(frame: &mut tuinix::TerminalFrame, text: &str, style: tuinix::Term
     }
 }
 
-/// Wraps a non-blocking I/O call so the event loop keeps running on a resize.
+/// Retries a non-blocking I/O call that can be interrupted by a signal.
 ///
-/// A [`std::io::ErrorKind::WouldBlock`] is converted to `Ok(None)`, meaning "no input
-/// right now". A signal (for example SIGWINCH on resize) may interrupt the call with
-/// [`std::io::ErrorKind::Interrupted`]; in that case the call is retried so the resize
-/// is handled on the next `poll` iteration instead of crashing the loop.
-fn or_none<F, T>(mut call: F) -> std::io::Result<Option<T>>
+/// A system call can return [`std::io::ErrorKind::Interrupted`] when a signal (for
+/// example SIGWINCH on resize) has been handled; in that case the call is repeated.
+/// A [`std::io::ErrorKind::WouldBlock`] becomes `Ok(None)`, meaning "no data
+/// available right now", so the event loop keeps running. Any other outcome is
+/// passed through unchanged, so a genuine error still surfaces to the caller.
+fn retry_or_none<T, F>(mut call: F) -> std::io::Result<Option<T>>
 where
     F: FnMut() -> std::io::Result<T>,
 {
     loop {
         match call() {
+            Ok(v) => return Ok(Some(v)),
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => return Ok(None),
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(e) => return Err(e),
-            Ok(v) => return Ok(Some(v)),
         }
     }
 }
@@ -61,7 +78,7 @@ fn draw_header(
     write_text(frame, "• Press 'q' to quit\n", tuinix::TerminalStyle::new());
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::io::Result<()> {
     // Initialize the terminal driver and query its size.
     let mut driver = tuinix::TerminalDriver::new()?;
     let mut size = driver.size()?;
@@ -113,12 +130,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if err.kind() == std::io::ErrorKind::Interrupted {
                 continue;
             }
-            return Err(err.into());
+            return Err(err);
         }
 
         // Handle a terminal resize.
         if fds[1].revents & libc::POLLIN != 0 {
-            while let Some(new_size) = or_none(|| driver.poll_resize())? {
+            while let Some(new_size) = retry_or_none(|| driver.poll_resize())? {
                 size = new_size;
                 let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(size);
                 draw_header(&mut frame, title_style, info_style);
@@ -140,7 +157,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Handle available input.
         if fds[0].revents & libc::POLLIN != 0 {
-            while let Some(n) = or_none(|| driver.read(&mut raw))? {
+            while let Some(n) = retry_or_none(|| driver.read(&mut raw))? {
                 if n == 0 {
                     break;
                 }
