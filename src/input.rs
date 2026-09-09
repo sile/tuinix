@@ -1,5 +1,3 @@
-use std::io::Read;
-
 use crate::TerminalPosition;
 
 /// User input.
@@ -104,56 +102,52 @@ pub enum MouseEvent {
     ScrollDown,
 }
 
-#[derive(Debug)]
-pub struct InputReader<R> {
-    inner: R,
+/// The pure, I/O-free input buffer that accumulates raw bytes until a complete
+/// input event can be parsed.
+///
+/// The buffer is driven by the application: it has no awareness of any `Read`
+/// source, so it can live inside the I/O-free core and be fed whatever bytes
+/// the application reads from a terminal or elsewhere.
+#[derive(Debug, Default)]
+pub(crate) struct InputBuffer {
     buf: Vec<u8>,
-    buf_offset: usize,
 }
 
-impl<R: Read> InputReader<R> {
-    pub fn new(inner: R) -> Self {
-        Self {
-            inner,
-            buf: vec![0; 64],
-            buf_offset: 0,
-        }
+impl InputBuffer {
+    /// Appends raw bytes to the buffer.
+    pub fn push(&mut self, bytes: &[u8]) {
+        self.buf.extend_from_slice(bytes);
     }
 
-    pub fn inner(&self) -> &R {
-        &self.inner
-    }
-
-    pub(crate) fn replace_inner(&mut self, inner: R) {
-        self.inner = inner;
-    }
-
-    pub fn read_input(&mut self) -> std::io::Result<Option<TerminalInput>> {
-        if self.buf_offset > 0
-            && let Some(input) = self.read_input_from_buf()?
-        {
-            return Ok(Some(input));
-        }
-
-        let read_size = self.inner.read(&mut self.buf[self.buf_offset..])?;
-        if read_size == 0 {
-            return Err(std::io::ErrorKind::UnexpectedEof.into());
-        }
-
-        self.buf_offset += read_size;
-        self.read_input_from_buf()
-    }
-
-    pub(crate) fn read_input_from_buf(&mut self) -> std::io::Result<Option<TerminalInput>> {
+    /// Parses and returns the next complete input event, consuming its bytes.
+    ///
+    /// An incomplete sequence (for example a lone `ESC` byte) stays in the
+    /// buffer and yields `None` until the rest of the sequence arrives. Unknown
+    /// sequences are dropped, as are bytes that cannot be parsed at all.
+    pub fn next(&mut self) -> Option<TerminalInput> {
         loop {
-            let (input, consumed_size) = parse_input(&self.buf[..self.buf_offset])?;
-            self.buf.copy_within(consumed_size..self.buf_offset, 0);
-            self.buf_offset -= consumed_size;
-            if input.is_none() && consumed_size > 0 {
+            let (input, consumed) = match parse_input(&self.buf) {
+                Ok(v) => v,
+                Err(_) => {
+                    // Malformed input (for example invalid UTF-8 in a mouse
+                    // sequence): clear the buffer so parsing cannot loop.
+                    self.buf.clear();
+                    return None;
+                }
+            };
+            if consumed > 0 {
+                self.buf.drain(..consumed);
+            }
+            if input.is_none() && consumed > 0 {
                 continue;
             }
-            return Ok(input);
+            return input;
         }
+    }
+
+    /// Returns `true` if the buffer holds unconsumed bytes.
+    pub fn is_empty(&self) -> bool {
+        self.buf.is_empty()
     }
 }
 
@@ -531,7 +525,7 @@ fn create_x10_mouse_input(button_byte: u8, x: u16, y: u16) -> MouseInput {
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::Cell, io::Cursor};
+    use std::cell::Cell;
 
     use super::*;
 
@@ -1030,83 +1024,62 @@ mod tests {
     }
 
     #[test]
-    fn test_replace_inner_preserves_buffer_then_reads_new_inner() {
-        let mut reader = InputReader::new(Cursor::new(&b"ab"[..]));
+    fn test_input_buffer_preserves_incomplete_sequence_across_pushes() {
+        let mut buffer = InputBuffer::default();
 
-        // Read the first input. The remaining byte is kept in the internal buffer.
-        let first = reader.read_input().expect("read succeeds");
+        // An incomplete escape sequence stays in the buffer.
+        buffer.push(&[0x1b, b'[']);
+        assert_eq!(buffer.next(), None);
+        assert!(!buffer.is_empty());
+
+        // The continuation completes the sequence.
+        buffer.push(b"A");
         assert_eq!(
-            first,
+            buffer.next(),
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: false,
+                code: KeyCode::Up,
+            }))
+        );
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn test_input_buffer_drains_partial_bytes_in_order() {
+        let mut buffer = InputBuffer::default();
+
+        // Feed multiple complete inputs plus a trailing incomplete byte.
+        buffer.push(b"ab\x1b[");
+        assert_eq!(
+            buffer.next(),
             Some(TerminalInput::Key(KeyInput {
                 ctrl: false,
                 alt: false,
                 code: KeyCode::Char('a'),
             }))
         );
-
-        // Replacing the inner reader must preserve the buffered data and then
-        // continue reading from the new inner reader.
-        reader.replace_inner(Cursor::new(&b"c"[..]));
-        let second = reader.read_input().expect("read succeeds");
         assert_eq!(
-            second,
+            buffer.next(),
             Some(TerminalInput::Key(KeyInput {
                 ctrl: false,
                 alt: false,
                 code: KeyCode::Char('b'),
             }))
         );
-        let third = reader.read_input().expect("read succeeds");
-        assert_eq!(
-            third,
-            Some(TerminalInput::Key(KeyInput {
-                ctrl: false,
-                alt: false,
-                code: KeyCode::Char('c'),
-            }))
-        );
+        // The partial CSI sequence remains and is reported via is_empty().
+        assert_eq!(buffer.next(), None);
+        assert!(!buffer.is_empty());
     }
 
     #[test]
-    fn test_replace_inner_combines_partial_sequence_with_new_inner() {
-        // An incomplete escape sequence stays in the buffer.
-        let mut reader = InputReader::new(Cursor::new(&[0x1b, b'['][..]));
-        let none = reader.read_input().expect("read succeeds");
-        assert_eq!(none, None);
+    fn test_input_buffer() {
+        let mut buffer = InputBuffer::default();
 
-        // The continuation arrives from the new inner reader.
-        reader.replace_inner(Cursor::new(&b"A"[..]));
-        let input = reader.read_input().expect("read succeeds");
+        // A simple character.
+        buffer.push(b"a");
         assert_eq!(
-            input,
-            Some(TerminalInput::Key(KeyInput {
-                ctrl: false,
-                alt: false,
-                code: KeyCode::Up,
-            }))
-        );
-    }
-
-    #[test]
-    fn test_replace_inner_propagates_new_inner_eof() {
-        let mut reader = InputReader::new(Cursor::new(&b"ab"[..]));
-        assert!(reader.read_input().expect("read succeeds").is_some());
-
-        reader.replace_inner(Cursor::new(&b""[..]));
-        assert!(reader.read_input().expect("read succeeds").is_some());
-
-        // After the buffer is consumed, EOF from the new inner reader propagates.
-        let err = reader.read_input().expect_err("should fail");
-        assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
-    }
-
-    #[test]
-    fn test_input_reader() {
-        // Test reading a simple character
-        let mut reader = InputReader::new(Cursor::new(b"a"));
-        let result = reader.read_input().expect("read succeeds");
-        assert_eq!(
-            result,
+            buffer.next(),
             Some(TerminalInput::Key(KeyInput {
                 ctrl: false,
                 alt: false,
@@ -1114,11 +1087,10 @@ mod tests {
             }))
         );
 
-        // Test reading an arrow key
-        let mut reader = InputReader::new(Cursor::new(&[0x1b, b'[', b'A'][..]));
-        let result = reader.read_input().expect("read succeeds");
+        // An arrow key.
+        buffer.push(&[0x1b, b'[', b'A'][..]);
         assert_eq!(
-            result,
+            buffer.next(),
             Some(TerminalInput::Key(KeyInput {
                 ctrl: false,
                 alt: false,
@@ -1126,13 +1098,10 @@ mod tests {
             }))
         );
 
-        // Test reading multiple inputs
-        let mut reader = InputReader::new(Cursor::new(b"ab"));
-        let result1 = reader.read_input().expect("read succeeds");
-        let result2 = reader.read_input().expect("read succeeds");
-
+        // Multiple inputs in one push.
+        buffer.push(b"ab");
         assert_eq!(
-            result1,
+            buffer.next(),
             Some(TerminalInput::Key(KeyInput {
                 ctrl: false,
                 alt: false,
@@ -1140,7 +1109,7 @@ mod tests {
             }))
         );
         assert_eq!(
-            result2,
+            buffer.next(),
             Some(TerminalInput::Key(KeyInput {
                 ctrl: false,
                 alt: false,
@@ -1580,12 +1549,13 @@ mod tests {
     }
 
     #[test]
-    fn test_input_reader_mouse_events() {
-        // Test reading a mouse click
-        let mut reader = InputReader::new(Cursor::new(b"\x1b[<0;10;5M"));
-        let result = reader.read_input().expect("read succeeds");
+    fn test_input_buffer_mouse_events() {
+        let mut buffer = InputBuffer::default();
+
+        // A mouse click.
+        buffer.push(b"\x1b[<0;10;5M");
         assert_eq!(
-            result,
+            buffer.next(),
             Some(TerminalInput::Mouse(MouseInput {
                 event: MouseEvent::LeftPress,
                 position: TerminalPosition::row_col(4, 9),
@@ -1595,13 +1565,10 @@ mod tests {
             }))
         );
 
-        // Test reading multiple mouse events
-        let mut reader = InputReader::new(Cursor::new(b"\x1b[<0;10;5M\x1b[<0;10;5m"));
-        let result1 = reader.read_input().expect("read succeeds");
-        let result2 = reader.read_input().expect("read succeeds");
-
+        // Multiple mouse events in one push.
+        buffer.push(b"\x1b[<0;10;5M\x1b[<0;10;5m");
         assert_eq!(
-            result1,
+            buffer.next(),
             Some(TerminalInput::Mouse(MouseInput {
                 event: MouseEvent::LeftPress,
                 position: TerminalPosition::row_col(4, 9),
@@ -1611,7 +1578,7 @@ mod tests {
             }))
         );
         assert_eq!(
-            result2,
+            buffer.next(),
             Some(TerminalInput::Mouse(MouseInput {
                 event: MouseEvent::LeftRelease,
                 position: TerminalPosition::row_col(4, 9),
@@ -1983,7 +1950,7 @@ mod tests {
         Ok(())
     }
 
-    /// `read_input_from_buf` must agree with a model that applies
+    /// `InputBuffer::next` must agree with a model that applies
     /// `parse_input` repeatedly to the same bytes: the same event
     /// sequence, stopping at the same incomplete or fully consumed
     /// sequence.
@@ -1996,21 +1963,17 @@ mod tests {
         let mut runner = noprop::Runner::new(seed);
         runner.run(256, |ctx| {
             let bytes = sample_pbt_fragments(ctx);
-            let mut reader = InputReader {
-                inner: Cursor::new(&[]),
-                buf: bytes.clone(),
-                buf_offset: bytes.len(),
-            };
+            let mut buffer = InputBuffer::default();
+            buffer.push(&bytes);
             let mut actual = Vec::new();
             let actual_partial;
             loop {
-                match reader.read_input_from_buf() {
-                    Ok(Some(input)) => actual.push(input),
-                    Ok(None) => {
-                        actual_partial = reader.buf_offset > 0;
+                match buffer.next() {
+                    Some(input) => actual.push(input),
+                    None => {
+                        actual_partial = !buffer.is_empty();
                         break;
                     }
-                    Err(e) => panic!("read_input_from_buf must not fail: {e}"),
                 }
             }
             let mut expected = Vec::new();

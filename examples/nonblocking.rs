@@ -1,3 +1,4 @@
+use std::io::{Read, Write};
 use std::time::Duration;
 
 // Define tokens for our event sources
@@ -21,8 +22,9 @@ fn write_text(frame: &mut tuinix::TerminalFrame, text: &str, style: tuinix::Term
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize terminal
-    let mut terminal = tuinix::Terminal::new()?;
+    // Initialize terminal driver and query its size
+    let (mut driver, size) = tuinix::TerminalDriver::new()?;
+    let mut state = tuinix::TerminalState::new(size);
 
     // Set up mio polling
     let mut poll = mio::Poll::new()?;
@@ -32,8 +34,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // `set_input_nonblocking()` replaces the input fd with a fresh open of the
     // terminal device that stdin is connected to, so making it non-blocking
     // does not affect stdout.
-    let stdin_fd = terminal.set_input_nonblocking()?;
-    let signal_fd = terminal.set_signal_nonblocking()?;
+    let stdin_fd = driver.set_input_nonblocking()?;
+    let signal_fd = driver.set_signal_nonblocking()?;
 
     // Register the file descriptors with mio
     poll.registry().register(
@@ -48,7 +50,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     // Draw initial frame
-    let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(terminal.size());
+    let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(state.size());
 
     // Add styled content to the frame
     let title_style = tuinix::TerminalStyle::new()
@@ -62,10 +64,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         tuinix::TerminalStyle::new(),
     );
 
-    // Draw the frame to the terminal
-    terminal.draw(frame)?;
+    // Render the frame to a byte buffer, then write it to the terminal.
+    let mut out = Vec::new();
+    state.render(frame, &mut out);
+    driver.write_all(&out)?;
+    driver.flush()?;
 
     // Event loop
+    let mut raw = [0u8; 256];
     loop {
         // Wait for events with a timeout
         if tuinix::try_uninterrupted(poll.poll(&mut events, Some(Duration::from_millis(100))))?
@@ -77,36 +83,47 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         for event in events.iter() {
             match event.token() {
                 STDIN_TOKEN => {
-                    // Handle keyboard input
-                    while let Some(Some(input)) = tuinix::try_nonblocking(terminal.read_input())? {
-                        let tuinix::TerminalInput::Key(key_input) = input else {
-                            continue; // Skip mouse events
-                        };
-
-                        // Check if 'q' was pressed
-                        if let tuinix::KeyCode::Char('q') = key_input.code {
-                            return Ok(());
+                    // Handle keyboard input by reading raw bytes and feeding them
+                    // into the state.
+                    while let Some(n) = tuinix::try_nonblocking(driver.read(&mut raw))? {
+                        if n == 0 {
+                            break;
                         }
+                        state.push_input(&raw[..n]);
+                        while let Some(input) = state.next_input() {
+                            let tuinix::TerminalInput::Key(key_input) = input else {
+                                continue; // Skip mouse events
+                            };
 
-                        // Display the input
-                        let mut frame: tuinix::TerminalFrame =
-                            tuinix::TerminalFrame::new(terminal.size());
-                        write_text(
-                            &mut frame,
-                            &format!("Key pressed: {:?}\n", key_input),
-                            tuinix::TerminalStyle::new(),
-                        );
-                        write_text(
-                            &mut frame,
-                            "\nPress any key ('q' to quit)\n",
-                            tuinix::TerminalStyle::new(),
-                        );
-                        terminal.draw(frame)?;
+                            // Check if 'q' was pressed
+                            if let tuinix::KeyCode::Char('q') = key_input.code {
+                                return Ok(());
+                            }
+
+                            // Display the input
+                            let mut frame: tuinix::TerminalFrame =
+                                tuinix::TerminalFrame::new(state.size());
+                            write_text(
+                                &mut frame,
+                                &format!("Key pressed: {:?}\n", key_input),
+                                tuinix::TerminalStyle::new(),
+                            );
+                            write_text(
+                                &mut frame,
+                                "\nPress any key ('q' to quit)\n",
+                                tuinix::TerminalStyle::new(),
+                            );
+                            let mut out = Vec::new();
+                            state.render(frame, &mut out);
+                            driver.write_all(&out)?;
+                            driver.flush()?;
+                        }
                     }
                 }
                 SIGNAL_TOKEN => {
                     // Handle terminal resize event
-                    while let Some(size) = tuinix::try_nonblocking(terminal.wait_for_resize())? {
+                    while let Some(size) = tuinix::try_nonblocking(driver.poll_resize())? {
+                        state.set_size(size);
                         let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(size);
                         write_text(
                             &mut frame,
@@ -118,7 +135,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             "\nPress any key ('q' to quit)\n",
                             tuinix::TerminalStyle::new(),
                         );
-                        terminal.draw(frame)?;
+                        let mut out = Vec::new();
+                        state.render(frame, &mut out);
+                        driver.write_all(&out)?;
+                        driver.flush()?;
                     }
                 }
                 _ => unreachable!("Unexpected token"),

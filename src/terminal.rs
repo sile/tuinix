@@ -1,165 +1,51 @@
 use std::{
     fs::File,
-    io::{BufWriter, Error, ErrorKind, IsTerminal, Read, Stdout, Write},
+    io::{self, BufWriter, Error, ErrorKind, IsTerminal, Read, Stdout, Write},
     mem::MaybeUninit,
     os::fd::{AsRawFd, FromRawFd, RawFd},
     sync::atomic::{AtomicBool, Ordering},
-    time::{Duration, Instant},
 };
 
-use crate::{
-    TerminalFrame, TerminalPosition, TerminalSize,
-    input::{InputReader, TerminalInput},
-};
+use crate::TerminalSize;
 
 static TERMINAL_EXISTS: AtomicBool = AtomicBool::new(false);
 
 static mut SIGWINCH_PIPE_FD: RawFd = 0;
 
-/// Terminal interface for building TUI (Terminal User Interface) applications.
+/// Thin TTY driver that owns the terminal file descriptors and terminal modes.
 ///
-/// The [`Terminal`] struct provides a foundational layer for creating terminal-based
-/// user interfaces by managing:
+/// This type performs no high-level state keeping: it does not store the current
+/// frame, size, or input buffer. It owns the file descriptors for input and output
+/// and the saved terminal modes, and it is responsible for entering and leaving
+/// raw mode and the alternate screen. This makes it a good target for implementing
+/// [`Read`] and [`Write`], so an application can read raw bytes from the terminal
+/// and write raw output bytes back to it, feeding those bytes in and out of a
+/// [`TerminalState`](crate::TerminalState).
 ///
-/// - Raw terminal mode configuration
-/// - Alternate screen buffer
-/// - Terminal size detection and window resize events
-/// - Input event handling
-/// - Cursor positioning and visibility
-/// - Drawing frames with styled characters
-///
-/// Only one instance of [`Terminal`] can exist at a time, ensuring proper management
-/// of terminal state. The terminal is automatically restored to its original state
-/// when the [`Terminal`] instance is dropped.
-///
-/// # Basic Example
-///
-/// This example demonstrates the essential steps to initialize a terminal, create a frame,
-/// draw it to the screen, and handle input events with a timeout.
-///
-/// ```no_run
-/// use std::time::Duration;
-///
-/// fn main() -> std::io::Result<()> {
-///     let mut terminal = tuinix::Terminal::new()?;
-///     let size = terminal.size();
-///
-///     // Create and draw a frame
-///     let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(size);
-///     // Add content to frame...
-///     terminal.draw(frame)?;
-///
-///     // Wait for events with timeout
-///     let timeout = Duration::from_millis(100);
-///     if let Some(event) = terminal.poll_event(&[], &[], Some(timeout))? {
-///         // Handle input or resize events
-///         println!("Received event: {:?}", event);
-///     }
-///
-///     Ok(())
-/// }
-/// ```
-///
-/// # Non-blocking I/O Example
-///
-/// This example demonstrates how to use the terminal with non-blocking I/O operations
-/// through the `mio` crate. This approach allows handling terminal events without
-/// blocking the main thread, which is useful for responsive UIs or when integrating
-/// with other event sources.
-///
-/// ```no_run
-/// use std::time::Duration;
-///
-/// fn main() -> std::io::Result<()> {
-///     // Initialize terminal
-///     let mut terminal = tuinix::Terminal::new()?;
-///
-///     // Create mio Poll instance
-///     let mut poll = mio::Poll::new()?;
-///     let mut events = mio::Events::with_capacity(10);
-///
-///     // Get file descriptors and set to non-blocking mode
-///     let stdin_fd = terminal.set_input_nonblocking()?;
-///     let signal_fd = terminal.set_signal_nonblocking()?;
-///
-///     // Register with mio poll
-///     poll.registry().register(
-///         &mut mio::unix::SourceFd(&stdin_fd),
-///         mio::Token(0),
-///         mio::Interest::READABLE
-///     )?;
-///     poll.registry().register(
-///         &mut mio::unix::SourceFd(&signal_fd),
-///         mio::Token(1),
-///         mio::Interest::READABLE
-///     )?;
-///
-///     // Event loop
-///     loop {
-///         // Wait for events with timeout
-///         let timeout = Duration::from_millis(100);
-///         if tuinix::try_uninterrupted(poll.poll(&mut events, Some(timeout)))?.is_none() {
-///             continue;
-///         }
-///
-///         for event in events.iter() {
-///             match event.token() {
-///                 mio::Token(0) => {
-///                     // Handle input without blocking
-///                     while let Some(input) = tuinix::try_nonblocking(terminal.read_input())? {
-///                         // Process input event
-///                     }
-///                 },
-///                 mio::Token(1) => {
-///                     // Handle terminal resize without blocking
-///                     while let Some(size) = tuinix::try_nonblocking(terminal.wait_for_resize())? {
-///                         // Terminal was resized, update UI
-///                     }
-///                 },
-///                 _ => unreachable!(),
-///             }
-///         }
-///
-///         // Update display if needed
-///     }
-/// }
-/// ```
-pub struct Terminal {
-    input: InputReader<File>,
+/// Only one instance can exist at a time; it is automatically restored to the
+/// original terminal state when dropped.
+pub struct TerminalDriver {
+    input: File,
     output: BufWriter<Stdout>,
     signal: File,
     original_termios: libc::termios,
-    size: TerminalSize,
-    last_frame: TerminalFrame,
-    cursor: Option<TerminalPosition>,
     input_replaced: bool,
 }
 
-impl Terminal {
-    /// Creates a new terminal interface with raw mode, alternate screen, and hidden cursor.
+impl TerminalDriver {
+    /// Creates a new terminal driver.
     ///
-    /// This function initializes a terminal for TUI (Terminal User Interface) applications
-    /// by:
-    ///
-    /// - Ensuring only one terminal instance exists at a time
-    /// - Verifying stdin/stdout are connected to a terminal
-    /// - Saving the original terminal state (restored on drop)
-    /// - Enabling raw mode (for direct character-by-character input)
-    /// - Switching to the alternate screen buffer
-    /// - Hiding the cursor
-    /// - Installing a SIGWINCH signal handler to detect terminal resize events
-    /// - Installing a panic handler to restore terminal state on panic
+    /// This enters raw mode, switches to the alternate screen, hides the cursor,
+    /// and installs a SIGWINCH handler. It returns the driver together with the
+    /// initial terminal size.
     ///
     /// # Errors
     ///
-    /// Returns an error if:
-    /// - Another [`Terminal`] instance already exists
-    /// - Standard input is not a terminal
-    /// - Standard output is not a terminal
-    /// - Terminal configuration fails
-    pub fn new() -> std::io::Result<Self> {
+    /// Returns an error if another driver instance already exists, if stdin or
+    /// stdout is not a terminal, or if a terminal configuration call fails.
+    pub fn new() -> io::Result<(Self, TerminalSize)> {
         if TERMINAL_EXISTS.swap(true, Ordering::SeqCst) {
-            return Err(Error::other("Terminal instance already exists"));
+            return Err(Error::other("TerminalDriver instance already exists"));
         }
 
         let stdin = std::io::stdin();
@@ -186,23 +72,20 @@ impl Terminal {
 
         // Own a duplicate of the stdin fd instead of fd 0 itself, so that the
         // original stdin stays open (e.g. for use by child processes) even
-        // after this `Terminal` is dropped or the input fd is replaced.
+        // after this driver is dropped or the input fd is replaced.
         let stdin_fd = unsafe { libc::fcntl(stdin.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 0) };
         if stdin_fd < 0 {
             return Err(Error::last_os_error());
         }
         let stdin = unsafe { File::from_raw_fd(stdin_fd) };
         let mut this = Self {
-            input: InputReader::new(stdin),
+            input: stdin,
             output: BufWriter::new(stdout),
             signal: set_sigwinch_handler()?,
             original_termios,
-            size: TerminalSize::EMPTY,
-            last_frame: TerminalFrame::default(),
-            cursor: None,
             input_replaced: false,
         };
-        this.update_size()?;
+        let size = this.resize()?;
         this.enable_raw_mode()?;
         this.enable_alternate_screen()?;
         this.hide_cursor()?;
@@ -234,46 +117,41 @@ impl Terminal {
             default_hook(panic_info);
         }));
 
-        Ok(this)
+        Ok((this, size))
     }
 
-    /// Returns the current terminal size.
+    /// Returns the input file descriptor.
     ///
-    /// The size is updated when terminal resize events are detected through
-    /// [`Terminal::wait_for_resize()`] or [`Terminal::poll_event()`].
-    pub fn size(&self) -> TerminalSize {
-        self.size
-    }
-
-    /// Returns the file descriptor of the terminal input.
-    ///
-    /// The returned descriptor is a duplicate of the stdin file descriptor (the original stdin,
-    /// fd 0, is left untouched). The value changes after [`Terminal::set_input_nonblocking()`]
-    /// is called; fetch it again in that case.
+    /// The returned descriptor is a duplicate of the stdin file descriptor (the
+    /// original stdin, fd 0, is left untouched). The value changes after
+    /// [`TerminalDriver::set_input_nonblocking()`] is called; fetch it again in that
+    /// case.
     pub fn input_fd(&self) -> RawFd {
-        self.input.inner().as_raw_fd()
+        self.input.as_raw_fd()
     }
 
-    /// Returns the file descriptor of the terminal output.
+    /// Returns the output file descriptor.
     pub fn output_fd(&self) -> RawFd {
         self.output.get_ref().as_raw_fd()
     }
 
-    /// Returns the file descriptor that receives terminal resize signal notifications.
+    /// Returns the file descriptor that receives terminal resize signal
+    /// notifications.
     ///
-    /// Make it non-blocking with [`Terminal::set_signal_nonblocking()`] when using external
-    /// event loops.
+    /// Make it non-blocking with [`TerminalDriver::set_signal_nonblocking()`] when
+    /// using external event loops.
     pub fn signal_fd(&self) -> RawFd {
         self.signal.as_raw_fd()
     }
 
-    /// Makes the terminal resize signal file descriptor non-blocking, and returns the file
-    /// descriptor.
+    /// Makes the terminal resize signal file descriptor non-blocking, and returns
+    /// the file descriptor.
     ///
-    /// The signal fd is a pipe that does not share an open file description with the output, so
-    /// making it non-blocking has no side effects on [`Terminal::draw()`]. This is required when
-    /// combining [`Terminal::wait_for_resize()`] with external event loops.
-    pub fn set_signal_nonblocking(&mut self) -> std::io::Result<RawFd> {
+    /// The signal fd is a pipe that does not share an open file description with
+    /// the output, so making it non-blocking has no side effects on writes. This is
+    /// required when combining [`TerminalDriver::poll_resize()`] with external event
+    /// loops.
+    pub fn set_signal_nonblocking(&mut self) -> io::Result<RawFd> {
         let fd = self.signal_fd();
         crate::set_fd_nonblocking(fd, true)?;
         Ok(fd)
@@ -281,31 +159,10 @@ impl Terminal {
 
     /// Enables mouse input reporting in the terminal.
     ///
-    /// Mouse events will be received through [`Terminal::poll_event()`] or [`Terminal::read_input()`]
-    /// as [`TerminalInput::Mouse`] variants.
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// use std::time::Duration;
-    ///
-    /// let mut terminal = tuinix::Terminal::new()?;
-    /// terminal.enable_mouse_input()?;
-    ///
-    /// loop {
-    ///     if let Some(event) = terminal.poll_event(&[], &[], Some(Duration::from_millis(100)))? {
-    ///         match event {
-    ///             tuinix::TerminalEvent::Input(tuinix::TerminalInput::Mouse(mouse)) => {
-    ///                 println!("Mouse event: {:?} at ({}, {})",
-    ///                          mouse.event, mouse.position.col, mouse.position.row);
-    ///             }
-    ///             _ => {}
-    ///         }
-    ///     }
-    /// }
-    /// # Ok::<(), std::io::Error>(())
-    /// ```
-    pub fn enable_mouse_input(&mut self) -> std::io::Result<()> {
+    /// Mouse events will be reported as raw bytes on the input stream, which the
+    /// application feeds into [`TerminalState::push_input()`](crate::TerminalState::push_input)
+    /// so they parse as [`TerminalInput::Mouse`](crate::TerminalInput::Mouse) values.
+    pub fn enable_mouse_input(&mut self) -> io::Result<()> {
         // Enable mouse reporting in SGR mode (more reliable than X10/X11 mode)
         write!(self.output, "\x1b[?1000h")?; // Enable basic mouse reporting
         write!(self.output, "\x1b[?1002h")?; // Enable button event tracking and motion
@@ -318,13 +175,8 @@ impl Terminal {
     /// Disables mouse input reporting in the terminal.
     ///
     /// This method disables all mouse event reporting that was previously enabled
-    /// with [`Terminal::enable_mouse_input()`]. After calling this method, mouse
-    /// events will no longer be sent to the application.
-    ///
-    /// Mouse input is automatically disabled when the Terminal is dropped, so calling
-    /// this method manually is only necessary if you want to disable mouse input
-    /// while keeping the Terminal instance active.
-    pub fn disable_mouse_input(&mut self) -> std::io::Result<()> {
+    /// with [`TerminalDriver::enable_mouse_input()`].
+    pub fn disable_mouse_input(&mut self) -> io::Result<()> {
         // Disable mouse reporting (reverse order)
         write!(self.output, "\x1b[?1006l")?; // Disable SGR extended coordinate reporting
         write!(self.output, "\x1b[?1015l")?; // Disable urxvt extended coordinate reporting
@@ -334,206 +186,40 @@ impl Terminal {
         Ok(())
     }
 
-    /// Waits for and returns the next terminal event.
+    /// Waits for a terminal resize event to occur and returns the new terminal size.
     ///
-    /// This method efficiently waits for either input events, terminal resize events,
-    /// or custom file descriptor events using [`libc::select()`].
-    ///
-    /// If you want to use I/O polling mechanisms other than [`libc::select()`],
-    /// please use the following methods directly:
-    /// - [`Terminal::input_fd()`] and [`Terminal::read_input()`] for input events (call
-    ///   [`Terminal::set_input_nonblocking()`] first, as required by external event loops)
-    /// - [`Terminal::signal_fd()`] and [`Terminal::wait_for_resize()`] for resize events (call
-    ///   [`Terminal::set_signal_nonblocking()`] first, as required by external event loops)
-    ///
-    /// # Parameters
-    ///
-    /// - `additional_readfds`: Additional file descriptors to monitor for read readiness
-    /// - `additional_writefds`: Additional file descriptors to monitor for write readiness
-    /// - `timeout`: Optional timeout duration; `None` blocks indefinitely
-    ///
-    /// # Returns
-    ///
-    /// - `Ok(Some(TerminalEvent))` if an input, resize, or file descriptor event was received
-    /// - `Ok(None)` if the timeout expired without any event
-    /// - `Err(e)` if an I/O error occurred
-    pub fn poll_event(
-        &mut self,
-        additional_readfds: &[RawFd],
-        additional_writefds: &[RawFd],
-        timeout: Option<Duration>,
-    ) -> std::io::Result<Option<TerminalEvent>> {
-        if let Some(input) = self.input.read_input_from_buf()? {
-            return Ok(Some(TerminalEvent::Input(input)));
-        }
-
-        let start_time = Instant::now();
-        loop {
-            unsafe {
-                // Always monitor input and signal fds
-                let mut readfds = MaybeUninit::<libc::fd_set>::zeroed();
-                libc::FD_ZERO(readfds.as_mut_ptr());
-                libc::FD_SET(self.input_fd(), readfds.as_mut_ptr());
-                libc::FD_SET(self.signal_fd(), readfds.as_mut_ptr());
-                let mut maxfd = self.input_fd().max(self.signal.as_raw_fd());
-
-                // Add extra read fds
-                for &fd in additional_readfds {
-                    libc::FD_SET(fd, readfds.as_mut_ptr());
-                    maxfd = maxfd.max(fd);
-                }
-                let mut readfds = readfds.assume_init();
-
-                // Add extra write fds
-                let mut writefds = MaybeUninit::<libc::fd_set>::zeroed();
-                if !additional_writefds.is_empty() {
-                    libc::FD_ZERO(writefds.as_mut_ptr());
-                    for &fd in additional_writefds {
-                        libc::FD_SET(fd, writefds.as_mut_ptr());
-                        maxfd = maxfd.max(fd);
-                    }
-                }
-                let mut writefds = writefds.assume_init();
-
-                let mut timeval = MaybeUninit::<libc::timeval>::zeroed();
-                let timeval_ptr = if let Some(duration) = timeout {
-                    let duration = duration.saturating_sub(start_time.elapsed());
-                    let tv = timeval.as_mut_ptr();
-                    (*tv).tv_sec = duration.as_secs() as libc::time_t;
-                    (*tv).tv_usec = duration.subsec_micros() as libc::suseconds_t;
-                    tv
-                } else {
-                    std::ptr::null_mut()
-                };
-
-                let ret = libc::select(
-                    maxfd + 1,
-                    &mut readfds,
-                    if additional_writefds.is_empty() {
-                        std::ptr::null_mut()
-                    } else {
-                        &mut writefds
-                    },
-                    std::ptr::null_mut(),
-                    timeval_ptr,
-                );
-
-                if ret == -1 {
-                    let e = Error::last_os_error();
-                    if e.kind() == ErrorKind::Interrupted {
-                        continue;
-                    }
-                    return Err(e);
-                } else if ret == 0 {
-                    // Timeout
-                    return Ok(None);
-                }
-
-                // Check built-in fds first
-                if libc::FD_ISSET(self.input_fd(), &readfds)
-                    && let Some(input) = self.read_input()?
-                {
-                    return Ok(Some(TerminalEvent::Input(input)));
-                }
-                if libc::FD_ISSET(self.signal_fd(), &readfds) {
-                    return self.wait_for_resize().map(TerminalEvent::Resize).map(Some);
-                }
-
-                // Check extra read fds
-                for &fd in additional_readfds {
-                    if libc::FD_ISSET(fd, &readfds) {
-                        let readable = true;
-                        return Ok(Some(TerminalEvent::FdReady { fd, readable }));
-                    }
-                }
-
-                // Check extra write fds
-                for &fd in additional_writefds {
-                    if libc::FD_ISSET(fd, &writefds) {
-                        let readable = false;
-                        return Ok(Some(TerminalEvent::FdReady { fd, readable }));
-                    }
-                }
-            }
-        }
+    /// By default, this method blocks until a resize occurs. To use it in
+    /// non-blocking mode, first call [`TerminalDriver::set_signal_nonblocking()`].
+    /// Unlike the input fd, the signal fd is a pipe that does not share an open file
+    /// description with the output, so making it non-blocking has no side effects on
+    /// writes.
+    pub fn poll_resize(&mut self) -> io::Result<TerminalSize> {
+        self.signal.read_exact(&mut [0])?;
+        self.resize()
     }
 
-    /// Reads and processes the next input event from the terminal.
+    /// Makes the terminal input non-blocking by replacing the input file descriptor
+    /// with a fresh open of the terminal device that stdin is connected to, and
+    /// returns the new file descriptor.
     ///
-    /// This method attempts to read raw bytes from the terminal input and parse them into a
-    /// structured [`TerminalInput`] event.
+    /// This is the recommended way to make the input non-blocking (e.g. for use with
+    /// `mio` or `tokio::io::unix::AsyncFd`). Making the input fd non-blocking
+    /// directly (e.g. via `fcntl` with `O_NONBLOCK`) also affects the output fd,
+    /// because both share an open file description in typical interactive terminals,
+    /// which may cause writes to fail with `EAGAIN` / `EWOULDBLOCK`. This method
+    /// avoids that by opening a fresh, independent file description for the input.
     ///
-    /// By default, this method blocks until input is available. To use it in non-blocking
-    /// mode, first call [`Terminal::set_input_nonblocking()`].
-    ///
-    /// Note that an incomplete escape sequence (e.g. a lone `ESC` byte) stays in the internal
-    /// buffer and is reported as `Ok(None)` until the rest of the sequence arrives. With a
-    /// non-blocking input, a standalone `ESC` key event is therefore only reported once the
-    /// following key is pressed, and may then be interpreted as an `Alt` key combination.
-    ///
-    /// While [`Terminal::poll_event()`] is generally recommended for receiving terminal input events,
-    /// you may need to call this method directly when using external I/O polling crates like `mio`.
-    ///
-    /// # Returns
-    ///
-    /// - `Ok(Some(input))` if an input event was successfully read and parsed
-    /// - `Ok(None)` if not enough bytes were available to form a complete input event
-    /// - `Err(e)` if an I/O error occurred while reading from the input
+    /// If the input fd has already been made non-blocking, the `O_NONBLOCK` flag is
+    /// cleared from the original file description as part of this method (also on
+    /// failure), so writes stop failing with `EAGAIN` after this method returns.
     ///
     /// # Errors
     ///
-    /// This method returns an error if reading from the terminal input fails or encounters EOF.
-    pub fn read_input(&mut self) -> std::io::Result<Option<TerminalInput>> {
-        self.input.read_input()
-    }
-
-    /// Makes the terminal input non-blocking by replacing the input file descriptor with a fresh
-    /// open of the terminal device that stdin is connected to, and returns the new file
-    /// descriptor.
-    ///
-    /// This is the recommended way to make the input non-blocking (e.g. for use with `mio` or
-    /// `tokio::io::unix::AsyncFd`). Making the input fd non-blocking directly (e.g. via `fcntl`
-    /// with `O_NONBLOCK`) also affects the output fd, because both share an open file description
-    /// in typical interactive terminals, which may cause [`Terminal::draw()`] to fail with
-    /// `EAGAIN` / `EWOULDBLOCK`. This method avoids that by opening a fresh, independent file
-    /// description for the input.
-    ///
-    /// If the input fd has already been made non-blocking, the `O_NONBLOCK` flag is cleared from
-    /// the original file description as part of this method (also on failure), so `draw()` stops
-    /// failing with `EAGAIN` after this method returns.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - The input has already been replaced (the previously returned file descriptor stays
-    ///   valid, since the `Terminal` keeps owning it)
-    /// - The terminal device that stdin is connected to cannot be identified or opened
-    /// - Configuring the new file descriptor fails
-    ///
-    /// On error, the input is not made non-blocking and the input file descriptor stays in use.
-    ///
-    /// # Notes
-    ///
-    /// - The returned file descriptor is owned by the `Terminal` and is closed when the `Terminal`
-    ///   is dropped. `tokio::io::unix::AsyncFd` caches the file descriptor number it is given, so
-    ///   if the number is reused after the `Terminal` closes it, the `AsyncFd` keeps monitoring an
-    ///   unrelated file descriptor. Pass a duplicated file descriptor to wrappers that take
-    ///   ownership rather than the returned one. `mio::unix::SourceFd(&fd)` borrows the descriptor
-    ///   and can be used directly.
-    /// - Call this method before registering the file descriptor with an external event loop
-    ///   (e.g. `mio` or `AsyncFd`), because [`Terminal::input_fd()`] changes after the
-    ///   replacement. Buffered input is preserved, so calling [`Terminal::read_input()`] beforehand
-    ///   does not lose data.
-    /// - Call this method only once per `Terminal`. Subsequent calls return `Err` and leave the
-    ///   previously returned file descriptor valid.
-    /// - The device path is opened directly instead of `/dev/tty`: on macOS, kqueue-based event
-    ///   loops (e.g. `mio` / `tokio::io::unix::AsyncFd`) cannot monitor file descriptors obtained
-    ///   from `/dev/tty`, whereas they work on the underlying device node. If the device path
-    ///   cannot be determined or opened, running [`Terminal::poll_event()`] in a `spawn_blocking`
-    ///   task is an alternative.
-    /// - The original stdin file descriptor (fd 0) is left untouched, so `std::io::stdin()` and
-    ///   child processes keep working as usual.
-    pub fn set_input_nonblocking(&mut self) -> std::io::Result<RawFd> {
+    /// Returns an error if the input has already been replaced, if the terminal
+    /// device that stdin is connected to cannot be identified or opened, or if
+    /// configuring the new file descriptor fails. On error, the input is not made
+    /// non-blocking and the input file descriptor stays in use.
+    pub fn set_input_nonblocking(&mut self) -> io::Result<RawFd> {
         if self.input_replaced {
             return Err(Error::new(
                 ErrorKind::InvalidInput,
@@ -554,154 +240,37 @@ impl Terminal {
             return Err(err);
         }
 
-        self.input.replace_inner(unsafe { File::from_raw_fd(fd) });
+        self.input = unsafe { File::from_raw_fd(fd) };
         self.input_replaced = true;
         Ok(fd)
     }
 
-    fn clear_input_nonblocking(&self) -> std::io::Result<()> {
+    fn clear_input_nonblocking(&self) -> io::Result<()> {
         crate::set_fd_nonblocking(self.input_fd(), false)
     }
 
-    /// Waits for a terminal resize event to occur and returns the new terminal size.
-    ///
-    /// By default, this method blocks until input is available. To use it in non-blocking
-    /// mode, first call [`Terminal::set_signal_nonblocking()`].
-    /// Unlike the input fd, the signal fd is a pipe that does not share an open file description
-    /// with the output, so making it non-blocking has no side effects on [`Terminal::draw()`].
-    ///
-    /// While [`Terminal::poll_event()`] is generally recommended for detecting terminal resize events,
-    /// you may need to call this method directly when using external I/O polling crates like `mio`.
-    pub fn wait_for_resize(&mut self) -> std::io::Result<TerminalSize> {
-        self.signal.read_exact(&mut [0])?;
-        self.update_size()?;
-        Ok(self.size)
-    }
-
-    /// Sets the cursor position to be displayed after drawing a frame.
-    ///
-    /// This method allows controlling where the cursor appears on the terminal after
-    /// calling [`Terminal::draw()`]. Setting a position makes the cursor visible at
-    /// that location, while passing `None` hides the cursor.
-    ///
-    /// The cursor position is only applied after drawing a frame, so it won't take
-    /// effect until the next call to [`Terminal::draw()`].
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    ///
-    /// let mut terminal = tuinix::Terminal::new()?;
-    ///
-    /// // Show cursor at row 5, column 10
-    /// terminal.set_cursor(Some(tuinix::TerminalPosition::row_col(5, 10)));
-    ///
-    /// // Hide cursor
-    /// terminal.set_cursor(None);
-    /// # Ok::<(), std::io::Error>(())
-    /// ```
-    pub fn set_cursor(&mut self, position: Option<TerminalPosition>) {
-        self.cursor = position;
-    }
-
-    /// Draws a frame to the terminal screen.
-    ///
-    /// This method efficiently renders a terminal frame by
-    /// only redrawing lines that differ from the previous frame.
-    ///
-    /// The frame is saved internally, allowing subsequent calls to only update
-    /// changed portions of the screen for better performance.
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// let mut terminal = tuinix::Terminal::new()?;
-    /// let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(terminal.size());
-    ///
-    /// // Write some text
-    /// for c in "Hello, terminal world!".chars() {
-    ///     frame.push_char(tuinix::TerminalChar::new(c, 1, tuinix::TerminalStyle::new()).expect("valid cell"));
-    /// }
-    ///
-    /// // Display the cursor at the beginning of the next line
-    /// terminal.set_cursor(Some(tuinix::TerminalPosition::row(1)));
-    ///
-    /// // Render the frame to the terminal
-    /// terminal.draw(frame)?;
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
-    pub fn draw(&mut self, frame: TerminalFrame) -> std::io::Result<()> {
-        self.hide_cursor()?;
-
-        let move_cursor = |output: &mut BufWriter<_>, position: TerminalPosition| {
-            write!(output, "\x1b[{};{}H", position.row + 1, position.col + 1)
-        };
-
-        let resized = self.last_frame.size() != frame.size();
-        let mut skipped = false;
-        let mut last_style = None;
-        let mut last_row = usize::MAX;
-        for (position, c) in frame.chars() {
-            let old = self.last_frame.get_char(position);
-            if !resized && Some(c) == old {
-                skipped = true;
-                continue;
-            }
-
-            if skipped || last_row != position.row {
-                move_cursor(&mut self.output, position)?;
-            }
-            if Some(c.style()) != last_style {
-                write!(self.output, "{}", c.style())?;
-            }
-            write!(self.output, "{}", c.value())?;
-
-            last_style = Some(c.style());
-            last_row = position.row;
-            skipped = false;
-        }
-
-        if let Some(position) = self.cursor {
-            move_cursor(&mut self.output, position)?;
-            self.show_cursor()?;
-        }
-
-        self.output.flush()?;
-        self.last_frame = frame;
-
-        Ok(())
-    }
-
-    fn hide_cursor(&mut self) -> std::io::Result<()> {
-        write!(self.output, "\x1b[?25l")
-    }
-
-    fn show_cursor(&mut self) -> std::io::Result<()> {
-        write!(self.output, "\x1b[?25h")
-    }
-
-    fn update_size(&mut self) -> std::io::Result<()> {
+    fn resize(&mut self) -> io::Result<TerminalSize> {
         let mut winsize = MaybeUninit::<libc::winsize>::zeroed();
         check_libc_result(unsafe {
             libc::ioctl(self.output_fd(), libc::TIOCGWINSZ, winsize.as_mut_ptr())
         })?;
 
         let winsize = unsafe { winsize.assume_init() };
-        self.size.rows = winsize.ws_row as usize;
-        self.size.cols = winsize.ws_col as usize;
-
-        Ok(())
+        Ok(TerminalSize {
+            rows: winsize.ws_row as usize,
+            cols: winsize.ws_col as usize,
+        })
     }
 
-    fn enable_alternate_screen(&mut self) -> std::io::Result<()> {
+    fn enable_alternate_screen(&mut self) -> io::Result<()> {
         write!(self.output, "\x1b[?1049h")
     }
 
-    fn disable_alternate_screen(&mut self) -> std::io::Result<()> {
+    fn disable_alternate_screen(&mut self) -> io::Result<()> {
         write!(self.output, "\x1b[?1049l")
     }
 
-    fn enable_raw_mode(&mut self) -> std::io::Result<()> {
+    fn enable_raw_mode(&mut self) -> io::Result<()> {
         let mut raw = self.original_termios;
 
         // Input modes: no break, no CR to NL, no parity check, no strip char,
@@ -727,15 +296,39 @@ impl Terminal {
         Ok(())
     }
 
-    fn disable_raw_mode(&mut self) -> std::io::Result<()> {
+    fn disable_raw_mode(&mut self) -> io::Result<()> {
         check_libc_result(unsafe {
             libc::tcsetattr(self.input_fd(), libc::TCSAFLUSH, &self.original_termios)
         })?;
         Ok(())
     }
+
+    fn hide_cursor(&mut self) -> io::Result<()> {
+        write!(self.output, "\x1b[?25l")
+    }
+
+    fn show_cursor(&mut self) -> io::Result<()> {
+        write!(self.output, "\x1b[?25h")
+    }
 }
 
-impl Drop for Terminal {
+impl Read for TerminalDriver {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.input.read(buf)
+    }
+}
+
+impl Write for TerminalDriver {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.output.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.output.flush()
+    }
+}
+
+impl Drop for TerminalDriver {
     fn drop(&mut self) {
         let _ = self.disable_mouse_input();
         let _ = self.disable_alternate_screen();
@@ -747,36 +340,13 @@ impl Drop for Terminal {
     }
 }
 
-impl std::fmt::Debug for Terminal {
+impl std::fmt::Debug for TerminalDriver {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Terminal").finish()
+        f.debug_struct("TerminalDriver").finish()
     }
 }
 
-/// Terminal event returned by [`Terminal::poll_event()`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum TerminalEvent {
-    /// Terminal resize event.
-    Resize(TerminalSize),
-
-    /// User input event.
-    Input(TerminalInput),
-
-    /// Custom file descriptor is ready for I/O.
-    FdReady {
-        /// The file descriptor that is ready for I/O operations.
-        ///
-        /// This is the raw file descriptor number that was passed to
-        /// [`Terminal::poll_event()`] in either the `additional_readfds` or
-        /// `additional_writefds` parameters and is now ready for reading or writing.
-        fd: RawFd,
-
-        /// `true` if ready for reading, `false` if ready for writing.
-        readable: bool,
-    },
-}
-
-fn check_libc_result(result: libc::c_int) -> std::io::Result<()> {
+fn check_libc_result(result: libc::c_int) -> io::Result<()> {
     if result == 0 {
         Ok(())
     } else {
@@ -790,7 +360,7 @@ unsafe extern "C" fn handle_sigwinch(_: libc::c_int) {
     }
 }
 
-fn set_sigwinch_handler() -> std::io::Result<File> {
+fn set_sigwinch_handler() -> io::Result<File> {
     let mut pipefd = [0 as RawFd; 2];
     check_libc_result(unsafe { libc::pipe(pipefd.as_mut_ptr()) })?;
     unsafe {
@@ -811,9 +381,10 @@ fn set_sigwinch_handler() -> std::io::Result<File> {
     }
 }
 
-/// Opens a fresh, independent file description of the terminal device that `input_fd` is
-/// connected to, and makes it non-blocking. The original file description is not modified.
-fn open_nonblocking_input(input_fd: RawFd) -> std::io::Result<RawFd> {
+/// Opens a fresh, independent file description of the terminal device that
+/// `input_fd` is connected to, and makes it non-blocking. The original file
+/// description is not modified.
+fn open_nonblocking_input(input_fd: RawFd) -> io::Result<RawFd> {
     let mut path = [0u8; libc::PATH_MAX as usize];
     if unsafe { libc::ttyname_r(input_fd, path.as_mut_ptr().cast(), path.len()) } != 0 {
         return Err(Error::last_os_error());
@@ -839,7 +410,7 @@ mod tests {
     use std::io::IsTerminal;
     use std::os::fd::RawFd;
 
-    use super::{Terminal, open_nonblocking_input};
+    use super::{TerminalDriver, open_nonblocking_input};
 
     #[test]
     fn open_nonblocking_input_rejects_non_tty() {
@@ -908,13 +479,13 @@ mod tests {
             return;
         }
 
-        let terminal = Terminal::new().expect("ok");
+        let (terminal, _size) = TerminalDriver::new().expect("ok");
 
-        // Creating a second terminal should fail while the first one exists
-        assert!(Terminal::new().is_err());
+        // Creating a second driver should fail while the first one exists
+        assert!(TerminalDriver::new().is_err());
 
-        // After dropping the first terminal, creating a new one should succeed
+        // After dropping the first driver, creating a new one should succeed
         std::mem::drop(terminal);
-        assert!(Terminal::new().is_ok());
+        assert!(TerminalDriver::new().is_ok());
     }
 }
