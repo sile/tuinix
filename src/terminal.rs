@@ -15,15 +15,24 @@ static mut SIGWINCH_PIPE_FD: RawFd = 0;
 /// Thin TTY driver that owns the terminal file descriptors and terminal modes.
 ///
 /// This type performs no high-level state keeping: it does not store the current
-/// frame, size, or input buffer. It owns the file descriptors for input and output
-/// and the saved terminal modes, and it is responsible for entering and leaving
-/// raw mode and the alternate screen. This makes it a good target for implementing
-/// [`Read`] and [`Write`], so an application can read raw bytes from the terminal
+/// frame or input buffer, but it caches the most recently observed terminal size
+/// so [`TerminalDriver::size()`] always reports a valid value. It owns the file
+/// descriptors for input and output and the saved terminal modes, and it is
+/// responsible for entering and leaving raw mode and the alternate screen. This
+/// makes it a good target for implementing [`Read`] and [`Write`], so an
+/// application can read raw bytes from the terminal
 /// and write raw output bytes back to it, feeding those bytes in and out of an
 /// [`InputStream`](crate::InputStream) and a [`TerminalFrame`](crate::TerminalFrame).
 ///
 /// The input and signal file descriptors are non-blocking, so an application can
 /// drive them from an external event loop without affecting the output side.
+///
+/// SIGWINCH is owned exclusively by the driver: creating one installs a handler
+/// that replaces any handler the application had configured, and registers it
+/// with `SA_RESTART` so the driver's own size query is not interrupted by a
+/// resize. A `poll`-based event loop still observes `EINTR` (because `poll` is
+/// never restarted), but the byte the handler writes to the signal pipe makes
+/// the resize available on the next `poll`. Other signals are left untouched.
 ///
 /// Only one instance can exist at a time; it is automatically restored to the
 /// original terminal state when dropped.
@@ -32,15 +41,18 @@ pub struct TerminalDriver {
     output: BufWriter<Stdout>,
     signal: File,
     original_termios: libc::termios,
+    cached_size: TerminalSize,
 }
 
 impl TerminalDriver {
     /// Creates a new terminal driver.
     ///
     /// This enters raw mode, switches to the alternate screen, hides the cursor,
-    /// and installs a SIGWINCH handler. The input and signal file descriptors are
-    /// made non-blocking. Use [`TerminalDriver::size()`] to query the initial
-    /// terminal size.
+    /// and installs a SIGWINCH handler (taking over any handler the application
+    /// had configured). The input and signal file descriptors are made
+    /// non-blocking. The initial terminal size is cached and can be read with
+    /// [`TerminalDriver::size()`]; it is refreshed automatically whenever a resize
+    /// notification arrives.
     ///
     /// # Errors
     ///
@@ -84,11 +96,15 @@ impl TerminalDriver {
             output: BufWriter::new(stdout),
             signal: set_sigwinch_handler()?,
             original_termios,
+            cached_size: TerminalSize::default(),
         };
 
         // The signal pipe does not share an open file description with the output,
         // so marking it non-blocking has no side effects on writes.
         crate::set_fd_nonblocking(this.signal.as_raw_fd(), true)?;
+
+        // Seed the cached size with the current terminal dimensions.
+        this.cached_size = this.resize()?;
 
         this.enable_raw_mode()?;
         this.enable_alternate_screen()?;
@@ -178,37 +194,41 @@ impl TerminalDriver {
 
     /// Returns the current terminal size.
     ///
-    /// This queries the terminal for its current dimensions.
+    /// The driver caches the most recently observed size. This method first drains
+    /// any pending resize notifications without blocking; if at least one was
+    /// received it re-queries the terminal and updates the cache, so the returned
+    /// value reflects the latest resize. If no notification is pending it returns
+    /// the cached size immediately.
     ///
     /// # Errors
     ///
-    /// Returns an error if the terminal size cannot be queried.
-    pub fn size(&self) -> io::Result<TerminalSize> {
-        self.resize()
-    }
-
-    /// Waits for a terminal resize event to occur and returns the new terminal size.
-    ///
-    /// The signal descriptor is non-blocking, so this returns
-    /// [`std::io::ErrorKind::WouldBlock`] when no resize has occurred. Use
-    /// [`TerminalDriver::signal_fd()`] to detect readiness before calling this
-    /// method.
-    pub fn poll_resize(&mut self) -> io::Result<TerminalSize> {
-        self.signal.read_exact(&mut [0])?;
-        self.resize()
+    /// Returns an error if the terminal size cannot be re-queried after a resize
+    /// notification.
+    pub fn size(&mut self) -> io::Result<TerminalSize> {
+        let mut notified = false;
+        loop {
+            match self.signal.read(&mut [0u8]) {
+                Ok(_) => notified = true,
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
+                Err(e) => return Err(e),
+            }
+        }
+        if notified {
+            self.cached_size = self.resize()?;
+        }
+        Ok(self.cached_size)
     }
 
     fn resize(&self) -> io::Result<TerminalSize> {
         let mut winsize = MaybeUninit::<libc::winsize>::zeroed();
-        check_libc_result(unsafe {
-            libc::ioctl(self.output_fd(), libc::TIOCGWINSZ, winsize.as_mut_ptr())
-        })?;
-
-        let winsize = unsafe { winsize.assume_init() };
-        Ok(TerminalSize {
-            rows: winsize.ws_row as usize,
-            cols: winsize.ws_col as usize,
-        })
+        if unsafe { libc::ioctl(self.output_fd(), libc::TIOCGWINSZ, winsize.as_mut_ptr()) } == 0 {
+            let winsize = unsafe { winsize.assume_init() };
+            return Ok(TerminalSize {
+                rows: winsize.ws_row as usize,
+                cols: winsize.ws_col as usize,
+            });
+        }
+        Err(Error::last_os_error())
     }
 
     fn enable_alternate_screen(&mut self) -> io::Result<()> {
@@ -309,6 +329,19 @@ unsafe extern "C" fn handle_sigwinch(_: libc::c_int) {
     }
 }
 
+/// Installs the SIGWINCH handler, taking over any handler the application may
+/// already have configured.
+///
+/// SIGWINCH is owned exclusively by the driver for the lifetime of the
+/// [`TerminalDriver`] instance. The handler writes one byte to a pipe so that an
+/// external event loop can observe a resize without polling the terminal size.
+///
+/// `SA_RESTART` is set so the kernel automatically restarts the restartable
+/// syscalls the driver performs (such as the ioctl that queries the terminal
+/// size). Note that `poll`/`select` are never restarted, so an event loop that
+/// waits with `poll` still sees `EINTR` for each SIGWINCH; since the handler
+/// writes a byte to the signal pipe, that resize is picked up on the next
+/// `poll`. Other signals are unaffected.
 fn set_sigwinch_handler() -> io::Result<File> {
     let mut pipefd = [0 as RawFd; 2];
     check_libc_result(unsafe { libc::pipe(pipefd.as_mut_ptr()) })?;
@@ -318,7 +351,7 @@ fn set_sigwinch_handler() -> io::Result<File> {
         let mut sigaction = MaybeUninit::<libc::sigaction>::zeroed().assume_init();
 
         sigaction.sa_sigaction = handle_sigwinch as *const () as libc::sighandler_t;
-        sigaction.sa_flags = 0;
+        sigaction.sa_flags = libc::SA_RESTART;
 
         check_libc_result(libc::sigemptyset(&mut sigaction.sa_mask))?;
         check_libc_result(libc::sigaction(
@@ -428,7 +461,10 @@ mod tests {
             return;
         }
 
-        let terminal = TerminalDriver::new().expect("ok");
+        let mut terminal = TerminalDriver::new().expect("ok");
+
+        // The cached size is seeded with the actual terminal dimensions.
+        assert!(!terminal.size().expect("size").is_empty());
 
         // Creating a second driver should fail while the first one exists
         assert!(TerminalDriver::new().is_err());

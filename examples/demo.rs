@@ -32,24 +32,19 @@ fn write_text(frame: &mut tuinix::TerminalFrame, text: &str, style: tuinix::Term
     }
 }
 
-/// Retries a non-blocking I/O call that can be interrupted by a signal.
+/// Maps a non-blocking I/O call's [`std::io::ErrorKind::WouldBlock`] to `Ok(None)`.
 ///
-/// A system call can return [`std::io::ErrorKind::Interrupted`] when a signal (for
-/// example SIGWINCH on resize) has been handled; in that case the call is repeated.
-/// A [`std::io::ErrorKind::WouldBlock`] becomes `Ok(None)`, meaning "no data
-/// available right now", so the event loop keeps running. Any other outcome is
-/// passed through unchanged, so a genuine error still surfaces to the caller.
-fn retry_or_none<T, F>(mut call: F) -> std::io::Result<Option<T>>
+/// The input descriptor is non-blocking, so an empty read returns `WouldBlock`
+/// rather than blocking the event loop. That becomes `Ok(None)` ("no data right
+/// now"), while a genuine error is still passed through unchanged.
+fn would_block_as_none<T, F>(call: F) -> std::io::Result<Option<T>>
 where
-    F: FnMut() -> std::io::Result<T>,
+    F: FnOnce() -> std::io::Result<T>,
 {
-    loop {
-        match call() {
-            Ok(v) => return Ok(Some(v)),
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => return Ok(None),
-            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(e) => return Err(e),
-        }
+    match call() {
+        Ok(v) => Ok(Some(v)),
+        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
+        Err(e) => Err(e),
     }
 }
 
@@ -125,8 +120,10 @@ fn main() -> std::io::Result<()> {
         let n = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, -1) };
         if n < 0 {
             let err = std::io::Error::last_os_error();
-            // A signal (such as SIGWINCH on resize) can interrupt `poll`. Retry instead
-            // of propagating the error, so the signal is handled on the next iteration.
+            // `poll` is never restarted by `SA_RESTART`, so the SIGWINCH handler
+            // still makes it return `EINTR`. The handler writes the resize byte to
+            // the signal pipe before returning, so retry so `poll` reports it as
+            // `POLLIN` on the next iteration.
             if err.kind() == std::io::ErrorKind::Interrupted {
                 continue;
             }
@@ -135,7 +132,8 @@ fn main() -> std::io::Result<()> {
 
         // Handle a terminal resize.
         if fds[1].revents & libc::POLLIN != 0 {
-            while let Some(new_size) = retry_or_none(|| driver.poll_resize())? {
+            let new_size = driver.size()?;
+            if new_size != size {
                 size = new_size;
                 let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(size);
                 draw_header(&mut frame, title_style, info_style);
@@ -157,7 +155,7 @@ fn main() -> std::io::Result<()> {
 
         // Handle available input.
         if fds[0].revents & libc::POLLIN != 0 {
-            while let Some(n) = retry_or_none(|| driver.read(&mut raw))? {
+            while let Some(n) = would_block_as_none(|| driver.read(&mut raw))? {
                 if n == 0 {
                     break;
                 }

@@ -92,15 +92,18 @@
 //!
 //!         // Handle a terminal resize.
 //!         if fds[1].revents & libc::POLLIN != 0 {
-//!             size = driver.poll_resize()?;
-//!             let mut frame = tuinix::TerminalFrame::new(size);
-//!             write_text(&mut frame, "Welcome to tuinix!", title_style);
-//!             write_text(&mut frame, "\nPress any key ('q' to quit)", tuinix::TerminalStyle::new());
-//!             let mut out = Vec::new();
-//!             frame.render(prev.as_ref(), cursor, &mut out);
-//!             driver.write_all(&out)?;
-//!             driver.flush()?;
-//!             prev = Some(frame);
+//!             let new_size = driver.size()?;
+//!             if new_size != size {
+//!                 size = new_size;
+//!                 let mut frame = tuinix::TerminalFrame::new(size);
+//!                 write_text(&mut frame, "Welcome to tuinix!", title_style);
+//!                 write_text(&mut frame, "\nPress any key ('q' to quit)", tuinix::TerminalStyle::new());
+//!                 let mut out = Vec::new();
+//!                 frame.render(prev.as_ref(), cursor, &mut out);
+//!                 driver.write_all(&out)?;
+//!                 driver.flush()?;
+//!                 prev = Some(frame);
+//!             }
 //!         }
 //!
 //!         // Handle available input.
