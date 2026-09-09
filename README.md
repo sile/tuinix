@@ -63,7 +63,7 @@ fn write_text(frame: &mut tuinix::TerminalFrame, text: &str, style: tuinix::Term
     }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::io::Result<()> {
     // Initialize the terminal driver and query its size
     let mut driver = tuinix::TerminalDriver::new()?;
     let mut size = driver.size()?;
@@ -94,7 +94,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     loop {
         if unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, -1) } < 0 {
-            return Err(std::io::Error::last_os_error().into());
+            return Err(std::io::Error::last_os_error());
         }
 
         // Handle a terminal resize.

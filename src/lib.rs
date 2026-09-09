@@ -40,7 +40,7 @@
 //! ```no_run
 //! use std::io::{Read, Write};
 //!
-//! fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! fn main() -> std::io::Result<()> {
 //!     // Initialize terminal driver and query its size
 //!     let mut driver = tuinix::TerminalDriver::new()?;
 //!     let mut size = driver.size()?;
@@ -87,7 +87,7 @@
 //!
 //!     loop {
 //!         if unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, -1) } < 0 {
-//!             return Err(std::io::Error::last_os_error().into());
+//!             return Err(std::io::Error::last_os_error());
 //!         }
 //!
 //!         // Handle a terminal resize.

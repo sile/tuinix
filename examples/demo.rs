@@ -84,7 +84,7 @@ fn main() -> std::io::Result<()> {
     let mut size = driver.size()?;
     let mut input = tuinix::InputStream::new();
     let cursor = None;
-    let mut prev = None;
+    let mut prev_frame = None;
 
     // Enable mouse input reporting.
     driver.enable_mouse_input()?;
@@ -99,10 +99,10 @@ fn main() -> std::io::Result<()> {
 
     // Render the initial frame and write it to the terminal.
     let mut out = Vec::new();
-    frame.render(prev.as_ref(), cursor, &mut out);
+    frame.render(prev_frame.as_ref(), cursor, &mut out);
     driver.write_all(&out)?;
     driver.flush()?;
-    prev = Some(frame);
+    prev_frame = Some(frame);
 
     // Both descriptors are non-blocking, so `poll` waits for readiness instead of
     // blocking on a read.
@@ -148,10 +148,10 @@ fn main() -> std::io::Result<()> {
                     info_style,
                 );
                 let mut out = Vec::new();
-                frame.render(prev.as_ref(), cursor, &mut out);
+                frame.render(prev_frame.as_ref(), cursor, &mut out);
                 driver.write_all(&out)?;
                 driver.flush()?;
-                prev = Some(frame);
+                prev_frame = Some(frame);
             }
         }
 
@@ -178,10 +178,10 @@ fn main() -> std::io::Result<()> {
                                 info_style,
                             );
                             let mut out = Vec::new();
-                            frame.render(prev.as_ref(), cursor, &mut out);
+                            frame.render(prev_frame.as_ref(), cursor, &mut out);
                             driver.write_all(&out)?;
                             driver.flush()?;
-                            prev = Some(frame);
+                            prev_frame = Some(frame);
                         }
                         tuinix::TerminalInput::Mouse(mouse_input) => {
                             let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(size);
@@ -228,10 +228,10 @@ fn main() -> std::io::Result<()> {
                             );
 
                             let mut out = Vec::new();
-                            frame.render(prev.as_ref(), cursor, &mut out);
+                            frame.render(prev_frame.as_ref(), cursor, &mut out);
                             driver.write_all(&out)?;
                             driver.flush()?;
-                            prev = Some(frame);
+                            prev_frame = Some(frame);
                         }
                     }
                 }
