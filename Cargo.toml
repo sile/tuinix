@@ -16,5 +16,4 @@ categories = ["command-line-interface", "command-line-utilities"]
 libc = "0.2.172"
 
 [dev-dependencies]
-mio = { version = "1.0.3", features = ["os-ext", "os-poll"] }
 noprop = "0.2"

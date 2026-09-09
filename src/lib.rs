@@ -8,7 +8,7 @@
 //! - Drawing styled text with ANSI colors
 //! - Handling terminal resize events
 //! - Creating efficient terminal frames with differential updates
-//! - Non-blocking input for use with external event loops (`mio` / `tokio`)
+//! - Non-blocking input and resize notifications for use with external event loops
 //!
 //! ## Architecture
 //!
@@ -43,16 +43,10 @@
 //! fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     // Initialize terminal driver and query its size
 //!     let mut driver = tuinix::TerminalDriver::new()?;
-//!     let size = driver.size()?;
+//!     let mut size = driver.size()?;
 //!     let mut input = tuinix::InputStream::new();
 //!     let mut cursor = None;
 //!     let mut prev = None;
-//!
-//!     // Create a frame with the terminal's dimensions
-//!     let mut frame = tuinix::TerminalFrame::new(size);
-//!
-//!     // Add styled content to the frame
-//!     let title_style = tuinix::TerminalStyle::new().bold().fg_color(tuinix::TerminalColor::GREEN);
 //!
 //!     // NOTE: This is an ASCII-oriented demo helper: every character is assigned a width of 1.
 //!     // Non-ASCII characters (for example CJK or emoji) would need the caller to supply their
@@ -70,6 +64,9 @@
 //!         }
 //!     }
 //!
+//!     // Add styled content to a frame
+//!     let title_style = tuinix::TerminalStyle::new().bold().fg_color(tuinix::TerminalColor::GREEN);
+//!     let mut frame = tuinix::TerminalFrame::new(size);
 //!     write_text(&mut frame, "Welcome to tuinix!", title_style);
 //!     write_text(&mut frame, "\nPress any key ('q' to quit)", tuinix::TerminalStyle::new());
 //!
@@ -80,23 +77,25 @@
 //!     driver.flush()?;
 //!     prev = Some(frame);
 //!
-//!     // Process input events with a timeout
+//!     // The input and signal descriptors are non-blocking, so use `poll` to wait
+//!     // for readiness instead of blocking on a read.
+//!     let mut fds = [
+//!         libc::pollfd { fd: driver.input_fd(), events: libc::POLLIN, revents: 0 },
+//!         libc::pollfd { fd: driver.signal_fd(), events: libc::POLLIN, revents: 0 },
+//!     ];
 //!     let mut raw = [0u8; 256];
+//!
 //!     loop {
-//!         if input.has_pending() && let Some(event) = input.next() {
-//!             let tuinix::TerminalInput::Key(key_input) = event else {
-//!                 continue;  // Skip mouse events
-//!             };
+//!         if unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, -1) } < 0 {
+//!             return Err(std::io::Error::last_os_error().into());
+//!         }
 //!
-//!             // Check if 'q' was pressed
-//!             if let tuinix::KeyCode::Char('q') = key_input.code {
-//!                 break;
-//!             }
-//!
-//!             // Display the input
+//!         // Handle a terminal resize.
+//!         if fds[1].revents & libc::POLLIN != 0 {
+//!             size = driver.poll_resize()?;
 //!             let mut frame = tuinix::TerminalFrame::new(size);
-//!             write_text(&mut frame, &format!("Key pressed: {:?}\n", key_input), tuinix::TerminalStyle::new());
-//!             write_text(&mut frame, "\nPress any key ('q' to quit)\n", tuinix::TerminalStyle::new());
+//!             write_text(&mut frame, "Welcome to tuinix!", title_style);
+//!             write_text(&mut frame, "\nPress any key ('q' to quit)", tuinix::TerminalStyle::new());
 //!             let mut out = Vec::new();
 //!             frame.render(prev.as_ref(), cursor, &mut out);
 //!             driver.write_all(&out)?;
@@ -104,21 +103,35 @@
 //!             prev = Some(frame);
 //!         }
 //!
-//!         // Read raw bytes from the driver. In a real application this would be
-//!         // driven by an event loop (see examples/nonblocking.rs); here we block
-//!         // until input arrives.
-//!         let n = driver.read(&mut raw)?;
-//!         if n == 0 {
-//!             continue;
-//!         }
-//!         input.feed(&raw[..n]);
-//!     }
+//!         // Handle available input.
+//!         if fds[0].revents & libc::POLLIN != 0 {
+//!             while let Some(n) = tuinix::try_nonblocking(driver.read(&mut raw))? {
+//!                 if n == 0 {
+//!                     break;
+//!                 }
+//!                 input.feed(&raw[..n]);
+//!                 while let Some(event) = input.next() {
+//!                     let tuinix::TerminalInput::Key(key_input) = event else {
+//!                         continue;  // Skip mouse events
+//!                     };
 //!
-//!     Ok(())
+//!                     // Display the input
+//!                     let mut frame = tuinix::TerminalFrame::new(size);
+//!                     write_text(&mut frame, &format!("Key pressed: {:?}\n", key_input), tuinix::TerminalStyle::new());
+//!                     write_text(&mut frame, "\nPress any key ('q' to quit)\n", tuinix::TerminalStyle::new());
+//!                     let mut out = Vec::new();
+//!                     frame.render(prev.as_ref(), cursor, &mut out);
+//!                     driver.write_all(&out)?;
+//!                     driver.flush()?;
+//!                     prev = Some(frame);
+//!                 }
+//!             }
+//!         }
+//!     }
 //! }
 //! ```
 //!
-//! For integration with external event loop libraries like `mio`, see the [nonblocking.rs] example.
+//! For a full example of an event loop driven with `poll`, see the [nonblocking.rs] example.
 //!
 //! [nonblocking.rs]: https://github.com/sile/tuinix/blob/main/examples/nonblocking.rs
 #![warn(missing_docs)]
@@ -156,8 +169,9 @@ pub(crate) fn set_fd_nonblocking(fd: RawFd, nonblock: bool) -> std::io::Result<(
 
 /// Handles the result of a non-blocking I/O operation by converting [`ErrorKind::WouldBlock`] errors to `Ok(None)`.
 ///
-/// This utility function is designed to work with non-blocking I/O operations (typically used after
-/// calling [`TerminalDriver::set_input_nonblocking()`] and [`TerminalDriver::set_signal_nonblocking()`]). When a non-blocking operation returns a
+/// This utility function is designed to work with non-blocking I/O operations. The
+/// input and signal file descriptors of [`TerminalDriver`] are non-blocking, so it
+/// is useful when reading from them in an event loop. When a non-blocking operation returns a
 /// [`ErrorKind::WouldBlock`] error, indicating that the operation would need to block to complete, this function
 /// converts it to `Ok(None)` for easier handling in caller code.
 pub fn try_nonblocking<T>(result: std::io::Result<T>) -> std::io::Result<Option<T>> {

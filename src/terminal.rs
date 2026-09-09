@@ -1,6 +1,6 @@
 use std::{
     fs::File,
-    io::{self, BufWriter, Error, ErrorKind, IsTerminal, Read, Stdout, Write},
+    io::{self, BufWriter, Error, IsTerminal, Read, Stdout, Write},
     mem::MaybeUninit,
     os::fd::{AsRawFd, FromRawFd, RawFd},
     sync::atomic::{AtomicBool, Ordering},
@@ -22,6 +22,9 @@ static mut SIGWINCH_PIPE_FD: RawFd = 0;
 /// and write raw output bytes back to it, feeding those bytes in and out of an
 /// [`InputStream`](crate::InputStream) and a [`TerminalFrame`](crate::TerminalFrame).
 ///
+/// The input and signal file descriptors are non-blocking, so an application can
+/// drive them from an external event loop without affecting the output side.
+///
 /// Only one instance can exist at a time; it is automatically restored to the
 /// original terminal state when dropped.
 pub struct TerminalDriver {
@@ -29,15 +32,15 @@ pub struct TerminalDriver {
     output: BufWriter<Stdout>,
     signal: File,
     original_termios: libc::termios,
-    input_replaced: bool,
 }
 
 impl TerminalDriver {
     /// Creates a new terminal driver.
     ///
     /// This enters raw mode, switches to the alternate screen, hides the cursor,
-    /// and installs a SIGWINCH handler. Use [`TerminalDriver::size()`] to query the
-    /// initial terminal size.
+    /// and installs a SIGWINCH handler. The input and signal file descriptors are
+    /// made non-blocking. Use [`TerminalDriver::size()`] to query the initial
+    /// terminal size.
     ///
     /// # Errors
     ///
@@ -70,21 +73,23 @@ impl TerminalDriver {
             }
         };
 
-        // Own a duplicate of the stdin fd instead of fd 0 itself, so that the
-        // original stdin stays open (e.g. for use by child processes) even
-        // after this driver is dropped or the input fd is replaced.
-        let stdin_fd = unsafe { libc::fcntl(stdin.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 0) };
-        if stdin_fd < 0 {
-            return Err(Error::last_os_error());
-        }
-        let stdin = unsafe { File::from_raw_fd(stdin_fd) };
+        // Open a fresh, independent, non-blocking description of the terminal
+        // device that stdin is connected to. This keeps the original stdin (fd 0)
+        // open for child processes and avoids making the output side non-blocking
+        // through a shared open file description.
+        let input_fd = open_nonblocking_input(stdin.as_raw_fd())?;
+        let input = unsafe { File::from_raw_fd(input_fd) };
         let mut this = Self {
-            input: stdin,
+            input,
             output: BufWriter::new(stdout),
             signal: set_sigwinch_handler()?,
             original_termios,
-            input_replaced: false,
         };
+
+        // The signal pipe does not share an open file description with the output,
+        // so marking it non-blocking has no side effects on writes.
+        crate::set_fd_nonblocking(this.signal.as_raw_fd(), true)?;
+
         this.enable_raw_mode()?;
         this.enable_alternate_screen()?;
         this.hide_cursor()?;
@@ -121,10 +126,9 @@ impl TerminalDriver {
 
     /// Returns the input file descriptor.
     ///
-    /// The returned descriptor is a duplicate of the stdin file descriptor (the
-    /// original stdin, fd 0, is left untouched). The value changes after
-    /// [`TerminalDriver::set_input_nonblocking()`] is called; fetch it again in that
-    /// case.
+    /// The descriptor is a fresh, independent, non-blocking open of the terminal
+    /// device that stdin is connected to. The original stdin (fd 0) is left
+    /// untouched, and the descriptor is stable for the lifetime of the driver.
     pub fn input_fd(&self) -> RawFd {
         self.input.as_raw_fd()
     }
@@ -137,23 +141,10 @@ impl TerminalDriver {
     /// Returns the file descriptor that receives terminal resize signal
     /// notifications.
     ///
-    /// Make it non-blocking with [`TerminalDriver::set_signal_nonblocking()`] when
-    /// using external event loops.
+    /// The descriptor is non-blocking, so it can be monitored directly with an
+    /// external event loop.
     pub fn signal_fd(&self) -> RawFd {
         self.signal.as_raw_fd()
-    }
-
-    /// Makes the terminal resize signal file descriptor non-blocking, and returns
-    /// the file descriptor.
-    ///
-    /// The signal fd is a pipe that does not share an open file description with
-    /// the output, so making it non-blocking has no side effects on writes. This is
-    /// required when combining [`TerminalDriver::poll_resize()`] with external event
-    /// loops.
-    pub fn set_signal_nonblocking(&mut self) -> io::Result<RawFd> {
-        let fd = self.signal_fd();
-        crate::set_fd_nonblocking(fd, true)?;
-        Ok(fd)
     }
 
     /// Enables mouse input reporting in the terminal.
@@ -198,65 +189,13 @@ impl TerminalDriver {
 
     /// Waits for a terminal resize event to occur and returns the new terminal size.
     ///
-    /// By default, this method blocks until a resize occurs. To use it in
-    /// non-blocking mode, first call [`TerminalDriver::set_signal_nonblocking()`].
-    /// Unlike the input fd, the signal fd is a pipe that does not share an open file
-    /// description with the output, so making it non-blocking has no side effects on
-    /// writes.
+    /// The signal descriptor is non-blocking, so this returns
+    /// [`std::io::ErrorKind::WouldBlock`] when no resize has occurred. Use
+    /// [`TerminalDriver::signal_fd()`] to detect readiness before calling this
+    /// method.
     pub fn poll_resize(&mut self) -> io::Result<TerminalSize> {
         self.signal.read_exact(&mut [0])?;
         self.resize()
-    }
-
-    /// Makes the terminal input non-blocking by replacing the input file descriptor
-    /// with a fresh open of the terminal device that stdin is connected to, and
-    /// returns the new file descriptor.
-    ///
-    /// This is the recommended way to make the input non-blocking (e.g. for use with
-    /// `mio` or `tokio::io::unix::AsyncFd`). Making the input fd non-blocking
-    /// directly (e.g. via `fcntl` with `O_NONBLOCK`) also affects the output fd,
-    /// because both share an open file description in typical interactive terminals,
-    /// which may cause writes to fail with `EAGAIN` / `EWOULDBLOCK`. This method
-    /// avoids that by opening a fresh, independent file description for the input.
-    ///
-    /// If the input fd has already been made non-blocking, the `O_NONBLOCK` flag is
-    /// cleared from the original file description as part of this method (also on
-    /// failure), so writes stop failing with `EAGAIN` after this method returns.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the input has already been replaced, if the terminal
-    /// device that stdin is connected to cannot be identified or opened, or if
-    /// configuring the new file descriptor fails. On error, the input is not made
-    /// non-blocking and the input file descriptor stays in use.
-    pub fn set_input_nonblocking(&mut self) -> io::Result<RawFd> {
-        if self.input_replaced {
-            return Err(Error::new(
-                ErrorKind::InvalidInput,
-                "Input fd has already been replaced",
-            ));
-        }
-
-        let fd = match open_nonblocking_input(self.input_fd()) {
-            Ok(fd) => fd,
-            Err(err) => {
-                let _ = self.clear_input_nonblocking();
-                return Err(err);
-            }
-        };
-
-        if let Err(err) = self.clear_input_nonblocking() {
-            unsafe { libc::close(fd) };
-            return Err(err);
-        }
-
-        self.input = unsafe { File::from_raw_fd(fd) };
-        self.input_replaced = true;
-        Ok(fd)
-    }
-
-    fn clear_input_nonblocking(&self) -> io::Result<()> {
-        crate::set_fd_nonblocking(self.input_fd(), false)
     }
 
     fn resize(&self) -> io::Result<TerminalSize> {

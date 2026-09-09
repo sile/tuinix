@@ -17,7 +17,7 @@ A Rust library for building terminal user interface (TUI) applications on Unix s
 - Drawing styled text with ANSI colors
 - Handling terminal resize events
 - Creating efficient terminal frames with differential updates
-- Non-blocking input for use with external event loops (`mio` / `tokio`)
+- Non-blocking input and resize notifications for use with external event loops
 
 ## Architecture
 
@@ -66,17 +66,14 @@ fn write_text(frame: &mut tuinix::TerminalFrame, text: &str, style: tuinix::Term
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize the terminal driver and query its size
     let mut driver = tuinix::TerminalDriver::new()?;
-    let size = driver.size()?;
+    let mut size = driver.size()?;
     let mut input = tuinix::InputStream::new();
     let mut cursor = None;
     let mut prev = None;
 
-    // Create a frame with the terminal's dimensions
-    let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(size);
-
-    // Add styled content to the frame
+    // Add styled content to a frame
     let title_style = tuinix::TerminalStyle::new().bold().fg_color(tuinix::TerminalColor::GREEN);
-
+    let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(size);
     write_text(&mut frame, "Welcome to tuinix!\n", title_style);
     write_text(&mut frame, "\nPress any key ('q' to quit)\n", tuinix::TerminalStyle::new());
 
@@ -87,31 +84,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     driver.flush()?;
     prev = Some(frame);
 
-    // Process input events with a timeout
+    // The input and signal descriptors are non-blocking, so use `poll` to wait
+    // for readiness instead of blocking on a read.
+    let mut fds = [
+        libc::pollfd { fd: driver.input_fd(), events: libc::POLLIN, revents: 0 },
+        libc::pollfd { fd: driver.signal_fd(), events: libc::POLLIN, revents: 0 },
+    ];
     let mut raw = [0u8; 256];
+
     loop {
-        if input.has_pending() && let Some(event) = input.next() {
-            let tuinix::TerminalInput::Key(key_input) = event else {
-                continue; // Skip mouse events
-            };
+        if unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, -1) } < 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
 
-            // Check if 'q' was pressed
-            if let tuinix::KeyCode::Char('q') = key_input.code {
-                break;
-            }
-
-            // Display the input
+        // Handle a terminal resize.
+        if fds[1].revents & libc::POLLIN != 0 {
+            size = driver.poll_resize()?;
             let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(size);
-            write_text(
-                &mut frame,
-                &format!("Key pressed: {:?}\n", key_input),
-                tuinix::TerminalStyle::new(),
-            );
-            write_text(
-                &mut frame,
-                "\nPress any key ('q' to quit)\n",
-                tuinix::TerminalStyle::new(),
-            );
+            write_text(&mut frame, "Welcome to tuinix!\n", title_style);
+            write_text(&mut frame, "\nPress any key ('q' to quit)\n", tuinix::TerminalStyle::new());
             let mut out = Vec::new();
             frame.render(prev.as_ref(), cursor, &mut out);
             driver.write_all(&out)?;
@@ -119,23 +110,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             prev = Some(frame);
         }
 
-        // Read raw bytes from the driver. In a real application this would be
-        // driven by an event loop (see examples/nonblocking.rs); here we block
-        // until input arrives.
-        let n = driver.read(&mut raw)?;
-        if n == 0 {
-            continue;
-        }
-        input.feed(&raw[..n]);
-    }
+        // Handle available input.
+        if fds[0].revents & libc::POLLIN != 0 {
+            while let Some(n) = tuinix::try_nonblocking(driver.read(&mut raw))? {
+                if n == 0 {
+                    break;
+                }
+                input.feed(&raw[..n]);
+                while let Some(event) = input.next() {
+                    let tuinix::TerminalInput::Key(key_input) = event else {
+                        continue; // Skip mouse events
+                    };
 
-    Ok(())
+                    // Check if 'q' was pressed
+                    if let tuinix::KeyCode::Char('q') = key_input.code {
+                        return Ok(());
+                    }
+
+                    // Display the input
+                    let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(size);
+                    write_text(&mut frame, &format!("Key pressed: {:?}\n", key_input), tuinix::TerminalStyle::new());
+                    write_text(&mut frame, "\nPress any key ('q' to quit)\n", tuinix::TerminalStyle::new());
+                    let mut out = Vec::new();
+                    frame.render(prev.as_ref(), cursor, &mut out);
+                    driver.write_all(&out)?;
+                    driver.flush()?;
+                    prev = Some(frame);
+                }
+            }
+        }
+    }
 }
 ```
 
-For integration with external event loop libraries like `mio`, see the [nonblocking.rs](examples/nonblocking.rs) example.
+For a full example of an event loop driven with `poll`, see the [nonblocking.rs](examples/nonblocking.rs) example.
 
-Note that making the terminal input fd non-blocking directly (e.g. via `fcntl` with
-`O_NONBLOCK`) also affects the output fd, because both share an open file description in typical
-interactive terminals. This can make `write_all()` fail with `EAGAIN` / `EWOULDBLOCK`. Use
-`TerminalDriver::set_input_nonblocking()` instead to make the input non-blocking.
+The input file descriptor is opened as a fresh, independent description of the
+terminal device, so making it non-blocking does not affect the output file
+descriptor (which would otherwise share an open file description in typical
+interactive terminals, causing `write_all()` to fail with `EAGAIN` /
+`EWOULDBLOCK`).

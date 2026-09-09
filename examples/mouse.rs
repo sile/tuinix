@@ -44,7 +44,7 @@ fn draw_header(
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize terminal driver and query its size
     let mut driver = tuinix::TerminalDriver::new()?;
-    let size = driver.size()?;
+    let mut size = driver.size()?;
     let mut input = tuinix::InputStream::new();
     let cursor = None;
     let mut prev = None;
@@ -69,150 +69,177 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     driver.flush()?;
     prev = Some(frame);
 
-    // Process input events with a timeout
+    // The input and signal descriptors are non-blocking, so use `poll` to wait
+    // for readiness instead of blocking on a read.
+    let mut fds = [
+        libc::pollfd {
+            fd: driver.input_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        },
+        libc::pollfd {
+            fd: driver.signal_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        },
+    ];
     let mut raw = [0u8; 256];
+
     loop {
-        if input.has_pending()
-            && let Some(event) = input.next()
-        {
-            match event {
-                tuinix::TerminalInput::Key(key_input) => {
-                    // Check if 'q' was pressed
-                    if let tuinix::KeyCode::Char('q') = key_input.code {
-                        break;
-                    }
+        if unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, -1) } < 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
 
-                    // Display the key input
-                    let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(size);
-                    draw_header(&mut frame, title_style, info_style);
-                    write_text(
-                        &mut frame,
-                        &format!("\nLast event: Key pressed: {:?}\n", key_input),
-                        info_style,
-                    );
-                    let mut out = Vec::new();
-                    frame.render(prev.as_ref(), cursor, &mut out);
-                    driver.write_all(&out)?;
-                    driver.flush()?;
-                    prev = Some(frame);
+        // Handle a terminal resize.
+        if fds[1].revents & libc::POLLIN != 0 {
+            size = driver.poll_resize()?;
+            let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(size);
+            draw_header(&mut frame, title_style, info_style);
+            write_text(&mut frame, "\nLast event: terminal resized\n", info_style);
+            let mut out = Vec::new();
+            frame.render(prev.as_ref(), cursor, &mut out);
+            driver.write_all(&out)?;
+            driver.flush()?;
+            prev = Some(frame);
+        }
+
+        // Handle available input.
+        if fds[0].revents & libc::POLLIN != 0 {
+            while let Some(n) = tuinix::try_nonblocking(driver.read(&mut raw))? {
+                if n == 0 {
+                    break;
                 }
-                tuinix::TerminalInput::Mouse(mouse_input) => {
-                    // Display the mouse input with detailed information
-                    let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(size);
-                    draw_header(&mut frame, title_style, info_style);
+                input.feed(&raw[..n]);
+                while let Some(event) = input.next() {
+                    match event {
+                        tuinix::TerminalInput::Key(key_input) => {
+                            // Check if 'q' was pressed
+                            if let tuinix::KeyCode::Char('q') = key_input.code {
+                                return Ok(());
+                            }
 
-                    // Format mouse event details
-                    let event_style = tuinix::TerminalStyle::new()
-                        .bold()
-                        .fg_color(tuinix::TerminalColor::GREEN);
-                    write_text(&mut frame, "\nMouse Event Details:\n", event_style);
-                    write_text(
-                        &mut frame,
-                        &format!("  Event: {:?}\n", mouse_input.event),
-                        tuinix::TerminalStyle::new(),
-                    );
-                    write_text(
-                        &mut frame,
-                        &format!(
-                            "  Position: column {}, row {}\n",
-                            mouse_input.position.col, mouse_input.position.row
-                        ),
-                        tuinix::TerminalStyle::new(),
-                    );
+                            // Display the key input
+                            let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(size);
+                            draw_header(&mut frame, title_style, info_style);
+                            write_text(
+                                &mut frame,
+                                &format!("\nLast event: Key pressed: {:?}\n", key_input),
+                                info_style,
+                            );
+                            let mut out = Vec::new();
+                            frame.render(prev.as_ref(), cursor, &mut out);
+                            driver.write_all(&out)?;
+                            driver.flush()?;
+                            prev = Some(frame);
+                        }
+                        tuinix::TerminalInput::Mouse(mouse_input) => {
+                            // Display the mouse input with detailed information
+                            let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(size);
+                            draw_header(&mut frame, title_style, info_style);
 
-                    // Show modifiers if any are pressed
-                    let mut modifiers = Vec::new();
-                    if mouse_input.ctrl {
-                        modifiers.push("Ctrl");
-                    }
-                    if mouse_input.alt {
-                        modifiers.push("Alt");
-                    }
-                    if mouse_input.shift {
-                        modifiers.push("Shift");
-                    }
+                            // Format mouse event details
+                            let event_style = tuinix::TerminalStyle::new()
+                                .bold()
+                                .fg_color(tuinix::TerminalColor::GREEN);
+                            write_text(&mut frame, "\nMouse Event Details:\n", event_style);
+                            write_text(
+                                &mut frame,
+                                &format!("  Event: {:?}\n", mouse_input.event),
+                                tuinix::TerminalStyle::new(),
+                            );
+                            write_text(
+                                &mut frame,
+                                &format!(
+                                    "  Position: column {}, row {}\n",
+                                    mouse_input.position.col, mouse_input.position.row
+                                ),
+                                tuinix::TerminalStyle::new(),
+                            );
 
-                    if !modifiers.is_empty() {
-                        write_text(
-                            &mut frame,
-                            &format!("  Modifiers: {}\n", modifiers.join(" + ")),
-                            tuinix::TerminalStyle::new(),
-                        );
-                    } else {
-                        write_text(
-                            &mut frame,
-                            "  Modifiers: None\n",
-                            tuinix::TerminalStyle::new(),
-                        );
-                    }
+                            // Show modifiers if any are pressed
+                            let mut modifiers = Vec::new();
+                            if mouse_input.ctrl {
+                                modifiers.push("Ctrl");
+                            }
+                            if mouse_input.alt {
+                                modifiers.push("Alt");
+                            }
+                            if mouse_input.shift {
+                                modifiers.push("Shift");
+                            }
 
-                    // Add event-specific information
-                    match mouse_input.event {
-                        tuinix::MouseEvent::LeftPress => write_text(
-                            &mut frame,
-                            "  → Left button pressed\n",
-                            tuinix::TerminalStyle::new(),
-                        ),
-                        tuinix::MouseEvent::LeftRelease => write_text(
-                            &mut frame,
-                            "  → Left button released\n",
-                            tuinix::TerminalStyle::new(),
-                        ),
-                        tuinix::MouseEvent::RightPress => write_text(
-                            &mut frame,
-                            "  → Right button pressed\n",
-                            tuinix::TerminalStyle::new(),
-                        ),
-                        tuinix::MouseEvent::RightRelease => write_text(
-                            &mut frame,
-                            "  → Right button released\n",
-                            tuinix::TerminalStyle::new(),
-                        ),
-                        tuinix::MouseEvent::MiddlePress => write_text(
-                            &mut frame,
-                            "  → Middle button pressed\n",
-                            tuinix::TerminalStyle::new(),
-                        ),
-                        tuinix::MouseEvent::MiddleRelease => write_text(
-                            &mut frame,
-                            "  → Middle button released\n",
-                            tuinix::TerminalStyle::new(),
-                        ),
-                        tuinix::MouseEvent::Drag => write_text(
-                            &mut frame,
-                            "  → Mouse dragged\n",
-                            tuinix::TerminalStyle::new(),
-                        ),
-                        tuinix::MouseEvent::ScrollUp => write_text(
-                            &mut frame,
-                            "  → Scrolled up\n",
-                            tuinix::TerminalStyle::new(),
-                        ),
-                        tuinix::MouseEvent::ScrollDown => write_text(
-                            &mut frame,
-                            "  → Scrolled down\n",
-                            tuinix::TerminalStyle::new(),
-                        ),
-                    }
+                            if !modifiers.is_empty() {
+                                write_text(
+                                    &mut frame,
+                                    &format!("  Modifiers: {}\n", modifiers.join(" + ")),
+                                    tuinix::TerminalStyle::new(),
+                                );
+                            } else {
+                                write_text(
+                                    &mut frame,
+                                    "  Modifiers: None\n",
+                                    tuinix::TerminalStyle::new(),
+                                );
+                            }
 
-                    let mut out = Vec::new();
-                    frame.render(prev.as_ref(), cursor, &mut out);
-                    driver.write_all(&out)?;
-                    driver.flush()?;
-                    prev = Some(frame);
+                            // Add event-specific information
+                            match mouse_input.event {
+                                tuinix::MouseEvent::LeftPress => write_text(
+                                    &mut frame,
+                                    "  → Left button pressed\n",
+                                    tuinix::TerminalStyle::new(),
+                                ),
+                                tuinix::MouseEvent::LeftRelease => write_text(
+                                    &mut frame,
+                                    "  → Left button released\n",
+                                    tuinix::TerminalStyle::new(),
+                                ),
+                                tuinix::MouseEvent::RightPress => write_text(
+                                    &mut frame,
+                                    "  → Right button pressed\n",
+                                    tuinix::TerminalStyle::new(),
+                                ),
+                                tuinix::MouseEvent::RightRelease => write_text(
+                                    &mut frame,
+                                    "  → Right button released\n",
+                                    tuinix::TerminalStyle::new(),
+                                ),
+                                tuinix::MouseEvent::MiddlePress => write_text(
+                                    &mut frame,
+                                    "  → Middle button pressed\n",
+                                    tuinix::TerminalStyle::new(),
+                                ),
+                                tuinix::MouseEvent::MiddleRelease => write_text(
+                                    &mut frame,
+                                    "  → Middle button released\n",
+                                    tuinix::TerminalStyle::new(),
+                                ),
+                                tuinix::MouseEvent::Drag => write_text(
+                                    &mut frame,
+                                    "  → Mouse dragged\n",
+                                    tuinix::TerminalStyle::new(),
+                                ),
+                                tuinix::MouseEvent::ScrollUp => write_text(
+                                    &mut frame,
+                                    "  → Scrolled up\n",
+                                    tuinix::TerminalStyle::new(),
+                                ),
+                                tuinix::MouseEvent::ScrollDown => write_text(
+                                    &mut frame,
+                                    "  → Scrolled down\n",
+                                    tuinix::TerminalStyle::new(),
+                                ),
+                            }
+
+                            let mut out = Vec::new();
+                            frame.render(prev.as_ref(), cursor, &mut out);
+                            driver.write_all(&out)?;
+                            driver.flush()?;
+                            prev = Some(frame);
+                        }
+                    }
                 }
             }
         }
-
-        // Read raw bytes from the driver. In a real application this would be
-        // driven by an event loop (see examples/nonblocking.rs); here we block
-        // until input arrives.
-        let n = driver.read(&mut raw)?;
-        if n == 0 {
-            continue;
-        }
-        input.feed(&raw[..n]);
     }
-
-    Ok(())
 }
