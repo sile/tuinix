@@ -289,16 +289,14 @@ impl TerminalFrame {
     ///     tuinix::TerminalStyle::new(),
     /// ).expect("valid cell"));
     ///
-    /// let mut out = Vec::new();
-    /// frame.render(None, None, &mut out);
+    /// let out = frame.render(None, None);
     /// ```
     pub fn render(
         &self,
         prev: Option<&TerminalFrame>,
         cursor: Option<TerminalPosition>,
-        out: &mut Vec<u8>,
-    ) {
-        out.clear();
+    ) -> Vec<u8> {
+        let mut out = Vec::new();
         let _ = write!(out, "\x1b[?25l"); // hide cursor
 
         let resized = prev.is_none_or(|p| p.size() != self.size());
@@ -329,6 +327,8 @@ impl TerminalFrame {
             let _ = write!(out, "\x1b[{};{}H", position.row + 1, position.col + 1);
             let _ = write!(out, "\x1b[?25h"); // show cursor
         }
+
+        out
     }
 }
 

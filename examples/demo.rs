@@ -90,8 +90,7 @@ fn main() -> std::io::Result<()> {
     write_text(&mut frame, "\nLast event: None\n", info_style);
 
     // Render the initial frame and write it to the terminal.
-    let mut out = Vec::new();
-    frame.render(prev_frame.as_ref(), cursor, &mut out);
+    let out = frame.render(prev_frame.as_ref(), cursor);
     driver.write_all(&out)?;
     driver.flush()?;
     prev_frame = Some(frame);
@@ -142,8 +141,7 @@ fn main() -> std::io::Result<()> {
                     ),
                     info_style,
                 );
-                let mut out = Vec::new();
-                frame.render(prev_frame.as_ref(), cursor, &mut out);
+                let out = frame.render(prev_frame.as_ref(), cursor);
                 driver.write_all(&out)?;
                 driver.flush()?;
                 prev_frame = Some(frame);
@@ -172,8 +170,7 @@ fn main() -> std::io::Result<()> {
                                 &format!("\nLast event: Key pressed: {:?}\n", key_input),
                                 info_style,
                             );
-                            let mut out = Vec::new();
-                            frame.render(prev_frame.as_ref(), cursor, &mut out);
+                            let out = frame.render(prev_frame.as_ref(), cursor);
                             driver.write_all(&out)?;
                             driver.flush()?;
                             prev_frame = Some(frame);
@@ -222,8 +219,7 @@ fn main() -> std::io::Result<()> {
                                 tuinix::TerminalStyle::new(),
                             );
 
-                            let mut out = Vec::new();
-                            frame.render(prev_frame.as_ref(), cursor, &mut out);
+                            let out = frame.render(prev_frame.as_ref(), cursor);
                             driver.write_all(&out)?;
                             driver.flush()?;
                             prev_frame = Some(frame);

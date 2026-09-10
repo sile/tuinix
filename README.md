@@ -78,8 +78,7 @@ fn main() -> std::io::Result<()> {
     write_text(&mut frame, "\nPress any key ('q' to quit)\n", tuinix::TerminalStyle::new());
 
     // Render the frame to a byte buffer, then write it to the terminal.
-    let mut out = Vec::new();
-    frame.render(prev.as_ref(), cursor, &mut out);
+    let out = frame.render(prev.as_ref(), cursor);
     driver.write_all(&out)?;
     driver.flush()?;
     prev = Some(frame);
@@ -105,8 +104,7 @@ fn main() -> std::io::Result<()> {
                 let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(size);
                 write_text(&mut frame, "Welcome to tuinix!\n", title_style);
                 write_text(&mut frame, "\nPress any key ('q' to quit)\n", tuinix::TerminalStyle::new());
-                let mut out = Vec::new();
-                frame.render(prev.as_ref(), cursor, &mut out);
+                let out = frame.render(prev.as_ref(), cursor);
                 driver.write_all(&out)?;
                 driver.flush()?;
                 prev = Some(frame);
@@ -134,8 +132,7 @@ fn main() -> std::io::Result<()> {
                     let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(size);
                     write_text(&mut frame, &format!("Key pressed: {:?}\n", key_input), tuinix::TerminalStyle::new());
                     write_text(&mut frame, "\nPress any key ('q' to quit)\n", tuinix::TerminalStyle::new());
-                    let mut out = Vec::new();
-                    frame.render(prev.as_ref(), cursor, &mut out);
+                    let out = frame.render(prev.as_ref(), cursor);
                     driver.write_all(&out)?;
                     driver.flush()?;
                     prev = Some(frame);
