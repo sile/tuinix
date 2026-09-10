@@ -112,7 +112,9 @@ pub enum MouseEvent {
 /// Feed raw bytes with [`InputStream::feed()`](Self::feed), pull parsed
 /// [`TerminalInput`] values with [`InputStream::next()`](Self::next), and check
 /// whether an incomplete sequence is being held with
-/// [`InputStream::has_pending()`](Self::has_pending).
+/// [`InputStream::has_pending()`](Self::has_pending). A lone `ESC` byte is
+/// held until it is completed by more bytes or committed as the Escape key with
+/// [`InputStream::resolve_escape()`](Self::resolve_escape).
 #[derive(Debug, Default)]
 pub struct InputStream {
     buf: Vec<u8>,
@@ -175,6 +177,41 @@ impl InputStream {
     /// Returns `true` when the stream holds unconsumed bytes.
     pub fn has_pending(&self) -> bool {
         !self.buf.is_empty()
+    }
+
+    /// Returns `true` when the stream holds a lone `ESC` byte.
+    ///
+    /// A lone `ESC` is ambiguous: the terminal sends the same byte whether the
+    /// user pressed the Escape key or started a sequence such as `ESC [ A`.
+    /// Waiting for more input reports Escape only once the next key arrives, and
+    /// the two bytes are then read as one Alt+key sequence. An application that
+    /// wants Escape promptly should therefore wait a short time while this
+    /// returns `true`, then commit the byte with
+    /// [`resolve_escape()`](Self::resolve_escape). Around 50 ms, the default of
+    /// Vim's `ttimeoutlen`, is the usual choice. A longer wait risks gluing a
+    /// following key onto the `ESC`; a shorter one risks mistaking a slow
+    /// sequence for the Escape key.
+    pub fn has_pending_escape(&self) -> bool {
+        // Only a lone `ESC` is decidable by a timeout. The other states that
+        // hold bytes back (`ESC [`, `ESC O`, a partial CSI key, an unterminated
+        // mouse report, a UTF-8 lead byte) are prefixes that need more bytes, so
+        // a timeout could only discard them.
+        self.buf.as_slice() == [0x1b].as_slice()
+    }
+
+    /// Commits a lone `ESC` byte held by the stream as the Escape key.
+    ///
+    /// This is the second half of the wait described by
+    /// [`has_pending_escape()`](Self::has_pending_escape): call it once the wait
+    /// has elapsed. Returns `None` when the stream holds no lone `ESC` byte, so a
+    /// call is a no-op when the byte was already consumed or turned out to be the
+    /// start of a sequence.
+    pub fn resolve_escape(&mut self) -> Option<TerminalInput> {
+        if !self.has_pending_escape() {
+            return None;
+        }
+        self.buf.clear();
+        Some(create_key_input(false, false, KeyCode::Escape))
     }
 }
 
@@ -1140,6 +1177,86 @@ mod tests {
     }
 
     #[test]
+    fn test_input_stream_reports_only_a_lone_esc_as_pending_escape() {
+        // A lone `ESC` is the only held state that a timeout can commit.
+        let mut input = InputStream::new();
+        input.feed(b"\x1b");
+        assert!(input.has_pending_escape());
+
+        // `ESC ESC` is the Escape key followed by another lone `ESC`.
+        input.feed(b"\x1b");
+        assert_eq!(
+            input.next(),
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: false,
+                code: KeyCode::Escape,
+            }))
+        );
+        assert!(input.has_pending_escape());
+
+        // A sequence prefix and a UTF-8 lead byte need more bytes, not a
+        // timeout.
+        for prefix in [b"\x1b[".as_slice(), b"\x1bO".as_slice(), b"\xe3".as_slice()] {
+            let mut input = InputStream::new();
+            input.feed(prefix);
+            assert!(
+                !input.has_pending_escape(),
+                "unexpected pending escape for {prefix:?}"
+            );
+        }
+
+        // `ESC` followed by a regular character is an Alt+key sequence.
+        let mut input = InputStream::new();
+        input.feed(b"\x1ba");
+        assert!(!input.has_pending_escape());
+        assert_eq!(
+            input.next(),
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: true,
+                code: KeyCode::Char('a'),
+            }))
+        );
+    }
+
+    #[test]
+    fn test_input_stream_resolve_escape() {
+        let mut input = InputStream::new();
+
+        // Nothing is held, so there is nothing to commit.
+        assert_eq!(input.resolve_escape(), None);
+
+        // A lone `ESC` is committed as the Escape key and consumed.
+        input.feed(b"\x1b");
+        assert_eq!(
+            input.resolve_escape(),
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: false,
+                code: KeyCode::Escape,
+            }))
+        );
+        assert!(!input.has_pending());
+        assert_eq!(input.next(), None);
+        assert_eq!(input.resolve_escape(), None);
+
+        // A sequence prefix is left for the parser to complete.
+        input.feed(b"\x1b[");
+        assert_eq!(input.resolve_escape(), None);
+        input.feed(b"A");
+        assert_eq!(
+            input.next(),
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: false,
+                code: KeyCode::Up,
+            }))
+        );
+        assert_eq!(input.resolve_escape(), None);
+    }
+
+    #[test]
     fn test_input_stream() {
         let mut buffer = InputStream::new();
 
@@ -1704,6 +1821,12 @@ mod tests {
         for _ in 0..n {
             bytes.extend_from_slice(noprop::sample_choice(ctx, PBT_FRAGMENTS));
         }
+        // Half of the cases end with a lone `ESC`, the state that a timeout has
+        // to resolve. Sampling it structurally keeps that path covered instead
+        // of depending on a partial sequence happening to land at the very end.
+        if noprop::sample_bool(ctx) {
+            bytes.push(0x1b);
+        }
         bytes
     }
 
@@ -2026,6 +2149,7 @@ mod tests {
         let observed_event = Cell::new(false);
         let observed_partial = Cell::new(false);
         let observed_unknown = Cell::new(false);
+        let observed_pending_escape = Cell::new(false);
         let seed = noprop::seed_from_env_or_time("TUINIX_PBT_SEED")?;
         let mut runner = noprop::Runner::new(seed);
         runner.run(256, |ctx| {
@@ -2070,6 +2194,36 @@ mod tests {
                 actual_partial, expected_partial,
                 "partial-stop mismatch for {bytes:?}"
             );
+            // A lone `ESC` is the only held state a timeout can resolve, and its
+            // model is the bytes the parse could not consume.
+            let pending_escape = rest == b"\x1b".as_slice();
+            assert_eq!(
+                buffer.has_pending_escape(),
+                pending_escape,
+                "pending-escape mismatch for {bytes:?}"
+            );
+            if pending_escape {
+                observed_pending_escape.set(true);
+                assert_eq!(
+                    buffer.resolve_escape(),
+                    Some(TerminalInput::Key(KeyInput {
+                        ctrl: false,
+                        alt: false,
+                        code: KeyCode::Escape,
+                    })),
+                    "resolve_escape must yield the Escape key for {bytes:?}"
+                );
+                assert!(
+                    !buffer.has_pending(),
+                    "resolve_escape must consume the ESC for {bytes:?}"
+                );
+            } else {
+                assert_eq!(
+                    buffer.resolve_escape(),
+                    None,
+                    "nothing should be resolved for {bytes:?}"
+                );
+            }
             if !actual.is_empty() {
                 observed_event.set(true);
             }
@@ -2089,6 +2243,10 @@ mod tests {
         assert!(
             observed_unknown.get(),
             "no case consumed an unknown sequence\n{runner}"
+        );
+        assert!(
+            observed_pending_escape.get(),
+            "no case ended holding a lone ESC\n{runner}"
         );
         Ok(())
     }

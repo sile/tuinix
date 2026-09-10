@@ -9,6 +9,7 @@
 //! * reading raw terminal bytes and turning them into
 //!   [`TerminalInput`](tuinix::TerminalInput) events,
 //! * handling keyboard input (quitting on `q`),
+//! * reporting a lone Escape key without waiting for the next key,
 //! * reporting mouse events,
 //! * reacting to a terminal resize.
 //!
@@ -22,6 +23,14 @@ const BODY_STYLE: tuinix::TerminalStyle = tuinix::TerminalStyle::new();
 const MOUSE_STYLE: tuinix::TerminalStyle = tuinix::TerminalStyle::new()
     .bold()
     .fg_color(tuinix::TerminalColor::GREEN);
+
+/// How long to wait for the rest of an escape sequence before a lone `ESC` byte
+/// is treated as the Escape key.
+///
+/// A terminal uses the same byte for the Escape key and for the start of a
+/// sequence such as `ESC [ A`, so the two can only be told apart by waiting
+/// briefly. 50 ms matches the default of Vim's `ttimeoutlen`.
+const ESCAPE_TIMEOUT_MS: libc::c_int = 50;
 
 // NOTE: This is an ASCII-oriented demo helper: every character is assigned a width of 1.
 // Non-ASCII characters (for example CJK or emoji) would need the caller to supply their
@@ -101,9 +110,76 @@ fn handle_resize(
     Ok(())
 }
 
-/// Reads available input bytes into `input` and draws a reply frame for each parsed
-/// event. Returns `false` when the user presses `q` (so the caller should stop the
-/// loop); otherwise returns `true` to keep running.
+/// Draws a reply frame for one parsed `event`. Returns `false` when the user
+/// presses `q` (so the caller should stop the loop); otherwise returns `true` to
+/// keep running.
+fn handle_event(
+    driver: &mut tuinix::TerminalDriver,
+    prev_frame: &mut Option<tuinix::TerminalFrame>,
+    cursor: Option<tuinix::TerminalPosition>,
+    event: tuinix::TerminalInput,
+) -> std::io::Result<bool> {
+    // The frame is built at the terminal's current dimensions, so a resize is
+    // picked up on whichever event is handled first afterwards.
+    let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(driver.size()?);
+    draw_header(&mut frame);
+
+    match event {
+        tuinix::TerminalInput::Key(key_input) => {
+            // Quit on 'q'.
+            if let tuinix::KeyCode::Char('q') = key_input.code {
+                return Ok(false);
+            }
+            write_text(
+                &mut frame,
+                &format!("\nLast event: Key pressed: {:?}\n", key_input),
+                INFO_STYLE,
+            );
+        }
+        tuinix::TerminalInput::Mouse(mouse_input) => {
+            write_text(&mut frame, "\nMouse Event Details:\n", MOUSE_STYLE);
+            write_text(
+                &mut frame,
+                &format!("  Event: {:?}\n", mouse_input.event),
+                BODY_STYLE,
+            );
+            write_text(
+                &mut frame,
+                &format!(
+                    "  Position: column {}, row {}\n",
+                    mouse_input.position.col, mouse_input.position.row
+                ),
+                BODY_STYLE,
+            );
+            write_text(
+                &mut frame,
+                &format!(
+                    "  Modifiers: {}\n",
+                    [
+                        mouse_input.ctrl.then_some("Ctrl"),
+                        mouse_input.alt.then_some("Alt"),
+                        mouse_input.shift.then_some("Shift"),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>()
+                    .join(" + ")
+                ),
+                BODY_STYLE,
+            );
+        }
+    }
+
+    let out = frame.render(prev_frame.as_ref(), cursor);
+    driver.write_all(&out)?;
+    driver.flush()?;
+    *prev_frame = Some(frame);
+    Ok(true)
+}
+
+/// Reads available input bytes into `input` and draws a reply frame for each
+/// parsed event. Returns `false` when the user presses `q` (so the caller should
+/// stop the loop); otherwise returns `true` to keep running.
 fn handle_input(
     driver: &mut tuinix::TerminalDriver,
     input: &mut tuinix::InputStream,
@@ -116,65 +192,10 @@ fn handle_input(
     // was read.
     while let Some(n @ 1..) = would_block_as_none(driver.read(&mut raw))? {
         input.feed(&raw[..n]);
-        // Query the physical size for this batch of events so the reply frames are
-        // drawn at the terminal's actual dimensions.
-        let size = driver.size()?;
         while let Some(event) = input.next() {
-            // The header and the render/write/bookkeeping steps are common to every
-            // event, so only the event-specific body stays inside the `match`.
-            let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(size);
-            draw_header(&mut frame);
-
-            match event {
-                tuinix::TerminalInput::Key(key_input) => {
-                    // Quit on 'q'.
-                    if let tuinix::KeyCode::Char('q') = key_input.code {
-                        return Ok(false);
-                    }
-                    write_text(
-                        &mut frame,
-                        &format!("\nLast event: Key pressed: {:?}\n", key_input),
-                        INFO_STYLE,
-                    );
-                }
-                tuinix::TerminalInput::Mouse(mouse_input) => {
-                    write_text(&mut frame, "\nMouse Event Details:\n", MOUSE_STYLE);
-                    write_text(
-                        &mut frame,
-                        &format!("  Event: {:?}\n", mouse_input.event),
-                        BODY_STYLE,
-                    );
-                    write_text(
-                        &mut frame,
-                        &format!(
-                            "  Position: column {}, row {}\n",
-                            mouse_input.position.col, mouse_input.position.row
-                        ),
-                        BODY_STYLE,
-                    );
-                    write_text(
-                        &mut frame,
-                        &format!(
-                            "  Modifiers: {}\n",
-                            [
-                                mouse_input.ctrl.then_some("Ctrl"),
-                                mouse_input.alt.then_some("Alt"),
-                                mouse_input.shift.then_some("Shift"),
-                            ]
-                            .into_iter()
-                            .flatten()
-                            .collect::<Vec<_>>()
-                            .join(" + ")
-                        ),
-                        BODY_STYLE,
-                    );
-                }
+            if !handle_event(driver, prev_frame, cursor, event)? {
+                return Ok(false);
             }
-
-            let out = frame.render(prev_frame.as_ref(), cursor);
-            driver.write_all(&out)?;
-            driver.flush()?;
-            *prev_frame = Some(frame);
         }
     }
     Ok(true)
@@ -215,8 +236,16 @@ fn main() -> std::io::Result<()> {
     ];
 
     loop {
-        // Wait for a read event on either the signal or the input descriptor.
-        let n = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, -1) };
+        // A lone `ESC` byte is ambiguous: the terminal reports the Escape key and
+        // the start of a sequence such as `ESC [ A` identically. When one is
+        // held, wait only briefly so it is reported as Escape promptly instead of
+        // sitting there until the next key arrives.
+        let timeout = if input.has_pending_escape() {
+            ESCAPE_TIMEOUT_MS
+        } else {
+            -1
+        };
+        let n = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, timeout) };
         if n < 0 {
             let err = std::io::Error::last_os_error();
             // `poll` is never restarted by `SA_RESTART`, so the SIGWINCH handler
@@ -236,6 +265,17 @@ fn main() -> std::io::Result<()> {
             .any(|fd| fd.revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0)
         {
             return Err(std::io::Error::other("terminal closed"));
+        }
+
+        if n == 0 {
+            // The wait elapsed with the lone `ESC` still held, so commit it as the
+            // Escape key.
+            if let Some(event) = input.resolve_escape()
+                && !handle_event(&mut driver, &mut prev_frame, cursor, event)?
+            {
+                return Ok(());
+            }
+            continue;
         }
 
         if fds[0].revents & libc::POLLIN != 0 {
