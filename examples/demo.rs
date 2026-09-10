@@ -208,19 +208,19 @@ fn main() -> std::io::Result<()> {
     // blocking on a read.
     let mut fds = [
         libc::pollfd {
-            fd: driver.input_fd(),
+            fd: driver.signal_fd(),
             events: libc::POLLIN,
             revents: 0,
         },
         libc::pollfd {
-            fd: driver.signal_fd(),
+            fd: driver.input_fd(),
             events: libc::POLLIN,
             revents: 0,
         },
     ];
 
     loop {
-        // Wait for a read event on either the input or the signal descriptor.
+        // Wait for a read event on either the signal or the input descriptor.
         let n = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, -1) };
         if n < 0 {
             let err = std::io::Error::last_os_error();
@@ -234,11 +234,11 @@ fn main() -> std::io::Result<()> {
             return Err(err);
         }
 
-        if fds[1].revents & libc::POLLIN != 0 {
+        if fds[0].revents & libc::POLLIN != 0 {
             handle_resize(&mut driver, &mut prev_frame, cursor)?;
         }
 
-        if fds[0].revents & libc::POLLIN != 0
+        if fds[1].revents & libc::POLLIN != 0
             && !handle_input(&mut driver, &mut input, &mut prev_frame, cursor)?
         {
             return Ok(());
