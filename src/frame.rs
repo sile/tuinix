@@ -609,4 +609,233 @@ mod tests {
         );
         Ok(())
     }
+
+    /// Replays the byte stream produced by [`TerminalFrame::render()`] onto a model
+    /// screen.
+    ///
+    /// It understands cursor positioning (`ESC [ <row> ; <col> H`), cursor visibility
+    /// (`ESC [ ? 25 h` / `l`), and SGR style sequences (`ESC [ ... m`), which are
+    /// ignored. Any other character is written at the cursor, overwriting the cells it
+    /// covers and advancing the cursor by its width, the way a terminal does.
+    #[derive(Debug)]
+    struct ScreenModel {
+        cells: BTreeMap<TerminalPosition, char>,
+        cursor: TerminalPosition,
+        writes: usize,
+    }
+
+    impl ScreenModel {
+        fn new() -> Self {
+            Self {
+                cells: BTreeMap::new(),
+                cursor: TerminalPosition::ZERO,
+                writes: 0,
+            }
+        }
+
+        fn apply(&mut self, bytes: &[u8]) {
+            let mut rest = bytes;
+            while let Some((&first, remainder)) = rest.split_first() {
+                if first == 0x1b {
+                    assert_eq!(remainder.first(), Some(&b'['), "malformed escape sequence");
+                    let end = remainder[1..]
+                        .iter()
+                        .position(|b| matches!(b, b'H' | b'm' | b'h' | b'l'))
+                        .expect("terminated escape sequence")
+                        + 1;
+                    let params = std::str::from_utf8(&remainder[1..end]).expect("ASCII parameters");
+                    match remainder[end] {
+                        b'H' => {
+                            let (row, col) = params.split_once(';').expect("row;col");
+                            self.cursor = TerminalPosition::row_col(
+                                row.parse::<usize>().expect("row") - 1,
+                                col.parse::<usize>().expect("col") - 1,
+                            );
+                        }
+                        b'h' | b'l' => assert_eq!(params, "?25", "unexpected mode change"),
+                        _ => {} // SGR style sequence: does not move the cursor.
+                    }
+                    rest = &remainder[end + 1..];
+                    continue;
+                }
+
+                let c = std::str::from_utf8(rest)
+                    .expect("valid UTF-8")
+                    .chars()
+                    .next()
+                    .expect("non-empty");
+                let width = char_width(c);
+                assert!(
+                    width >= 1,
+                    "zero-width character {c:?} in the renderer output"
+                );
+
+                // Writing a character overwrites the cells it covers, and it also
+                // invalidates a wide character written to its left that spans into
+                // the new character's first cell.
+                if let Some((&pos, prev)) = self.cells.range(..self.cursor).next_back()
+                    && self.cursor < pos + TerminalPosition::col(char_width(*prev))
+                {
+                    self.cells.remove(&pos);
+                }
+                for i in 0..width {
+                    self.cells.remove(&(self.cursor + TerminalPosition::col(i)));
+                }
+                self.cells.insert(self.cursor, c);
+                self.cursor.col += width;
+                self.writes += 1;
+                rest = &rest[c.len_utf8()..];
+            }
+        }
+
+        /// The cells that lie inside `size`.
+        ///
+        /// After the terminal shrinks, cells the previous frame painted outside the
+        /// new area stay in the model but are no longer visible, so only the cells
+        /// inside the current size are compared.
+        fn visible_cells(&self, size: TerminalSize) -> BTreeMap<TerminalPosition, char> {
+            self.cells
+                .iter()
+                .filter(|(pos, _)| pos.row < size.rows && pos.col < size.cols)
+                .map(|(pos, c)| (*pos, *c))
+                .collect()
+        }
+    }
+
+    /// The characters a frame paints, including the blanks of unwritten positions.
+    fn rendered_cells(frame: &TerminalFrame) -> BTreeMap<TerminalPosition, char> {
+        frame.chars().map(|(pos, c)| (pos, c.value())).collect()
+    }
+
+    /// Rendering without a previous frame must paint every cell of the frame, blanks
+    /// included, so replaying the output reproduces `chars()`.
+    #[test]
+    fn pbt_render_full_redraw_matches_model() -> noprop::TestResult {
+        const HIDE_CURSOR: &[u8] = b"\x1b[?25l";
+        let observed_wide = Cell::new(false);
+        let observed_blank = Cell::new(false);
+        let seed = noprop::seed_from_env_or_time("TUINIX_PBT_SEED")?;
+        let mut runner = noprop::Runner::new(seed);
+        runner.run(256, |ctx| {
+            let size = sample_pbt_size(ctx);
+            let mut frame = TerminalFrame::new(size);
+            push_text(&mut frame, &sample_pbt_text(ctx));
+
+            let out = frame.render(None, None);
+            assert!(out.starts_with(HIDE_CURSOR), "output must hide the cursor");
+
+            let mut screen = ScreenModel::new();
+            screen.apply(&out);
+            assert_eq!(
+                screen.cells,
+                rendered_cells(&frame),
+                "full redraw mismatch for {size:?}"
+            );
+            assert_eq!(
+                screen.writes,
+                frame.chars().count(),
+                "a full redraw must write every cell exactly once"
+            );
+
+            for c in frame.chars().map(|(_, c)| c) {
+                if c.width() > 1 {
+                    observed_wide.set(true);
+                }
+                if c.is_blank() {
+                    observed_blank.set(true);
+                }
+            }
+            Ok(())
+        })?;
+        assert!(
+            observed_wide.get(),
+            "no case rendered a wide character\n{runner}"
+        );
+        assert!(
+            observed_blank.get(),
+            "no case rendered a blank cell\n{runner}"
+        );
+        Ok(())
+    }
+
+    /// Rendering against a previous frame must leave the terminal showing this frame:
+    /// replaying the difference onto the screen the previous frame painted reproduces
+    /// `chars()`, and a size change forces a full redraw.
+    #[test]
+    fn pbt_render_diff_matches_model() -> noprop::TestResult {
+        const HIDE_CURSOR: &[u8] = b"\x1b[?25l";
+        let observed_skip = Cell::new(false);
+        let observed_resize = Cell::new(false);
+        let observed_cursor = Cell::new(false);
+        let seed = noprop::seed_from_env_or_time("TUINIX_PBT_SEED")?;
+        let mut runner = noprop::Runner::new(seed);
+        runner.run(256, |ctx| {
+            let size = sample_pbt_size(ctx);
+            // Half of the cases keep the size unchanged so that the differential path
+            // is exercised; the rest may resize.
+            let prev_size = if noprop::sample_bool(ctx) {
+                size
+            } else {
+                sample_pbt_size(ctx)
+            };
+            let mut prev = TerminalFrame::new(prev_size);
+            push_text(&mut prev, &sample_pbt_text(ctx));
+
+            let mut frame = TerminalFrame::new(size);
+            push_text(&mut frame, &sample_pbt_text(ctx));
+
+            let cursor = if !size.is_empty() && noprop::sample_bool(ctx) {
+                observed_cursor.set(true);
+                Some(TerminalPosition::row_col(
+                    noprop::sample_usize_in(ctx, 0..size.rows),
+                    noprop::sample_usize_in(ctx, 0..size.cols),
+                ))
+            } else {
+                None
+            };
+
+            // The screen the previous frame left behind.
+            let mut screen = ScreenModel::new();
+            screen.apply(&prev.render(None, None));
+
+            let out = frame.render(Some(&prev), cursor);
+            assert!(out.starts_with(HIDE_CURSOR), "output must hide the cursor");
+            let writes_before = screen.writes;
+            screen.apply(&out);
+            assert_eq!(
+                screen.visible_cells(size),
+                rendered_cells(&frame),
+                "diff mismatch against a previous frame of size {:?}",
+                prev.size()
+            );
+
+            let full = frame.render(None, cursor);
+            if prev.size() != size {
+                assert_eq!(out, full, "a size change must force a full redraw");
+                observed_resize.set(true);
+            } else {
+                // The differential path took effect when it wrote fewer characters
+                // than a full redraw of the same frame would have.
+                let mut full_screen = ScreenModel::new();
+                full_screen.apply(&full);
+                if screen.writes - writes_before < full_screen.writes {
+                    observed_skip.set(true);
+                }
+            }
+            Ok(())
+        })?;
+        assert!(
+            observed_skip.get(),
+            "no case took the differential path\n{runner}"
+        );
+        assert!(
+            observed_resize.get(),
+            "no case rendered against a resized frame\n{runner}"
+        );
+        assert!(
+            observed_cursor.get(),
+            "no case positioned the cursor\n{runner}"
+        );
+        Ok(())
+    }
 }
