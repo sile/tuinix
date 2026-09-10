@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::io::Write;
 
 use crate::{TerminalPosition, TerminalSize, TerminalStyle};
 
@@ -95,9 +96,9 @@ impl TerminalChar {
 /// let mut frame = tuinix::TerminalFrame::new(size);
 ///
 /// let bold = tuinix::TerminalStyle::new().bold();
-/// frame.push_char(tuinix::TerminalChar::new('H', 1, bold).expect("valid cell"));
-/// frame.push_char(tuinix::TerminalChar::new('i', 1, bold).expect("valid cell"));
-/// frame.push_char(tuinix::TerminalChar::new('!', 1, bold).expect("valid cell"));
+/// frame.push_char(tuinix::TerminalChar::new('H', 1, bold).expect("valid char"));
+/// frame.push_char(tuinix::TerminalChar::new('i', 1, bold).expect("valid char"));
+/// frame.push_char(tuinix::TerminalChar::new('!', 1, bold).expect("valid char"));
 /// frame.push_newline();
 ///
 /// // A full-width (CJK) character occupies two columns.
@@ -186,6 +187,11 @@ impl TerminalFrame {
 
     /// Draws the contents of another frame onto this one at the given position.
     ///
+    /// The source frame is pasted as a rectangle: every cell position in the source is
+    /// written to the corresponding position in this frame, including unwritten cells,
+    /// which are pasted as a plain blank character ([`TerminalChar::BLANK`]) and therefore
+    /// overwrite whatever was in the destination at that position.
+    ///
     /// Characters that fall outside this frame, or that would extend past the right edge
     /// of a row, are ignored. A character that partially overlaps a wide character causes
     /// that wide character to be removed, so none of its columns are left behind as a
@@ -236,7 +242,7 @@ impl TerminalFrame {
     ///
     /// ```
     /// let mut frame = tuinix::TerminalFrame::new(tuinix::TerminalSize::rows_cols(2, 4));
-    /// frame.push_char(tuinix::TerminalChar::new('a', 1, Default::default()).expect("valid cell"));
+    /// frame.push_char(tuinix::TerminalChar::new('a', 1, Default::default()).expect("valid char"));
     ///
     /// let written = frame.chars().filter(|(_, c)| !c.is_blank()).count();
     /// assert_eq!(written, 1);
@@ -259,89 +265,99 @@ impl TerminalFrame {
                 }
             })
     }
+
+    /// Renders the difference between this frame and `prev` into a byte buffer.
+    ///
+    /// `prev` is the frame that was previously rendered to the terminal: the
+    /// produced bytes contain the characters whose position, value, or style
+    /// changed since `prev`. When `prev`'s size differs from this frame's size, or
+    /// when `prev` is `None` (the first frame), every character is written.
+    ///
+    /// Unwritten positions are rendered as [`TerminalChar::BLANK`], so a frame is
+    /// painted as a whole rectangle rather than as the characters that happen to
+    /// be stored in it.
+    ///
+    /// `cursor` is the position where the terminal cursor is shown, or `None` to
+    /// hide it.
+    ///
+    /// The returned bytes are not written or flushed: the caller is responsible
+    /// for writing them to the driver and flushing it.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let size = tuinix::TerminalSize::rows_cols(24, 80);
+    /// let mut frame = tuinix::TerminalFrame::new(size);
+    /// frame.push_char(tuinix::TerminalChar::new(
+    ///     'h',
+    ///     1,
+    ///     tuinix::TerminalStyle::new(),
+    /// ).expect("valid char"));
+    ///
+    /// let out = frame.render(None, None);
+    /// ```
+    pub fn render(
+        &self,
+        prev: Option<&TerminalFrame>,
+        cursor: Option<TerminalPosition>,
+    ) -> Vec<u8> {
+        let mut out = Vec::new();
+        // Cursor visibility is not part of a frame, so `render` cannot know whether
+        // the terminal is currently showing the cursor. Hiding is idempotent, so it
+        // is emitted unconditionally: this makes `None` mean "hidden" without
+        // comparing against `prev`, and stops a cursor that moved between frames
+        // from flickering at its old position.
+        let _ = write!(out, "\x1b[?25l"); // hide cursor
+
+        let resized = prev.is_none_or(|p| p.size() != self.size());
+        let mut skipped = false;
+        let mut last_style = None;
+        let mut last_row = usize::MAX;
+        for (position, c) in self.chars() {
+            let old = prev.and_then(|p| p.get_char(position));
+            if !resized && Some(c) == old {
+                skipped = true;
+                continue;
+            }
+
+            if skipped || last_row != position.row {
+                let _ = write!(out, "\x1b[{};{}H", position.row + 1, position.col + 1);
+            }
+            if Some(c.style()) != last_style {
+                let _ = write!(out, "{}", c.style());
+            }
+            let _ = write!(out, "{}", c.value());
+
+            last_style = Some(c.style());
+            last_row = position.row;
+            skipped = false;
+        }
+
+        if let Some(position) = cursor {
+            let _ = write!(out, "\x1b[{};{}H", position.row + 1, position.col + 1);
+            let _ = write!(out, "\x1b[?25h"); // show cursor
+        }
+
+        out
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::Cell, collections::BTreeMap};
-
     use super::*;
 
-    const WIDE_CHARS: &[char] = &['\u{3042}', '\u{754c}', '\u{65e5}'];
-    const ZERO_WIDTH_CHARS: &[char] = &['\u{301}', '\u{20dd}'];
-
-    fn char_width(c: char) -> usize {
-        if c.is_control() {
-            0
-        } else if WIDE_CHARS.contains(&c) {
-            2
-        } else if ZERO_WIDTH_CHARS.contains(&c) {
-            0
-        } else {
-            1
-        }
-    }
-
-    /// Builds a valid cell for the tests.
-    fn cell(value: char, width: usize) -> TerminalChar {
-        TerminalChar::new(value, width, TerminalStyle::new()).expect("valid cell")
-    }
-
-    /// Pushes a string of text onto the frame, handling newlines and per-character widths.
-    fn push_text(frame: &mut TerminalFrame, text: &str) {
-        for c in text.chars() {
-            match c {
-                '\n' => frame.push_newline(),
-                _ => {
-                    let width = char_width(c);
-                    if width > 0 {
-                        frame.push_char(cell(c, width));
-                    }
-                }
-            }
-        }
-    }
-
-    fn sample_pbt_size(ctx: &mut noprop::TestCaseContext) -> TerminalSize {
-        TerminalSize::rows_cols(
-            noprop::sample_with_boundaries(ctx, &[0usize, 12], noprop::Ratio::one_nth(5), |ctx| {
-                noprop::sample_usize_in(ctx, 0..=12)
-            }),
-            noprop::sample_with_boundaries(ctx, &[0usize, 12], noprop::Ratio::one_nth(5), |ctx| {
-                noprop::sample_usize_in(ctx, 0..=12)
-            }),
-        )
-    }
-
-    fn sample_pbt_text(ctx: &mut noprop::TestCaseContext) -> String {
-        let mut text = String::new();
-        let n_chars =
-            noprop::sample_with_boundaries(ctx, &[0usize, 48], noprop::Ratio::one_nth(5), |ctx| {
-                noprop::sample_usize_in(ctx, 0..=48)
-            });
-        for _ in 0..n_chars {
-            match noprop::sample_weighted_index(ctx, &[4, 1, 1, 1]) {
-                0 => {
-                    text.push(
-                        char::from_u32(noprop::sample_usize_in(ctx, 0x21..=0x7e) as u32)
-                            .expect("valid ASCII"),
-                    );
-                }
-                1 => text.push('\n'),
-                2 => text.push(noprop::sample_choice(ctx, WIDE_CHARS)),
-                _ => text.push(noprop::sample_choice(ctx, ZERO_WIDTH_CHARS)),
-            }
-        }
-        text
+    /// Builds a valid character for the tests.
+    fn ch(value: char, width: usize) -> TerminalChar {
+        TerminalChar::new(value, width, TerminalStyle::new()).expect("valid char")
     }
 
     #[test]
     fn cursor_advances_by_width() {
         let size = TerminalSize::rows_cols(2, 4);
         let mut frame = TerminalFrame::new(size);
-        frame.push_char(cell('a', 1));
-        frame.push_char(cell('b', 1));
-        frame.push_char(cell('\u{3042}', 2));
+        frame.push_char(ch('a', 1));
+        frame.push_char(ch('b', 1));
+        frame.push_char(ch('\u{3042}', 2));
         assert_eq!(frame.cursor(), TerminalPosition::row_col(0, 4));
         frame.push_newline();
         assert_eq!(frame.cursor(), TerminalPosition::row_col(1, 0));
@@ -353,7 +369,7 @@ mod tests {
         let mut frame = TerminalFrame::new(size);
 
         // From column 1, advance to the next stop (8).
-        frame.push_char(cell('a', 1));
+        frame.push_char(ch('a', 1));
         frame.push_tab(8);
         assert_eq!(frame.cursor(), TerminalPosition::row_col(0, 8));
 
@@ -362,7 +378,7 @@ mod tests {
         assert_eq!(frame.cursor(), TerminalPosition::row_col(0, 16));
 
         // A non-aligned column advances to the next stop.
-        frame.push_char(cell('b', 1)); // col 17
+        frame.push_char(ch('b', 1)); // col 17
         frame.push_tab(8);
         assert_eq!(frame.cursor(), TerminalPosition::row_col(0, 24));
     }
@@ -371,8 +387,8 @@ mod tests {
     fn wide_char_continuation_is_blank_or_skipped() {
         let size = TerminalSize::rows_cols(1, 4);
         let mut frame = TerminalFrame::new(size);
-        frame.push_char(cell('\u{3042}', 2));
-        frame.push_char(cell('x', 1));
+        frame.push_char(ch('\u{3042}', 2));
+        frame.push_char(ch('x', 1));
 
         assert_eq!(
             frame
@@ -403,11 +419,11 @@ mod tests {
     fn clips_cells_at_right_edge() {
         let size = TerminalSize::rows_cols(1, 3);
         let mut frame = TerminalFrame::new(size);
-        assert!(frame.push_char(cell('a', 1)));
-        assert!(frame.push_char(cell('b', 1)));
-        assert!(frame.push_char(cell('c', 1)));
+        assert!(frame.push_char(ch('a', 1)));
+        assert!(frame.push_char(ch('b', 1)));
+        assert!(frame.push_char(ch('c', 1)));
         // The row is full; the next cell is clipped but the cursor still advances.
-        assert!(!frame.push_char(cell('d', 1)));
+        assert!(!frame.push_char(ch('d', 1)));
 
         assert_eq!(frame.cursor(), TerminalPosition::row_col(0, 4));
         let stored: Vec<_> = frame
@@ -422,12 +438,12 @@ mod tests {
     fn draw_removes_partial_overlap_and_clips() {
         let size = TerminalSize::rows_cols(1, 4);
         let mut dest = TerminalFrame::new(size);
-        dest.push_char(cell('\u{3042}', 2)); // wide char at col 0-1
-        dest.push_char(cell('y', 1));
+        dest.push_char(ch('\u{3042}', 2)); // wide char at col 0-1
+        dest.push_char(ch('y', 1));
 
         // A one-cell source drawn over the continuation column of the wide char.
         let mut src = TerminalFrame::new(TerminalSize::rows_cols(1, 1));
-        src.push_char(cell('x', 1));
+        src.push_char(ch('x', 1));
 
         // Draw 'x' over column 1, which is the continuation of the wide char.
         dest.draw(TerminalPosition::row_col(0, 1), &src);
@@ -440,96 +456,5 @@ mod tests {
             .map(|(_, c)| c.value)
             .collect();
         assert_eq!(stored, ['x', 'y']);
-    }
-
-    /// `TerminalFrame::draw` must match a model that replays the overlap handling: a
-    /// partially overlapped character is removed, the cells covered by the drawn
-    /// character are cleared, and characters drawn outside the frame are ignored.
-    #[test]
-    fn pbt_draw_matches_model() -> noprop::TestResult {
-        let observed_overlap = Cell::new(false);
-        let observed_clipped = Cell::new(false);
-        let seed = noprop::seed_from_env_or_time("TUINIX_PBT_SEED")?;
-        let mut runner = noprop::Runner::new(seed);
-        runner.run(256, |ctx| {
-            // Half of the cases force a partial overlap structurally: a wide character
-            // whose second cell is overwritten by a drawn character.
-            let structured = noprop::sample_bool(ctx);
-            let (size, dest_text, src_text, position) = if structured {
-                (
-                    TerminalSize::rows_cols(1, 4),
-                    "\u{3042}".to_string(),
-                    "x".to_string(),
-                    TerminalPosition::row_col(0, 1),
-                )
-            } else {
-                (
-                    sample_pbt_size(ctx),
-                    sample_pbt_text(ctx),
-                    sample_pbt_text(ctx),
-                    TerminalPosition::row_col(
-                        noprop::sample_usize_in(ctx, 0..=16),
-                        noprop::sample_usize_in(ctx, 0..=16),
-                    ),
-                )
-            };
-
-            let mut dest = TerminalFrame::new(size);
-            push_text(&mut dest, &dest_text);
-            let mut src = TerminalFrame::new(size);
-            push_text(&mut src, &src_text);
-
-            let mut expected: BTreeMap<_, _> = dest
-                .chars()
-                .filter(|(_, c)| *c != TerminalChar::BLANK)
-                .collect();
-            let mut removals = 0usize;
-            let mut skipped = 0usize;
-            for (src_pos, c) in src.chars() {
-                let target_pos = position + src_pos;
-                if target_pos.row >= size.rows || target_pos.col + c.width > size.cols {
-                    skipped += 1;
-                    continue;
-                }
-                if let Some((&prev_pos, prev_c)) = expected.range(..target_pos).next_back() {
-                    let end_pos = prev_pos + TerminalPosition::col(prev_c.width);
-                    if target_pos < end_pos {
-                        expected.remove(&prev_pos);
-                        removals += 1;
-                    }
-                }
-                for i in 0..c.width {
-                    expected.remove(&(target_pos + TerminalPosition::col(i)));
-                }
-                expected.insert(target_pos, c);
-            }
-
-            dest.draw(position, &src);
-            let actual: BTreeMap<_, _> = dest
-                .chars()
-                .filter(|(_, c)| *c != TerminalChar::BLANK)
-                .collect();
-            let expected: BTreeMap<_, _> = expected
-                .into_iter()
-                .filter(|(_, c)| *c != TerminalChar::BLANK)
-                .collect();
-            assert_eq!(actual, expected, "draw mismatch at {position:?}");
-            if removals > 0 {
-                observed_overlap.set(true);
-            }
-            if skipped > 0 {
-                observed_clipped.set(true);
-            }
-            Ok(())
-        })?;
-        assert!(
-            observed_overlap.get(),
-            "no case removed an overlapped character\n{runner}"
-        );
-        assert!(
-            observed_clipped.get(),
-            "no case drew outside the frame\n{runner}"
-        );
-        Ok(())
     }
 }

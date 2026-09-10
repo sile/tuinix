@@ -1,6 +1,6 @@
 use std::ops::{Add, AddAssign, Sub, SubAssign};
 
-/// Dimensions of a [`Terminal`](crate::Terminal) or [`TerminalFrame`](crate::TerminalFrame).
+/// The number of rows and columns of a [`TerminalFrame`](crate::TerminalFrame).
 ///
 /// This structure stores the number of rows (height) and columns (width) that define
 /// the size of a terminal display area.

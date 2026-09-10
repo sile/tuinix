@@ -1,5 +1,3 @@
-use std::io::Read;
-
 use crate::TerminalPosition;
 
 /// User input.
@@ -104,62 +102,85 @@ pub enum MouseEvent {
     ScrollDown,
 }
 
-#[derive(Debug)]
-pub struct InputReader<R> {
-    inner: R,
+/// The pure, I/O-free input stream that accumulates raw bytes until a complete
+/// input event can be parsed.
+///
+/// The stream is driven by the application: it has no awareness of any `Read`
+/// source, so it can live outside the driver and be fed whatever bytes the
+/// application reads from a terminal or elsewhere.
+///
+/// Feed raw bytes with [`InputStream::feed()`](Self::feed), pull parsed
+/// [`TerminalInput`] values with [`InputStream::next()`](Self::next), and check
+/// whether an incomplete sequence is being held with
+/// [`InputStream::has_pending()`](Self::has_pending).
+#[derive(Debug, Default)]
+pub struct InputStream {
     buf: Vec<u8>,
-    buf_offset: usize,
 }
 
-impl<R: Read> InputReader<R> {
-    pub fn new(inner: R) -> Self {
-        Self {
-            inner,
-            buf: vec![0; 64],
-            buf_offset: 0,
+/// The maximum number of unparsed bytes an [`InputStream`] holds.
+///
+/// A well-formed sequence is far shorter than this. The bound only keeps a
+/// sequence that never terminates (for example a truncated mouse report) from
+/// growing the buffer without limit.
+const MAX_PENDING_BYTES: usize = 4096;
+
+impl InputStream {
+    /// Creates an empty input stream.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Feeds raw bytes into the stream.
+    ///
+    /// Unparsed bytes are held until [`next()`](Self::next) can produce an event
+    /// from them. At most 4096 bytes are kept, so a sequence that never
+    /// terminates discards its oldest bytes instead of growing without bound.
+    pub fn feed(&mut self, bytes: &[u8]) {
+        self.buf.extend_from_slice(bytes);
+        if self.buf.len() > MAX_PENDING_BYTES {
+            let excess = self.buf.len() - MAX_PENDING_BYTES;
+            self.buf.drain(..excess);
         }
     }
 
-    pub fn inner(&self) -> &R {
-        &self.inner
-    }
-
-    pub(crate) fn replace_inner(&mut self, inner: R) {
-        self.inner = inner;
-    }
-
-    pub fn read_input(&mut self) -> std::io::Result<Option<TerminalInput>> {
-        if self.buf_offset > 0
-            && let Some(input) = self.read_input_from_buf()?
-        {
-            return Ok(Some(input));
-        }
-
-        let read_size = self.inner.read(&mut self.buf[self.buf_offset..])?;
-        if read_size == 0 {
-            return Err(std::io::ErrorKind::UnexpectedEof.into());
-        }
-
-        self.buf_offset += read_size;
-        self.read_input_from_buf()
-    }
-
-    pub(crate) fn read_input_from_buf(&mut self) -> std::io::Result<Option<TerminalInput>> {
+    /// Parses and returns the next complete input event, consuming its bytes.
+    ///
+    /// Returns `None` when no complete event can be produced from the bytes fed
+    /// so far. This happens either because the stream holds an incomplete
+    /// sequence (for example a lone `ESC` byte) or because the bytes it held were
+    /// not a valid sequence and have been discarded. Use
+    /// [`has_pending()`](Self::has_pending) to tell the two apart: a `None`
+    /// returned while `has_pending()` is `false` means that everything fed so
+    /// far has been consumed.
+    //
+    // `InputStream` is a stateful parser, not an iterator; the name `next` is
+    // kept for symmetry with `feed`. Implementing `Iterator` would not be a
+    // natural fit here (it would require a meaningful `Item` and a separate
+    // iteration model).
+    #[allow(clippy::should_implement_trait)]
+    pub fn next(&mut self) -> Option<TerminalInput> {
         loop {
-            let (input, consumed_size) = parse_input(&self.buf[..self.buf_offset])?;
-            self.buf.copy_within(consumed_size..self.buf_offset, 0);
-            self.buf_offset -= consumed_size;
-            if input.is_none() && consumed_size > 0 {
+            let (input, consumed) = parse_input(&self.buf);
+            if consumed > 0 {
+                self.buf.drain(..consumed);
+            }
+            if input.is_none() && consumed > 0 {
                 continue;
             }
-            return Ok(input);
+            return input;
         }
+    }
+
+    /// Returns `true` when the stream holds unconsumed bytes.
+    pub fn has_pending(&self) -> bool {
+        !self.buf.is_empty()
     }
 }
 
-fn parse_input(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> {
+fn parse_input(bytes: &[u8]) -> (Option<TerminalInput>, usize) {
     if bytes.is_empty() {
-        return Ok((None, 0));
+        return (None, 0);
     }
 
     match bytes[0] {
@@ -168,15 +189,15 @@ fn parse_input(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> 
         // Escape key or escape sequence
         0x1b => parse_escape_sequence(bytes),
         // Backspace
-        0x7f => Ok((Some(create_key_input(false, false, KeyCode::Backspace)), 1)),
+        0x7f => (Some(create_key_input(false, false, KeyCode::Backspace)), 1),
         // UTF-8 characters
         b if b >= 0x80 => parse_utf8_char(bytes),
         // Unknown byte
-        _ => Ok((None, 1)),
+        _ => (None, 1),
     }
 }
 
-fn parse_ascii_char(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> {
+fn parse_ascii_char(bytes: &[u8]) -> (Option<TerminalInput>, usize) {
     let byte = bytes[0];
 
     // Control characters (Ctrl+A through Ctrl+Z)
@@ -186,20 +207,20 @@ fn parse_ascii_char(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usi
             0x09 => (false, KeyCode::Tab),   // Tab
             c => (true, KeyCode::Char((c + 0x60) as char)),
         };
-        return Ok((Some(create_key_input(ctrl, false, code)), 1));
+        return (Some(create_key_input(ctrl, false, code)), 1);
     }
 
     // Regular ASCII characters
-    Ok((
+    (
         Some(create_key_input(false, false, KeyCode::Char(byte as char))),
         1,
-    ))
+    )
 }
 
-fn parse_escape_sequence(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> {
+fn parse_escape_sequence(bytes: &[u8]) -> (Option<TerminalInput>, usize) {
     // Need at least 2 bytes for escape sequences
     if bytes.len() == 1 {
-        return Ok((None, 0));
+        return (None, 0);
     }
 
     match bytes[1] {
@@ -208,11 +229,11 @@ fn parse_escape_sequence(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>
         // Alt + character (ESC followed by a regular character)
         b if b < 0x80 && b != 0x1b && b != 0x5b && b != 0x4f => parse_alt_char(bytes),
         // Standalone ESC or unknown sequence
-        _ => Ok((Some(create_key_input(false, false, KeyCode::Escape)), 1)),
+        _ => (Some(create_key_input(false, false, KeyCode::Escape)), 1),
     }
 }
 
-fn parse_alt_char(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> {
+fn parse_alt_char(bytes: &[u8]) -> (Option<TerminalInput>, usize) {
     let c = bytes[1] as char;
     let (ctrl, code) = if bytes[1] < 0x20 {
         // Control characters with Alt
@@ -226,13 +247,13 @@ fn parse_alt_char(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize
         (false, KeyCode::Char(c))
     };
 
-    Ok((Some(create_key_input(ctrl, true, code)), 2))
+    (Some(create_key_input(ctrl, true, code)), 2)
 }
 
-fn parse_csi_sequence(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> {
+fn parse_csi_sequence(bytes: &[u8]) -> (Option<TerminalInput>, usize) {
     // Need at least 3 bytes for basic CSI sequences (ESC [ X)
     if bytes.len() < 3 {
-        return Ok((None, 0));
+        return (None, 0);
     }
 
     match bytes[2] {
@@ -240,14 +261,14 @@ fn parse_csi_sequence(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, u
         b'M' => parse_x10_mouse_sequence(bytes),
         b'A'..=b'D' | b'H' | b'F' | b'Z' => parse_simple_csi_key(bytes),
         b'1'..=b'6' => parse_complex_csi_key(bytes),
-        _ => Ok((None, 3)), // Unknown CSI sequence
+        _ => (None, 3), // Unknown CSI sequence
     }
 }
 
-fn parse_ss3_sequence(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> {
+fn parse_ss3_sequence(bytes: &[u8]) -> (Option<TerminalInput>, usize) {
     // Need at least 3 bytes for SS3 sequences (ESC O X)
     if bytes.len() < 3 {
-        return Ok((None, 0));
+        return (None, 0);
     }
 
     let code = match bytes[2] {
@@ -257,13 +278,13 @@ fn parse_ss3_sequence(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, u
         b'D' => KeyCode::Left,
         b'H' => KeyCode::Home,
         b'F' => KeyCode::End,
-        _ => return Ok((None, 3)), // Unknown SS3 sequence
+        _ => return (None, 3), // Unknown SS3 sequence
     };
 
-    Ok((Some(create_key_input(false, false, code)), 3))
+    (Some(create_key_input(false, false, code)), 3)
 }
 
-fn parse_simple_csi_key(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> {
+fn parse_simple_csi_key(bytes: &[u8]) -> (Option<TerminalInput>, usize) {
     let code = match bytes[2] {
         b'A' => KeyCode::Up,
         b'B' => KeyCode::Down,
@@ -272,13 +293,13 @@ fn parse_simple_csi_key(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>,
         b'H' => KeyCode::Home,
         b'F' => KeyCode::End,
         b'Z' => KeyCode::BackTab,
-        _ => return Ok((None, 3)),
+        _ => return (None, 3),
     };
 
-    Ok((Some(create_key_input(false, false, code)), 3))
+    (Some(create_key_input(false, false, code)), 3)
 }
 
-fn parse_complex_csi_key(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> {
+fn parse_complex_csi_key(bytes: &[u8]) -> (Option<TerminalInput>, usize) {
     // Handle sequences like ESC [ 1 ; 5 A (modified arrow keys)
     if bytes.len() >= 6 && bytes[2] == b'1' && bytes[3] == b';' && matches!(bytes[5], b'A'..=b'D') {
         return parse_modified_arrow_key(bytes);
@@ -295,15 +316,15 @@ fn parse_complex_csi_key(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>
 
     // Need more bytes or unknown sequence
     if bytes.len() < 6 {
-        Ok((None, 0))
+        (None, 0)
     } else {
-        Ok((None, 3))
+        (None, 3)
     }
 }
 
-fn parse_modified_arrow_key(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> {
+fn parse_modified_arrow_key(bytes: &[u8]) -> (Option<TerminalInput>, usize) {
     if !bytes[4].is_ascii_digit() {
-        return Ok((None, 6));
+        return (None, 6);
     }
 
     let modifier = bytes[4] - b'0';
@@ -315,13 +336,13 @@ fn parse_modified_arrow_key(bytes: &[u8]) -> std::io::Result<(Option<TerminalInp
         b'B' => KeyCode::Down,
         b'C' => KeyCode::Right,
         b'D' => KeyCode::Left,
-        _ => return Ok((None, 6)),
+        _ => return (None, 6),
     };
 
-    Ok((Some(create_key_input(ctrl, alt, code)), 6))
+    (Some(create_key_input(ctrl, alt, code)), 6)
 }
 
-fn parse_special_key_simple(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> {
+fn parse_special_key_simple(bytes: &[u8]) -> (Option<TerminalInput>, usize) {
     let code = match bytes[2] {
         b'1' | b'7' => KeyCode::Home,
         b'2' => KeyCode::Insert,
@@ -329,15 +350,13 @@ fn parse_special_key_simple(bytes: &[u8]) -> std::io::Result<(Option<TerminalInp
         b'4' | b'8' => KeyCode::End,
         b'5' => KeyCode::PageUp,
         b'6' => KeyCode::PageDown,
-        _ => return Ok((None, 4)),
+        _ => return (None, 4),
     };
 
-    Ok((Some(create_key_input(false, false, code)), 4))
+    (Some(create_key_input(false, false, code)), 4)
 }
 
-fn parse_special_key_with_modifier(
-    bytes: &[u8],
-) -> std::io::Result<(Option<TerminalInput>, usize)> {
+fn parse_special_key_with_modifier(bytes: &[u8]) -> (Option<TerminalInput>, usize) {
     let code = match bytes[2] {
         b'1' | b'7' => KeyCode::Home,
         b'2' => KeyCode::Insert,
@@ -345,21 +364,21 @@ fn parse_special_key_with_modifier(
         b'4' | b'8' => KeyCode::End,
         b'5' => KeyCode::PageUp,
         b'6' => KeyCode::PageDown,
-        _ => return Ok((None, 6)),
+        _ => return (None, 6),
     };
 
     if !bytes[4].is_ascii_digit() {
-        return Ok((None, 6));
+        return (None, 6);
     }
 
     let modifier = bytes[4] - b'0';
     let alt = modifier & 0x2 != 0;
     let ctrl = modifier & 0x4 != 0;
 
-    Ok((Some(create_key_input(ctrl, alt, code)), 6))
+    (Some(create_key_input(ctrl, alt, code)), 6)
 }
 
-fn parse_sgr_mouse_sequence(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> {
+fn parse_sgr_mouse_sequence(bytes: &[u8]) -> (Option<TerminalInput>, usize) {
     // Find the end of the sequence (M or m)
     let mut end_pos = None;
     for (i, &b) in bytes.iter().enumerate().skip(3) {
@@ -367,20 +386,29 @@ fn parse_sgr_mouse_sequence(bytes: &[u8]) -> std::io::Result<(Option<TerminalInp
             end_pos = Some(i);
             break;
         }
+        if !(b.is_ascii_digit() || b == b';') {
+            // The parameters are digits and semicolons, so this byte cannot be
+            // part of a sequence no matter what arrives later. Drop the prefix
+            // rather than waiting forever for a terminator that can never come.
+            return (None, i);
+        }
     }
 
     let end = match end_pos {
         Some(pos) => pos,
-        None => return Ok((None, 0)), // Incomplete sequence
+        None => return (None, 0), // Incomplete sequence
     };
 
     // Parse the parameters
-    let params_str = std::str::from_utf8(&bytes[3..end])
-        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid UTF-8"))?;
+    let params_str = match std::str::from_utf8(&bytes[3..end]) {
+        Ok(s) => s,
+        // Not a valid SGR sequence: drop it like any other unparseable input.
+        Err(_) => return (None, end + 1),
+    };
 
     let params: Vec<&str> = params_str.split(';').collect();
     if params.len() != 3 {
-        return Ok((None, end + 1)); // Invalid parameter count
+        return (None, end + 1); // Invalid parameter count
     }
 
     let (button, x, y) = match (
@@ -389,19 +417,19 @@ fn parse_sgr_mouse_sequence(bytes: &[u8]) -> std::io::Result<(Option<TerminalInp
         params[2].parse::<u16>(),
     ) {
         (Ok(b), Ok(x), Ok(y)) => (b, x, y),
-        _ => return Ok((None, end + 1)), // Invalid parameters
+        _ => return (None, end + 1), // Invalid parameters
     };
 
-    let mouse_input = create_sgr_mouse_input(button, x, y, bytes[end] == b'm')?;
+    let mouse_input = create_sgr_mouse_input(button, x, y, bytes[end] == b'm');
     match mouse_input {
-        Some(input) => Ok((Some(TerminalInput::Mouse(input)), end + 1)),
-        None => Ok((None, end + 1)),
+        Some(input) => (Some(TerminalInput::Mouse(input)), end + 1),
+        None => (None, end + 1),
     }
 }
 
-fn parse_x10_mouse_sequence(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> {
+fn parse_x10_mouse_sequence(bytes: &[u8]) -> (Option<TerminalInput>, usize) {
     if bytes.len() < 6 {
-        return Ok((None, 0));
+        return (None, 0);
     }
 
     let button_byte = bytes[3];
@@ -409,10 +437,10 @@ fn parse_x10_mouse_sequence(bytes: &[u8]) -> std::io::Result<(Option<TerminalInp
     let y = bytes[5] as u16;
 
     let mouse_input = create_x10_mouse_input(button_byte, x, y);
-    Ok((Some(TerminalInput::Mouse(mouse_input)), 6))
+    (Some(TerminalInput::Mouse(mouse_input)), 6)
 }
 
-fn parse_utf8_char(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usize)> {
+fn parse_utf8_char(bytes: &[u8]) -> (Option<TerminalInput>, usize) {
     let width = match bytes[0] {
         b if b & 0xE0 == 0xC0 => 2,
         b if b & 0xF0 == 0xE0 => 3,
@@ -421,15 +449,15 @@ fn parse_utf8_char(bytes: &[u8]) -> std::io::Result<(Option<TerminalInput>, usiz
     };
 
     if bytes.len() < width {
-        return Ok((None, 0)); // Not enough bytes yet
+        return (None, 0); // Not enough bytes yet
     }
 
     match std::str::from_utf8(&bytes[0..width]) {
-        Ok(s) if let Some(c) = s.chars().next() => Ok((
+        Ok(s) if let Some(c) = s.chars().next() => (
             Some(create_key_input(false, false, KeyCode::Char(c))),
             width,
-        )),
-        _ => Ok((None, 1)), // Invalid UTF-8, discard first byte
+        ),
+        _ => (None, 1), // Invalid UTF-8, discard first byte
     }
 }
 
@@ -438,12 +466,7 @@ fn create_key_input(ctrl: bool, alt: bool, code: KeyCode) -> TerminalInput {
     TerminalInput::Key(KeyInput { ctrl, alt, code })
 }
 
-fn create_sgr_mouse_input(
-    button: u16,
-    x: u16,
-    y: u16,
-    is_release: bool,
-) -> std::io::Result<Option<MouseInput>> {
+fn create_sgr_mouse_input(button: u16, x: u16, y: u16, is_release: bool) -> Option<MouseInput> {
     let button_code = button & 0x03;
     let ctrl = (button & 0x10) != 0;
     let alt = (button & 0x08) != 0;
@@ -457,7 +480,7 @@ fn create_sgr_mouse_input(
             0 => MouseEvent::LeftRelease,
             1 => MouseEvent::MiddleRelease,
             2 => MouseEvent::RightRelease,
-            _ => return Ok(None),
+            _ => return None,
         }
     } else {
         // Check for scroll events first
@@ -468,12 +491,12 @@ fn create_sgr_mouse_input(
                 0 => MouseEvent::LeftPress,
                 1 => MouseEvent::MiddlePress,
                 2 => MouseEvent::RightPress,
-                _ => return Ok(None),
+                _ => return None,
             },
         }
     };
 
-    Ok(Some(MouseInput {
+    Some(MouseInput {
         event,
         position: TerminalPosition::row_col(
             y.saturating_sub(1) as usize,
@@ -482,7 +505,7 @@ fn create_sgr_mouse_input(
         ctrl,
         alt,
         shift,
-    }))
+    })
 }
 
 fn create_x10_mouse_input(button_byte: u8, x: u16, y: u16) -> MouseInput {
@@ -531,14 +554,14 @@ fn create_x10_mouse_input(button_byte: u8, x: u16, y: u16) -> MouseInput {
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::Cell, io::Cursor};
+    use std::cell::Cell;
 
     use super::*;
 
     #[test]
     fn test_parse_regular_ascii_characters() {
         // Test regular ASCII characters
-        let result = parse_input(b"a").expect("parse succeeds");
+        let result = parse_input(b"a");
         assert_eq!(
             result.0,
             Some(TerminalInput::Key(KeyInput {
@@ -549,7 +572,7 @@ mod tests {
         );
         assert_eq!(result.1, 1);
 
-        let result = parse_input(b"Z").expect("parse succeeds");
+        let result = parse_input(b"Z");
         assert_eq!(
             result.0,
             Some(TerminalInput::Key(KeyInput {
@@ -560,7 +583,7 @@ mod tests {
         );
         assert_eq!(result.1, 1);
 
-        let result = parse_input(b"5").expect("parse succeeds");
+        let result = parse_input(b"5");
         assert_eq!(
             result.0,
             Some(TerminalInput::Key(KeyInput {
@@ -575,7 +598,7 @@ mod tests {
     #[test]
     fn test_parse_control_characters() {
         // Test Ctrl+A (0x01)
-        let result = parse_input(&[0x01]).expect("parse succeeds");
+        let result = parse_input(&[0x01]);
         assert_eq!(
             result.0,
             Some(TerminalInput::Key(KeyInput {
@@ -587,7 +610,7 @@ mod tests {
         assert_eq!(result.1, 1);
 
         // Test Ctrl+Z (0x1A)
-        let result = parse_input(&[0x1A]).expect("parse succeeds");
+        let result = parse_input(&[0x1A]);
         assert_eq!(
             result.0,
             Some(TerminalInput::Key(KeyInput {
@@ -599,7 +622,7 @@ mod tests {
         assert_eq!(result.1, 1);
 
         // Test Enter (0x0D)
-        let result = parse_input(&[0x0D]).expect("parse succeeds");
+        let result = parse_input(&[0x0D]);
         assert_eq!(
             result.0,
             Some(TerminalInput::Key(KeyInput {
@@ -611,7 +634,7 @@ mod tests {
         assert_eq!(result.1, 1);
 
         // Test Tab (0x09)
-        let result = parse_input(&[0x09]).expect("parse succeeds");
+        let result = parse_input(&[0x09]);
         assert_eq!(
             result.0,
             Some(TerminalInput::Key(KeyInput {
@@ -625,7 +648,7 @@ mod tests {
 
     #[test]
     fn test_parse_backspace() {
-        let result = parse_input(&[0x7F]).expect("parse succeeds");
+        let result = parse_input(&[0x7F]);
         assert_eq!(
             result.0,
             Some(TerminalInput::Key(KeyInput {
@@ -640,12 +663,12 @@ mod tests {
     #[test]
     fn test_parse_escape_key() {
         // Standalone ESC key
-        let result = parse_input(&[0x1b]).expect("parse succeeds");
+        let result = parse_input(&[0x1b]);
         assert_eq!(result.0, None); // Need more bytes
         assert_eq!(result.1, 0);
 
         // ESC followed by unknown character should be treated as ESC
-        let result = parse_input(&[0x1b, b'x']).expect("parse succeeds");
+        let result = parse_input(&[0x1b, b'x']);
         assert_eq!(
             result.0,
             Some(TerminalInput::Key(KeyInput {
@@ -660,7 +683,7 @@ mod tests {
     #[test]
     fn test_parse_alt_combinations() {
         // Alt+a
-        let result = parse_input(&[0x1b, b'a']).expect("parse succeeds");
+        let result = parse_input(&[0x1b, b'a']);
         assert_eq!(
             result.0,
             Some(TerminalInput::Key(KeyInput {
@@ -672,7 +695,7 @@ mod tests {
         assert_eq!(result.1, 2);
 
         // Alt+Enter
-        let result = parse_input(&[0x1b, 0x0D]).expect("parse succeeds");
+        let result = parse_input(&[0x1b, 0x0D]);
         assert_eq!(
             result.0,
             Some(TerminalInput::Key(KeyInput {
@@ -684,7 +707,7 @@ mod tests {
         assert_eq!(result.1, 2);
 
         // Alt+Tab
-        let result = parse_input(&[0x1b, 0x09]).expect("parse succeeds");
+        let result = parse_input(&[0x1b, 0x09]);
         assert_eq!(
             result.0,
             Some(TerminalInput::Key(KeyInput {
@@ -699,7 +722,7 @@ mod tests {
     #[test]
     fn test_parse_arrow_keys_esc_bracket() {
         // Up arrow: ESC [ A
-        let result = parse_input(&[0x1b, b'[', b'A']).expect("parse succeeds");
+        let result = parse_input(&[0x1b, b'[', b'A']);
         assert_eq!(
             result.0,
             Some(TerminalInput::Key(KeyInput {
@@ -711,7 +734,7 @@ mod tests {
         assert_eq!(result.1, 3);
 
         // Down arrow: ESC [ B
-        let result = parse_input(&[0x1b, b'[', b'B']).expect("parse succeeds");
+        let result = parse_input(&[0x1b, b'[', b'B']);
         assert_eq!(
             result.0,
             Some(TerminalInput::Key(KeyInput {
@@ -723,7 +746,7 @@ mod tests {
         assert_eq!(result.1, 3);
 
         // Right arrow: ESC [ C
-        let result = parse_input(&[0x1b, b'[', b'C']).expect("parse succeeds");
+        let result = parse_input(&[0x1b, b'[', b'C']);
         assert_eq!(
             result.0,
             Some(TerminalInput::Key(KeyInput {
@@ -735,7 +758,7 @@ mod tests {
         assert_eq!(result.1, 3);
 
         // Left arrow: ESC [ D
-        let result = parse_input(&[0x1b, b'[', b'D']).expect("parse succeeds");
+        let result = parse_input(&[0x1b, b'[', b'D']);
         assert_eq!(
             result.0,
             Some(TerminalInput::Key(KeyInput {
@@ -750,7 +773,7 @@ mod tests {
     #[test]
     fn test_parse_arrow_keys_esc_o() {
         // Up arrow: ESC O A
-        let result = parse_input(&[0x1b, b'O', b'A']).expect("parse succeeds");
+        let result = parse_input(&[0x1b, b'O', b'A']);
         assert_eq!(
             result.0,
             Some(TerminalInput::Key(KeyInput {
@@ -762,7 +785,7 @@ mod tests {
         assert_eq!(result.1, 3);
 
         // Down arrow: ESC O B
-        let result = parse_input(&[0x1b, b'O', b'B']).expect("parse succeeds");
+        let result = parse_input(&[0x1b, b'O', b'B']);
         assert_eq!(
             result.0,
             Some(TerminalInput::Key(KeyInput {
@@ -777,7 +800,7 @@ mod tests {
     #[test]
     fn test_parse_home_end_keys() {
         // Home: ESC [ H
-        let result = parse_input(&[0x1b, b'[', b'H']).expect("parse succeeds");
+        let result = parse_input(&[0x1b, b'[', b'H']);
         assert_eq!(
             result.0,
             Some(TerminalInput::Key(KeyInput {
@@ -789,7 +812,7 @@ mod tests {
         assert_eq!(result.1, 3);
 
         // End: ESC [ F
-        let result = parse_input(&[0x1b, b'[', b'F']).expect("parse succeeds");
+        let result = parse_input(&[0x1b, b'[', b'F']);
         assert_eq!(
             result.0,
             Some(TerminalInput::Key(KeyInput {
@@ -801,7 +824,7 @@ mod tests {
         assert_eq!(result.1, 3);
 
         // Home: ESC O H
-        let result = parse_input(&[0x1b, b'O', b'H']).expect("parse succeeds");
+        let result = parse_input(&[0x1b, b'O', b'H']);
         assert_eq!(
             result.0,
             Some(TerminalInput::Key(KeyInput {
@@ -813,7 +836,7 @@ mod tests {
         assert_eq!(result.1, 3);
 
         // End: ESC O F
-        let result = parse_input(&[0x1b, b'O', b'F']).expect("parse succeeds");
+        let result = parse_input(&[0x1b, b'O', b'F']);
         assert_eq!(
             result.0,
             Some(TerminalInput::Key(KeyInput {
@@ -828,7 +851,7 @@ mod tests {
     #[test]
     fn test_parse_special_keys() {
         // Shift+Tab: ESC [ Z
-        let result = parse_input(&[0x1b, b'[', b'Z']).expect("parse succeeds");
+        let result = parse_input(&[0x1b, b'[', b'Z']);
         assert_eq!(
             result.0,
             Some(TerminalInput::Key(KeyInput {
@@ -840,7 +863,7 @@ mod tests {
         assert_eq!(result.1, 3);
 
         // Insert: ESC [ 2 ~
-        let result = parse_input(&[0x1b, b'[', b'2', b'~']).expect("parse succeeds");
+        let result = parse_input(&[0x1b, b'[', b'2', b'~']);
         assert_eq!(
             result.0,
             Some(TerminalInput::Key(KeyInput {
@@ -852,7 +875,7 @@ mod tests {
         assert_eq!(result.1, 4);
 
         // Delete: ESC [ 3 ~
-        let result = parse_input(&[0x1b, b'[', b'3', b'~']).expect("parse succeeds");
+        let result = parse_input(&[0x1b, b'[', b'3', b'~']);
         assert_eq!(
             result.0,
             Some(TerminalInput::Key(KeyInput {
@@ -864,7 +887,7 @@ mod tests {
         assert_eq!(result.1, 4);
 
         // Page Up: ESC [ 5 ~
-        let result = parse_input(&[0x1b, b'[', b'5', b'~']).expect("parse succeeds");
+        let result = parse_input(&[0x1b, b'[', b'5', b'~']);
         assert_eq!(
             result.0,
             Some(TerminalInput::Key(KeyInput {
@@ -876,7 +899,7 @@ mod tests {
         assert_eq!(result.1, 4);
 
         // Page Down: ESC [ 6 ~
-        let result = parse_input(&[0x1b, b'[', b'6', b'~']).expect("parse succeeds");
+        let result = parse_input(&[0x1b, b'[', b'6', b'~']);
         assert_eq!(
             result.0,
             Some(TerminalInput::Key(KeyInput {
@@ -891,7 +914,7 @@ mod tests {
     #[test]
     fn test_parse_modified_arrow_keys() {
         // Ctrl+Up: ESC [ 1 ; 5 A (modifier 5 = Ctrl)
-        let result = parse_input(&[0x1b, b'[', b'1', b';', b'5', b'A']).expect("parse succeeds");
+        let result = parse_input(&[0x1b, b'[', b'1', b';', b'5', b'A']);
         assert_eq!(
             result.0,
             Some(TerminalInput::Key(KeyInput {
@@ -903,7 +926,7 @@ mod tests {
         assert_eq!(result.1, 6);
 
         // Alt+Right: ESC [ 1 ; 3 C (modifier 3 = Alt)
-        let result = parse_input(&[0x1b, b'[', b'1', b';', b'3', b'C']).expect("parse succeeds");
+        let result = parse_input(&[0x1b, b'[', b'1', b';', b'3', b'C']);
         assert_eq!(
             result.0,
             Some(TerminalInput::Key(KeyInput {
@@ -915,7 +938,7 @@ mod tests {
         assert_eq!(result.1, 6);
 
         // Ctrl+Alt+Left: ESC [ 1 ; 7 D (modifier 7 = Ctrl+Alt)
-        let result = parse_input(&[0x1b, b'[', b'1', b';', b'7', b'D']).expect("parse succeeds");
+        let result = parse_input(&[0x1b, b'[', b'1', b';', b'7', b'D']);
         assert_eq!(
             result.0,
             Some(TerminalInput::Key(KeyInput {
@@ -930,7 +953,7 @@ mod tests {
     #[test]
     fn test_parse_modified_special_keys() {
         // Ctrl+Delete: ESC [ 3 ; 5 ~
-        let result = parse_input(&[0x1b, b'[', b'3', b';', b'5', b'~']).expect("parse succeeds");
+        let result = parse_input(&[0x1b, b'[', b'3', b';', b'5', b'~']);
         assert_eq!(
             result.0,
             Some(TerminalInput::Key(KeyInput {
@@ -942,7 +965,7 @@ mod tests {
         assert_eq!(result.1, 6);
 
         // Alt+Home: ESC [ 1 ; 3 ~
-        let result = parse_input(&[0x1b, b'[', b'1', b';', b'3', b'~']).expect("parse succeeds");
+        let result = parse_input(&[0x1b, b'[', b'1', b';', b'3', b'~']);
         assert_eq!(
             result.0,
             Some(TerminalInput::Key(KeyInput {
@@ -957,7 +980,7 @@ mod tests {
     #[test]
     fn test_parse_utf8_characters() {
         // Test UTF-8 character (é = 0xC3 0xA9)
-        let result = parse_input(&[0xC3, 0xA9]).expect("parse succeeds");
+        let result = parse_input(&[0xC3, 0xA9]);
         assert_eq!(
             result.0,
             Some(TerminalInput::Key(KeyInput {
@@ -969,7 +992,7 @@ mod tests {
         assert_eq!(result.1, 2);
 
         // Test 3-byte UTF-8 character (€ = 0xE2 0x82 0xAC)
-        let result = parse_input(&[0xE2, 0x82, 0xAC]).expect("parse succeeds");
+        let result = parse_input(&[0xE2, 0x82, 0xAC]);
         assert_eq!(
             result.0,
             Some(TerminalInput::Key(KeyInput {
@@ -981,7 +1004,7 @@ mod tests {
         assert_eq!(result.1, 3);
 
         // Test incomplete UTF-8 sequence
-        let result = parse_input(&[0xC3]).expect("parse succeeds");
+        let result = parse_input(&[0xC3]);
         assert_eq!(result.0, None); // Need more bytes
         assert_eq!(result.1, 0);
     }
@@ -989,24 +1012,24 @@ mod tests {
     #[test]
     fn test_parse_incomplete_sequences() {
         // Incomplete escape sequence
-        let result = parse_input(&[0x1b, b'[']).expect("parse succeeds");
+        let result = parse_input(&[0x1b, b'[']);
         assert_eq!(result.0, None); // Need more bytes
         assert_eq!(result.1, 0);
 
         // Incomplete special key sequence
-        let result = parse_input(&[0x1b, b'[', b'2']).expect("parse succeeds");
+        let result = parse_input(&[0x1b, b'[', b'2']);
         assert_eq!(result.0, None); // Need more bytes
         assert_eq!(result.1, 0);
 
         // Incomplete modified key sequence
-        let result = parse_input(&[0x1b, b'[', b'1', b';']).expect("parse succeeds");
+        let result = parse_input(&[0x1b, b'[', b'1', b';']);
         assert_eq!(result.0, None); // Need more bytes
         assert_eq!(result.1, 0);
     }
 
     #[test]
     fn test_parse_empty_input() {
-        let result = parse_input(&[]).expect("parse succeeds");
+        let result = parse_input(&[]);
         assert_eq!(result.0, None);
         assert_eq!(result.1, 0);
     }
@@ -1014,99 +1037,116 @@ mod tests {
     #[test]
     fn test_parse_unknown_sequences() {
         // Unknown escape sequence should be discarded
-        let result = parse_input(&[0x1b, b'[', b'X']).expect("parse succeeds");
+        let result = parse_input(&[0x1b, b'[', b'X']);
         assert_eq!(result.0, None);
         assert_eq!(result.1, 3);
 
         // Unknown ESC O sequence
-        let result = parse_input(&[0x1b, b'O', b'X']).expect("parse succeeds");
+        let result = parse_input(&[0x1b, b'O', b'X']);
         assert_eq!(result.0, None);
         assert_eq!(result.1, 3);
 
         // Invalid UTF-8 sequence
-        let result = parse_input(&[0xFF]).expect("parse succeeds");
+        let result = parse_input(&[0xFF]);
         assert_eq!(result.0, None);
         assert_eq!(result.1, 1);
     }
 
     #[test]
-    fn test_replace_inner_preserves_buffer_then_reads_new_inner() {
-        let mut reader = InputReader::new(Cursor::new(&b"ab"[..]));
+    fn test_input_stream_preserves_incomplete_sequence_across_pushes() {
+        let mut buffer = InputStream::new();
 
-        // Read the first input. The remaining byte is kept in the internal buffer.
-        let first = reader.read_input().expect("read succeeds");
+        // An incomplete escape sequence stays in the buffer.
+        buffer.feed(&[0x1b, b'[']);
+        assert_eq!(buffer.next(), None);
+        assert!(buffer.has_pending());
+
+        // The continuation completes the sequence.
+        buffer.feed(b"A");
         assert_eq!(
-            first,
+            buffer.next(),
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: false,
+                code: KeyCode::Up,
+            }))
+        );
+        assert!(!buffer.has_pending());
+    }
+
+    #[test]
+    fn test_input_stream_drains_partial_bytes_in_order() {
+        let mut buffer = InputStream::new();
+
+        // Feed multiple complete inputs plus a trailing incomplete byte.
+        buffer.feed(b"ab\x1b[");
+        assert_eq!(
+            buffer.next(),
             Some(TerminalInput::Key(KeyInput {
                 ctrl: false,
                 alt: false,
                 code: KeyCode::Char('a'),
             }))
         );
-
-        // Replacing the inner reader must preserve the buffered data and then
-        // continue reading from the new inner reader.
-        reader.replace_inner(Cursor::new(&b"c"[..]));
-        let second = reader.read_input().expect("read succeeds");
         assert_eq!(
-            second,
+            buffer.next(),
             Some(TerminalInput::Key(KeyInput {
                 ctrl: false,
                 alt: false,
                 code: KeyCode::Char('b'),
             }))
         );
-        let third = reader.read_input().expect("read succeeds");
+        // The partial CSI sequence remains and is reported via has_pending().
+        assert_eq!(buffer.next(), None);
+        assert!(buffer.has_pending());
+    }
+
+    #[test]
+    fn test_input_stream_keeps_unparsed_bytes_bounded() {
+        let mut input = InputStream::new();
+
+        // An SGR mouse prefix that is never terminated would otherwise grow the
+        // buffer without bound.
+        let mut prefix = b"\x1b[<".to_vec();
+        prefix.extend(std::iter::repeat_n(b'1', 10_000));
+        input.feed(&prefix);
+
+        assert!(input.has_pending());
+        assert!(input.buf.len() <= MAX_PENDING_BYTES);
+    }
+
+    #[test]
+    fn test_input_stream_recovers_from_unterminated_mouse_prefix() {
+        let mut input = InputStream::new();
+
+        // A byte that cannot occur in the parameters of an SGR sequence means the
+        // prefix can never become a valid sequence. Only the prefix is dropped, so
+        // the input that follows is still parsed.
+        input.feed(b"\x1b[<12a");
         assert_eq!(
-            third,
+            input.next(),
             Some(TerminalInput::Key(KeyInput {
                 ctrl: false,
                 alt: false,
-                code: KeyCode::Char('c'),
+                code: KeyCode::Char('a'),
             }))
         );
+        assert!(!input.has_pending());
+
+        // A sequence that is still incomplete keeps waiting for its terminator.
+        input.feed(b"\x1b[<12");
+        assert_eq!(input.next(), None);
+        assert!(input.has_pending());
     }
 
     #[test]
-    fn test_replace_inner_combines_partial_sequence_with_new_inner() {
-        // An incomplete escape sequence stays in the buffer.
-        let mut reader = InputReader::new(Cursor::new(&[0x1b, b'['][..]));
-        let none = reader.read_input().expect("read succeeds");
-        assert_eq!(none, None);
+    fn test_input_stream() {
+        let mut buffer = InputStream::new();
 
-        // The continuation arrives from the new inner reader.
-        reader.replace_inner(Cursor::new(&b"A"[..]));
-        let input = reader.read_input().expect("read succeeds");
+        // A simple character.
+        buffer.feed(b"a");
         assert_eq!(
-            input,
-            Some(TerminalInput::Key(KeyInput {
-                ctrl: false,
-                alt: false,
-                code: KeyCode::Up,
-            }))
-        );
-    }
-
-    #[test]
-    fn test_replace_inner_propagates_new_inner_eof() {
-        let mut reader = InputReader::new(Cursor::new(&b"ab"[..]));
-        assert!(reader.read_input().expect("read succeeds").is_some());
-
-        reader.replace_inner(Cursor::new(&b""[..]));
-        assert!(reader.read_input().expect("read succeeds").is_some());
-
-        // After the buffer is consumed, EOF from the new inner reader propagates.
-        let err = reader.read_input().expect_err("should fail");
-        assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
-    }
-
-    #[test]
-    fn test_input_reader() {
-        // Test reading a simple character
-        let mut reader = InputReader::new(Cursor::new(b"a"));
-        let result = reader.read_input().expect("read succeeds");
-        assert_eq!(
-            result,
+            buffer.next(),
             Some(TerminalInput::Key(KeyInput {
                 ctrl: false,
                 alt: false,
@@ -1114,11 +1154,10 @@ mod tests {
             }))
         );
 
-        // Test reading an arrow key
-        let mut reader = InputReader::new(Cursor::new(&[0x1b, b'[', b'A'][..]));
-        let result = reader.read_input().expect("read succeeds");
+        // An arrow key.
+        buffer.feed(&[0x1b, b'[', b'A'][..]);
         assert_eq!(
-            result,
+            buffer.next(),
             Some(TerminalInput::Key(KeyInput {
                 ctrl: false,
                 alt: false,
@@ -1126,13 +1165,10 @@ mod tests {
             }))
         );
 
-        // Test reading multiple inputs
-        let mut reader = InputReader::new(Cursor::new(b"ab"));
-        let result1 = reader.read_input().expect("read succeeds");
-        let result2 = reader.read_input().expect("read succeeds");
-
+        // Multiple inputs in one push.
+        buffer.feed(b"ab");
         assert_eq!(
-            result1,
+            buffer.next(),
             Some(TerminalInput::Key(KeyInput {
                 ctrl: false,
                 alt: false,
@@ -1140,7 +1176,7 @@ mod tests {
             }))
         );
         assert_eq!(
-            result2,
+            buffer.next(),
             Some(TerminalInput::Key(KeyInput {
                 ctrl: false,
                 alt: false,
@@ -1153,7 +1189,7 @@ mod tests {
     fn test_parse_mouse_scroll_events() {
         // SGR mode scroll up: ESC [ < 64 ; 10 ; 5 M
         let input = b"\x1b[<64;10;5M";
-        let result = parse_input(input).expect("parse succeeds");
+        let result = parse_input(input);
         assert_eq!(
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
@@ -1167,7 +1203,7 @@ mod tests {
 
         // SGR mode scroll down: ESC [ < 65 ; 10 ; 5 M
         let input = b"\x1b[<65;10;5M";
-        let result = parse_input(input).expect("parse succeeds");
+        let result = parse_input(input);
         assert_eq!(
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
@@ -1184,7 +1220,7 @@ mod tests {
     fn test_parse_mouse_sgr_mode_button_press() {
         // SGR mode left button press: ESC [ < 0 ; 10 ; 5 M
         let input = b"\x1b[<0;10;5M";
-        let result = parse_input(input).expect("parse succeeds");
+        let result = parse_input(input);
         assert_eq!(
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
@@ -1199,7 +1235,7 @@ mod tests {
 
         // SGR mode middle button press: ESC [ < 1 ; 10 ; 5 M
         let input = b"\x1b[<1;10;5M";
-        let result = parse_input(input).expect("parse succeeds");
+        let result = parse_input(input);
         assert_eq!(
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
@@ -1213,7 +1249,7 @@ mod tests {
 
         // SGR mode right button press: ESC [ < 2 ; 10 ; 5 M
         let input = b"\x1b[<2;10;5M";
-        let result = parse_input(input).expect("parse succeeds");
+        let result = parse_input(input);
         assert_eq!(
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
@@ -1230,7 +1266,7 @@ mod tests {
     fn test_parse_mouse_sgr_mode_button_release() {
         // SGR mode left button release: ESC [ < 0 ; 10 ; 5 m (lowercase 'm')
         let input = b"\x1b[<0;10;5m";
-        let result = parse_input(input).expect("parse succeeds");
+        let result = parse_input(input);
         assert_eq!(
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
@@ -1244,7 +1280,7 @@ mod tests {
 
         // SGR mode middle button release: ESC [ < 1 ; 10 ; 5 m
         let input = b"\x1b[<1;10;5m";
-        let result = parse_input(input).expect("parse succeeds");
+        let result = parse_input(input);
         assert_eq!(
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
@@ -1258,7 +1294,7 @@ mod tests {
 
         // SGR mode right button release: ESC [ < 2 ; 10 ; 5 m
         let input = b"\x1b[<2;10;5m";
-        let result = parse_input(input).expect("parse succeeds");
+        let result = parse_input(input);
         assert_eq!(
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
@@ -1275,7 +1311,7 @@ mod tests {
     fn test_parse_mouse_sgr_mode_with_modifiers() {
         // SGR mode with Ctrl modifier: ESC [ < 16 ; 10 ; 5 M (16 = 0 + 16)
         let input = b"\x1b[<16;10;5M";
-        let result = parse_input(input).expect("parse succeeds");
+        let result = parse_input(input);
         assert_eq!(
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
@@ -1289,7 +1325,7 @@ mod tests {
 
         // SGR mode with Alt modifier: ESC [ < 8 ; 10 ; 5 M (8 = 0 + 8)
         let input = b"\x1b[<8;10;5M";
-        let result = parse_input(input).expect("parse succeeds");
+        let result = parse_input(input);
         assert_eq!(
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
@@ -1303,7 +1339,7 @@ mod tests {
 
         // SGR mode with Shift modifier: ESC [ < 4 ; 10 ; 5 M (4 = 0 + 4)
         let input = b"\x1b[<4;10;5M";
-        let result = parse_input(input).expect("parse succeeds");
+        let result = parse_input(input);
         assert_eq!(
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
@@ -1317,7 +1353,7 @@ mod tests {
 
         // SGR mode with all modifiers: ESC [ < 28 ; 10 ; 5 M (28 = 0 + 4 + 8 + 16)
         let input = b"\x1b[<28;10;5M";
-        let result = parse_input(input).expect("parse succeeds");
+        let result = parse_input(input);
         assert_eq!(
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
@@ -1333,7 +1369,7 @@ mod tests {
     fn test_parse_mouse_sgr_mode_drag() {
         // SGR mode drag: ESC [ < 32 ; 10 ; 5 M (32 = 0 + 32)
         let input = b"\x1b[<32;10;5M";
-        let result = parse_input(input).expect("parse succeeds");
+        let result = parse_input(input);
         assert_eq!(
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
@@ -1347,7 +1383,7 @@ mod tests {
 
         // SGR mode drag with modifiers: ESC [ < 60 ; 10 ; 5 M (60 = 0 + 4 + 8 + 16 + 32)
         let input = b"\x1b[<60;10;5M";
-        let result = parse_input(input).expect("parse succeeds");
+        let result = parse_input(input);
         assert_eq!(
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
@@ -1365,7 +1401,7 @@ mod tests {
         // X10/X11 mode left button press: ESC [ M <button> <x> <y>
         // Button 32 (0x20) = left press, x=43 (10+33), y=38 (5+33)
         let input = b"\x1b[M \x2b\x26";
-        let result = parse_input(input).expect("parse succeeds");
+        let result = parse_input(input);
         assert_eq!(
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
@@ -1381,7 +1417,7 @@ mod tests {
         // X10/X11 mode middle button press: ESC [ M <button> <x> <y>
         // Button 33 (0x21) = middle press
         let input = b"\x1b[M!\x2b\x26";
-        let result = parse_input(input).expect("parse succeeds");
+        let result = parse_input(input);
         assert_eq!(
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
@@ -1396,7 +1432,7 @@ mod tests {
         // X10/X11 mode right button press: ESC [ M <button> <x> <y>
         // Button 34 (0x22) = right press
         let input = b"\x1b[M\"\x2b\x26";
-        let result = parse_input(input).expect("parse succeeds");
+        let result = parse_input(input);
         assert_eq!(
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
@@ -1411,7 +1447,7 @@ mod tests {
         // X10/X11 mode button release: ESC [ M <button> <x> <y>
         // Button 35 (0x23) = release
         let input = b"\x1b[M#\x2b\x26";
-        let result = parse_input(input).expect("parse succeeds");
+        let result = parse_input(input);
         assert_eq!(
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
@@ -1428,7 +1464,7 @@ mod tests {
     fn test_parse_mouse_x10_x11_mode_with_modifiers() {
         // X10/X11 mode with Ctrl modifier: button = 32 + 16 = 48 (0x30)
         let input = b"\x1b[M0\x2b\x26";
-        let result = parse_input(input).expect("parse succeeds");
+        let result = parse_input(input);
         assert_eq!(
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
@@ -1442,7 +1478,7 @@ mod tests {
 
         // X10/X11 mode with Alt modifier: button = 32 + 8 = 40 (0x28)
         let input = b"\x1b[M(\x2b\x26";
-        let result = parse_input(input).expect("parse succeeds");
+        let result = parse_input(input);
         assert_eq!(
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
@@ -1456,7 +1492,7 @@ mod tests {
 
         // X10/X11 mode with Shift modifier: button = 32 + 4 = 36 (0x24)
         let input = b"\x1b[M$\x2b\x26";
-        let result = parse_input(input).expect("parse succeeds");
+        let result = parse_input(input);
         assert_eq!(
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
@@ -1473,7 +1509,7 @@ mod tests {
     fn test_parse_mouse_x10_x11_mode_scroll() {
         // X10/X11 mode scroll up: button = 96 (0x60)
         let input = b"\x1b[M`\x2b\x26";
-        let result = parse_input(input).expect("parse succeeds");
+        let result = parse_input(input);
         assert_eq!(
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
@@ -1487,7 +1523,7 @@ mod tests {
 
         // X10/X11 mode scroll down: button = 97 (0x61)
         let input = b"\x1b[Ma\x2b\x26";
-        let result = parse_input(input).expect("parse succeeds");
+        let result = parse_input(input);
         assert_eq!(
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
@@ -1504,7 +1540,7 @@ mod tests {
     fn test_parse_mouse_x10_x11_mode_drag() {
         // X10/X11 mode drag: button = 32 + 32 = 64 (0x40)
         let input = b"\x1b[M@\x2b\x26";
-        let result = parse_input(input).expect("parse succeeds");
+        let result = parse_input(input);
         assert_eq!(
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
@@ -1521,7 +1557,7 @@ mod tests {
     fn test_parse_mouse_coordinate_boundaries() {
         // Test coordinates at origin (1,1 -> 0,0)
         let input = b"\x1b[<0;1;1M";
-        let result = parse_input(input).expect("parse succeeds");
+        let result = parse_input(input);
         assert_eq!(
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
@@ -1535,7 +1571,7 @@ mod tests {
 
         // Test large coordinates
         let input = b"\x1b[<0;100;200M";
-        let result = parse_input(input).expect("parse succeeds");
+        let result = parse_input(input);
         assert_eq!(
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
@@ -1552,7 +1588,7 @@ mod tests {
     fn test_parse_mouse_edge_cases() {
         // SGR sequence with zero coordinates (should saturate to 0)
         let input = b"\x1b[<0;0;0M";
-        let result = parse_input(input).expect("parse succeeds");
+        let result = parse_input(input);
         assert_eq!(
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
@@ -1566,7 +1602,7 @@ mod tests {
 
         // X10/X11 sequence with minimum coordinate values (33)
         let input = b"\x1b[M !!";
-        let result = parse_input(input).expect("parse succeeds");
+        let result = parse_input(input);
         assert_eq!(
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
@@ -1580,12 +1616,13 @@ mod tests {
     }
 
     #[test]
-    fn test_input_reader_mouse_events() {
-        // Test reading a mouse click
-        let mut reader = InputReader::new(Cursor::new(b"\x1b[<0;10;5M"));
-        let result = reader.read_input().expect("read succeeds");
+    fn test_input_stream_mouse_events() {
+        let mut buffer = InputStream::new();
+
+        // A mouse click.
+        buffer.feed(b"\x1b[<0;10;5M");
         assert_eq!(
-            result,
+            buffer.next(),
             Some(TerminalInput::Mouse(MouseInput {
                 event: MouseEvent::LeftPress,
                 position: TerminalPosition::row_col(4, 9),
@@ -1595,13 +1632,10 @@ mod tests {
             }))
         );
 
-        // Test reading multiple mouse events
-        let mut reader = InputReader::new(Cursor::new(b"\x1b[<0;10;5M\x1b[<0;10;5m"));
-        let result1 = reader.read_input().expect("read succeeds");
-        let result2 = reader.read_input().expect("read succeeds");
-
+        // Multiple mouse events in one push.
+        buffer.feed(b"\x1b[<0;10;5M\x1b[<0;10;5m");
         assert_eq!(
-            result1,
+            buffer.next(),
             Some(TerminalInput::Mouse(MouseInput {
                 event: MouseEvent::LeftPress,
                 position: TerminalPosition::row_col(4, 9),
@@ -1611,7 +1645,7 @@ mod tests {
             }))
         );
         assert_eq!(
-            result2,
+            buffer.next(),
             Some(TerminalInput::Mouse(MouseInput {
                 event: MouseEvent::LeftRelease,
                 position: TerminalPosition::row_col(4, 9),
@@ -1878,7 +1912,7 @@ mod tests {
             } else {
                 sample_pbt_bytes(ctx)
             };
-            let (input, consumed) = parse_input(&bytes).expect("parse_input must not fail");
+            let (input, consumed) = parse_input(&bytes);
             assert!(
                 consumed <= bytes.len(),
                 "consumed {consumed} exceeds length {}",
@@ -1923,7 +1957,7 @@ mod tests {
         runner.run(256, |ctx| {
             let key = sample_encodable_key(ctx);
             let bytes = encode_key(key).expect("generated key must be encodable");
-            let (input, consumed) = parse_input(&bytes).expect("parse_input must not fail");
+            let (input, consumed) = parse_input(&bytes);
             assert_eq!(
                 input,
                 Some(TerminalInput::Key(key)),
@@ -1983,12 +2017,12 @@ mod tests {
         Ok(())
     }
 
-    /// `read_input_from_buf` must agree with a model that applies
+    /// `InputStream::next` must agree with a model that applies
     /// `parse_input` repeatedly to the same bytes: the same event
     /// sequence, stopping at the same incomplete or fully consumed
     /// sequence.
     #[test]
-    fn pbt_input_buffer_matches_parse_model() -> noprop::TestResult {
+    fn pbt_input_stream_matches_parse_model() -> noprop::TestResult {
         let observed_event = Cell::new(false);
         let observed_partial = Cell::new(false);
         let observed_unknown = Cell::new(false);
@@ -1996,21 +2030,17 @@ mod tests {
         let mut runner = noprop::Runner::new(seed);
         runner.run(256, |ctx| {
             let bytes = sample_pbt_fragments(ctx);
-            let mut reader = InputReader {
-                inner: Cursor::new(&[]),
-                buf: bytes.clone(),
-                buf_offset: bytes.len(),
-            };
+            let mut buffer = InputStream::new();
+            buffer.feed(&bytes);
             let mut actual = Vec::new();
             let actual_partial;
             loop {
-                match reader.read_input_from_buf() {
-                    Ok(Some(input)) => actual.push(input),
-                    Ok(None) => {
-                        actual_partial = reader.buf_offset > 0;
+                match buffer.next() {
+                    Some(input) => actual.push(input),
+                    None => {
+                        actual_partial = buffer.has_pending();
                         break;
                     }
-                    Err(e) => panic!("read_input_from_buf must not fail: {e}"),
                 }
             }
             let mut expected = Vec::new();
@@ -2021,7 +2051,7 @@ mod tests {
                 if rest.is_empty() {
                     break;
                 }
-                let (input, consumed) = parse_input(rest).expect("parse_input must not fail");
+                let (input, consumed) = parse_input(rest);
                 assert!(consumed <= rest.len(), "consumed exceeds remaining bytes");
                 if consumed == 0 {
                     expected_partial = true;
