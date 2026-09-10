@@ -212,6 +212,7 @@ impl TerminalDriver {
         let mut notified = false;
         loop {
             match self.signal.read(&mut [0u8]) {
+                Ok(0) => break, // The pipe reached EOF, so no further notification can arrive.
                 Ok(_) => notified = true,
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
                 Err(e) => return Err(e),

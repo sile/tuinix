@@ -266,17 +266,23 @@ impl TerminalFrame {
             })
     }
 
-    /// Renders this frame into `out`, clearing `out` first.
+    /// Renders the difference between this frame and `prev` into a byte buffer.
     ///
     /// `prev` is the frame that was previously rendered to the terminal: the
-    /// produced bytes redraw only the lines that differ from it. When `prev`'s
-    /// size differs from this frame's size, or when `prev` is `None` (the first
-    /// frame), the whole frame is redrawn.
+    /// produced bytes contain the characters whose position, value, or style
+    /// changed since `prev`. When `prev`'s size differs from this frame's size, or
+    /// when `prev` is `None` (the first frame), every character is written.
+    ///
+    /// Unwritten positions are rendered as [`TerminalChar::BLANK`], so a frame is
+    /// painted as a whole rectangle rather than as the characters that happen to
+    /// be stored in it.
     ///
     /// `cursor` is the position where the terminal cursor is shown, or `None` to
     /// hide it.
     ///
-    /// The caller writes the produced bytes to the driver and flushes them.
+    /// The returned bytes always start by hiding the cursor. They are not written
+    /// or flushed: the caller is responsible for writing them to the driver and
+    /// flushing it.
     ///
     /// # Examples
     ///

@@ -45,7 +45,7 @@
 //!     let mut driver = tuinix::TerminalDriver::new()?;
 //!     let mut size = driver.size()?;
 //!     let mut input = tuinix::InputStream::new();
-//!     let mut cursor = None;
+//!     let cursor = None;
 //!     let mut prev = None;
 //!
 //!     // NOTE: This is an ASCII-oriented demo helper: every character is assigned a width of 1.
@@ -76,21 +76,28 @@
 //!     driver.flush()?;
 //!     prev = Some(frame);
 //!
-//!     // The input and signal descriptors are non-blocking, so use `poll` to wait
-//!     // for readiness instead of blocking on a read.
+//!     // Both descriptors are non-blocking, so `poll` waits for readiness instead
+//!     // of blocking on a read.
 //!     let mut fds = [
-//!         libc::pollfd { fd: driver.input_fd(), events: libc::POLLIN, revents: 0 },
 //!         libc::pollfd { fd: driver.signal_fd(), events: libc::POLLIN, revents: 0 },
+//!         libc::pollfd { fd: driver.input_fd(), events: libc::POLLIN, revents: 0 },
 //!     ];
 //!     let mut raw = [0u8; 256];
 //!
 //!     loop {
 //!         if unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, -1) } < 0 {
-//!             return Err(std::io::Error::last_os_error());
+//!             let err = std::io::Error::last_os_error();
+//!             // `poll` is never restarted by `SA_RESTART`, so a SIGWINCH makes it
+//!             // return `EINTR`. The handler writes the resize byte to the signal
+//!             // pipe before returning, so retrying reports it as `POLLIN`.
+//!             if err.kind() == std::io::ErrorKind::Interrupted {
+//!                 continue;
+//!             }
+//!             return Err(err);
 //!         }
 //!
 //!         // Handle a terminal resize.
-//!         if fds[1].revents & libc::POLLIN != 0 {
+//!         if fds[0].revents & libc::POLLIN != 0 {
 //!             let new_size = driver.size()?;
 //!             if new_size != size {
 //!                 size = new_size;
@@ -105,7 +112,7 @@
 //!         }
 //!
 //!         // Handle available input.
-//!         if fds[0].revents & libc::POLLIN != 0 {
+//!         if fds[1].revents & libc::POLLIN != 0 {
 //!             while let Some(n) = tuinix::try_nonblocking(driver.read(&mut raw))? {
 //!                 if n == 0 {
 //!                     break;
