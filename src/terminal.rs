@@ -10,7 +10,9 @@ use crate::TerminalSize;
 
 static TERMINAL_EXISTS: AtomicBool = AtomicBool::new(false);
 
-static mut SIGWINCH_PIPE_FD: RawFd = 0;
+/// The write end of the signal pipe used by the SIGWINCH handler, or `-1` when
+/// no handler is installed.
+static mut SIGWINCH_PIPE_FD: RawFd = -1;
 
 /// Thin TTY driver that owns the terminal file descriptors and terminal modes.
 ///
@@ -33,6 +35,9 @@ static mut SIGWINCH_PIPE_FD: RawFd = 0;
 /// resize. A `poll`-based event loop still observes `EINTR` (because `poll` is
 /// never restarted), but the byte the handler writes to the signal pipe makes
 /// the resize available on the next `poll`. Other signals are left untouched.
+/// Dropping the driver resets the SIGWINCH disposition to the default; a handler
+/// that the application had installed before creating the driver is not
+/// restored.
 ///
 /// Only one instance can exist at a time; it is automatically restored to the
 /// original terminal state when dropped.
@@ -59,9 +64,7 @@ impl TerminalDriver {
     /// Returns an error if another driver instance already exists, if stdin or
     /// stdout is not a terminal, or if a terminal configuration call fails.
     pub fn new() -> io::Result<Self> {
-        if TERMINAL_EXISTS.swap(true, Ordering::SeqCst) {
-            return Err(Error::other("TerminalDriver instance already exists"));
-        }
+        let singleton = SingletonGuard::acquire()?;
 
         let stdin = std::io::stdin();
         let stdout = std::io::stdout();
@@ -137,6 +140,7 @@ impl TerminalDriver {
             default_hook(panic_info);
         }));
 
+        singleton.disarm();
         Ok(this)
     }
 
@@ -304,7 +308,21 @@ impl Drop for TerminalDriver {
         let _ = self.disable_raw_mode();
         let _ = self.show_cursor();
         let _ = self.output.flush();
-        unsafe { libc::close(SIGWINCH_PIPE_FD) };
+
+        // Stop the SIGWINCH handler before closing the pipe it writes to,
+        // otherwise a resize arriving after this point would write a byte to
+        // whatever file the descriptor number gets reused for.
+        unsafe {
+            let mut action = MaybeUninit::<libc::sigaction>::zeroed().assume_init();
+            action.sa_sigaction = libc::SIG_DFL;
+            action.sa_flags = 0;
+            libc::sigaction(libc::SIGWINCH, &action, std::ptr::null_mut());
+
+            if SIGWINCH_PIPE_FD >= 0 {
+                libc::close(SIGWINCH_PIPE_FD);
+                SIGWINCH_PIPE_FD = -1;
+            }
+        }
         TERMINAL_EXISTS.store(false, Ordering::SeqCst);
     }
 }
@@ -312,6 +330,35 @@ impl Drop for TerminalDriver {
 impl std::fmt::Debug for TerminalDriver {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TerminalDriver").finish()
+    }
+}
+
+/// A drop guard for the process-wide "one driver at a time" flag.
+///
+/// The flag is set when the guard is created and cleared when the guard is
+/// dropped, unless the guard has been disarmed. This keeps a failure in the
+/// middle of [`TerminalDriver::new()`] from leaving the flag set and making
+/// every later attempt fail with "instance already exists".
+struct SingletonGuard;
+
+impl SingletonGuard {
+    fn acquire() -> io::Result<Self> {
+        if TERMINAL_EXISTS.swap(true, Ordering::SeqCst) {
+            return Err(Error::other("TerminalDriver instance already exists"));
+        }
+        Ok(Self)
+    }
+
+    /// Hands the responsibility for clearing the flag over to the
+    /// [`TerminalDriver`], which does so when it is dropped.
+    fn disarm(self) {
+        std::mem::forget(self);
+    }
+}
+
+impl Drop for SingletonGuard {
+    fn drop(&mut self) {
+        TERMINAL_EXISTS.store(false, Ordering::SeqCst);
     }
 }
 
