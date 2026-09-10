@@ -280,9 +280,8 @@ impl TerminalFrame {
     /// `cursor` is the position where the terminal cursor is shown, or `None` to
     /// hide it.
     ///
-    /// The returned bytes always start by hiding the cursor. They are not written
-    /// or flushed: the caller is responsible for writing them to the driver and
-    /// flushing it.
+    /// The returned bytes are not written or flushed: the caller is responsible
+    /// for writing them to the driver and flushing it.
     ///
     /// # Examples
     ///
@@ -303,6 +302,11 @@ impl TerminalFrame {
         cursor: Option<TerminalPosition>,
     ) -> Vec<u8> {
         let mut out = Vec::new();
+        // Cursor visibility is not part of a frame, so `render` cannot know whether
+        // the terminal is currently showing the cursor. Hiding is idempotent, so it
+        // is emitted unconditionally: this makes `None` mean "hidden" without
+        // comparing against `prev`, and stops a cursor that moved between frames
+        // from flickering at its old position.
         let _ = write!(out, "\x1b[?25l"); // hide cursor
 
         let resized = prev.is_none_or(|p| p.size() != self.size());
