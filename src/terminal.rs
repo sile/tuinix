@@ -104,7 +104,7 @@ impl TerminalDriver {
         crate::set_fd_nonblocking(this.signal.as_raw_fd(), true)?;
 
         // Seed the cached size with the current terminal dimensions.
-        this.cached_size = this.resize()?;
+        this.cached_size = this.query_terminal_size()?;
 
         this.enable_raw_mode()?;
         this.enable_alternate_screen()?;
@@ -214,12 +214,12 @@ impl TerminalDriver {
             }
         }
         if notified {
-            self.cached_size = self.resize()?;
+            self.cached_size = self.query_terminal_size()?;
         }
         Ok(self.cached_size)
     }
 
-    fn resize(&self) -> io::Result<TerminalSize> {
+    fn query_terminal_size(&self) -> io::Result<TerminalSize> {
         let mut winsize = MaybeUninit::<libc::winsize>::zeroed();
         if unsafe { libc::ioctl(self.output_fd(), libc::TIOCGWINSZ, winsize.as_mut_ptr()) } == 0 {
             let winsize = unsafe { winsize.assume_init() };

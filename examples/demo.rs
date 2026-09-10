@@ -32,16 +32,13 @@ fn write_text(frame: &mut tuinix::TerminalFrame, text: &str, style: tuinix::Term
     }
 }
 
-/// Maps a non-blocking I/O call's [`std::io::ErrorKind::WouldBlock`] to `Ok(None)`.
+/// Maps a non-blocking I/O result's [`std::io::ErrorKind::WouldBlock`] to `Ok(None)`.
 ///
 /// The input descriptor is non-blocking, so an empty read returns `WouldBlock`
 /// rather than blocking the event loop. That becomes `Ok(None)` ("no data right
 /// now"), while a genuine error is still passed through unchanged.
-fn would_block_as_none<T, F>(call: F) -> std::io::Result<Option<T>>
-where
-    F: FnOnce() -> std::io::Result<T>,
-{
-    match call() {
+fn would_block_as_none<T>(result: std::io::Result<T>) -> std::io::Result<Option<T>> {
+    match result {
         Ok(v) => Ok(Some(v)),
         Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
         Err(e) => Err(e),
@@ -155,7 +152,7 @@ fn main() -> std::io::Result<()> {
 
         // Handle available input.
         if fds[0].revents & libc::POLLIN != 0 {
-            while let Some(n) = would_block_as_none(|| driver.read(&mut raw))? {
+            while let Some(n) = would_block_as_none(driver.read(&mut raw))? {
                 if n == 0 {
                     break;
                 }
