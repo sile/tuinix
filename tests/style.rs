@@ -5,11 +5,11 @@
 //! - A style emitted via `Display` parses back to the original style
 //!   (`FromStr` round-trip).
 
-mod common;
+mod helpers;
 
 use std::cell::Cell;
 
-use common::run;
+use helpers::run;
 
 /// Draws a color biased toward the `0` / `128` / `255` components, so that the
 /// boundaries of the decimal rendering are exercised.

@@ -8,12 +8,12 @@
 //!   independent `(position, size)` model, and `contains` agrees with a
 //!   cell-set model on random probe points.
 
-mod common;
+mod helpers;
 
 use std::cell::Cell;
 use std::collections::BTreeSet;
 
-use common::run;
+use helpers::run;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RegionOp {

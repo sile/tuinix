@@ -1,4 +1,4 @@
-//! Helpers shared by the property-based test binaries.
+//! Shared setup for the property-based test binaries.
 
 /// Runs a property with a time-based seed, overridable via the
 /// `TUINIX_PBT_SEED` environment variable for deterministic reproduction of a

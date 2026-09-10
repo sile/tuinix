@@ -12,12 +12,12 @@
 //!   `chars()`, both without a previous frame (a full redraw) and with one (a
 //!   differential update).
 
-mod common;
+mod helpers;
 
 use std::cell::Cell;
 use std::collections::BTreeMap;
 
-use common::run;
+use helpers::run;
 
 /// Characters the tests treat as two columns wide.
 const WIDE_CHARS: &[char] = &['\u{3042}', '\u{754c}', '\u{65e5}'];
