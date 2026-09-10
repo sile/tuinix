@@ -229,6 +229,15 @@ fn main() -> std::io::Result<()> {
             return Err(err);
         }
 
+        // A descriptor that hung up or failed can never become ready again, so
+        // stop instead of spinning on it.
+        if fds
+            .iter()
+            .any(|fd| fd.revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0)
+        {
+            return Err(std::io::Error::other("terminal closed"));
+        }
+
         if fds[0].revents & libc::POLLIN != 0 {
             handle_resize(&mut driver, &mut prev_frame, cursor)?;
         }

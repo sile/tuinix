@@ -118,6 +118,13 @@ pub struct InputStream {
     buf: Vec<u8>,
 }
 
+/// The maximum number of unparsed bytes an [`InputStream`] holds.
+///
+/// A well-formed sequence is far shorter than this. The bound only keeps a
+/// sequence that never terminates (for example a truncated mouse report) from
+/// growing the buffer without limit.
+const MAX_PENDING_BYTES: usize = 4096;
+
 impl InputStream {
     /// Creates an empty input stream.
     pub fn new() -> Self {
@@ -125,8 +132,16 @@ impl InputStream {
     }
 
     /// Feeds raw bytes into the stream.
+    ///
+    /// Unparsed bytes are held until [`next()`](Self::next) can produce an event
+    /// from them. At most 4096 bytes are kept, so a sequence that never
+    /// terminates discards its oldest bytes instead of growing without bound.
     pub fn feed(&mut self, bytes: &[u8]) {
         self.buf.extend_from_slice(bytes);
+        if self.buf.len() > MAX_PENDING_BYTES {
+            let excess = self.buf.len() - MAX_PENDING_BYTES;
+            self.buf.drain(..excess);
+        }
     }
 
     /// Parses and returns the next complete input event, consuming its bytes.
@@ -370,6 +385,12 @@ fn parse_sgr_mouse_sequence(bytes: &[u8]) -> (Option<TerminalInput>, usize) {
         if b == b'M' || b == b'm' {
             end_pos = Some(i);
             break;
+        }
+        if !(b.is_ascii_digit() || b == b';') {
+            // The parameters are digits and semicolons, so this byte cannot be
+            // part of a sequence no matter what arrives later. Drop the prefix
+            // rather than waiting forever for a terminator that can never come.
+            return (None, i);
         }
     }
 
@@ -1078,6 +1099,44 @@ mod tests {
         // The partial CSI sequence remains and is reported via has_pending().
         assert_eq!(buffer.next(), None);
         assert!(buffer.has_pending());
+    }
+
+    #[test]
+    fn test_input_stream_keeps_unparsed_bytes_bounded() {
+        let mut input = InputStream::new();
+
+        // An SGR mouse prefix that is never terminated would otherwise grow the
+        // buffer without bound.
+        let mut prefix = b"\x1b[<".to_vec();
+        prefix.extend(std::iter::repeat_n(b'1', 10_000));
+        input.feed(&prefix);
+
+        assert!(input.has_pending());
+        assert!(input.buf.len() <= MAX_PENDING_BYTES);
+    }
+
+    #[test]
+    fn test_input_stream_recovers_from_unterminated_mouse_prefix() {
+        let mut input = InputStream::new();
+
+        // A byte that cannot occur in the parameters of an SGR sequence means the
+        // prefix can never become a valid sequence. Only the prefix is dropped, so
+        // the input that follows is still parsed.
+        input.feed(b"\x1b[<12a");
+        assert_eq!(
+            input.next(),
+            Some(TerminalInput::Key(KeyInput {
+                ctrl: false,
+                alt: false,
+                code: KeyCode::Char('a'),
+            }))
+        );
+        assert!(!input.has_pending());
+
+        // A sequence that is still incomplete keeps waiting for its terminator.
+        input.feed(b"\x1b[<12");
+        assert_eq!(input.next(), None);
+        assert!(input.has_pending());
     }
 
     #[test]
