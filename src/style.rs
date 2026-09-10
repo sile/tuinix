@@ -23,7 +23,7 @@ use std::{
 ///
 /// // Write styled text to the frame
 /// for c in "This text is bold and green".chars() {
-///     frame.push_char(tuinix::TerminalChar::new(c, 1, style).expect("valid cell"));
+///     frame.push_char(tuinix::TerminalChar::new(c, 1, style).expect("valid char"));
 /// }
 ///
 /// // Create another style for highlighting
@@ -32,7 +32,7 @@ use std::{
 ///     .fg_color(tuinix::TerminalColor::BLACK);
 ///
 /// for c in "Important information".chars() {
-///     frame.push_char(tuinix::TerminalChar::new(c, 1, highlight).expect("valid cell"));
+///     frame.push_char(tuinix::TerminalChar::new(c, 1, highlight).expect("valid char"));
 /// }
 /// ```
 ///
@@ -51,16 +51,16 @@ use std::{
 /// let underline = tuinix::TerminalStyle::new().underline();
 ///
 /// for c in "This is bold.".chars() {
-///     frame.push_char(tuinix::TerminalChar::new(c, 1, bold).expect("valid cell"));
+///     frame.push_char(tuinix::TerminalChar::new(c, 1, bold).expect("valid char"));
 /// }
 /// for c in "This is only underlined (not bold).".chars() {
-///     frame.push_char(tuinix::TerminalChar::new(c, 1, underline).expect("valid cell"));
+///     frame.push_char(tuinix::TerminalChar::new(c, 1, underline).expect("valid char"));
 /// }
 ///
 /// // To apply multiple styles, combine them in a single TerminalStyle instance
 /// let bold_and_underlined = tuinix::TerminalStyle::new().bold().underline();
 /// for c in "This is both bold and underlined.".chars() {
-///     frame.push_char(tuinix::TerminalChar::new(c, 1, bold_and_underlined).expect("valid cell"));
+///     frame.push_char(tuinix::TerminalChar::new(c, 1, bold_and_underlined).expect("valid char"));
 /// }
 /// ```
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

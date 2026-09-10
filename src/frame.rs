@@ -96,9 +96,9 @@ impl TerminalChar {
 /// let mut frame = tuinix::TerminalFrame::new(size);
 ///
 /// let bold = tuinix::TerminalStyle::new().bold();
-/// frame.push_char(tuinix::TerminalChar::new('H', 1, bold).expect("valid cell"));
-/// frame.push_char(tuinix::TerminalChar::new('i', 1, bold).expect("valid cell"));
-/// frame.push_char(tuinix::TerminalChar::new('!', 1, bold).expect("valid cell"));
+/// frame.push_char(tuinix::TerminalChar::new('H', 1, bold).expect("valid char"));
+/// frame.push_char(tuinix::TerminalChar::new('i', 1, bold).expect("valid char"));
+/// frame.push_char(tuinix::TerminalChar::new('!', 1, bold).expect("valid char"));
 /// frame.push_newline();
 ///
 /// // A full-width (CJK) character occupies two columns.
@@ -242,7 +242,7 @@ impl TerminalFrame {
     ///
     /// ```
     /// let mut frame = tuinix::TerminalFrame::new(tuinix::TerminalSize::rows_cols(2, 4));
-    /// frame.push_char(tuinix::TerminalChar::new('a', 1, Default::default()).expect("valid cell"));
+    /// frame.push_char(tuinix::TerminalChar::new('a', 1, Default::default()).expect("valid char"));
     ///
     /// let written = frame.chars().filter(|(_, c)| !c.is_blank()).count();
     /// assert_eq!(written, 1);
@@ -293,7 +293,7 @@ impl TerminalFrame {
     ///     'h',
     ///     1,
     ///     tuinix::TerminalStyle::new(),
-    /// ).expect("valid cell"));
+    /// ).expect("valid char"));
     ///
     /// let out = frame.render(None, None);
     /// ```
@@ -359,9 +359,9 @@ mod tests {
         }
     }
 
-    /// Builds a valid cell for the tests.
-    fn cell(value: char, width: usize) -> TerminalChar {
-        TerminalChar::new(value, width, TerminalStyle::new()).expect("valid cell")
+    /// Builds a valid character for the tests.
+    fn ch(value: char, width: usize) -> TerminalChar {
+        TerminalChar::new(value, width, TerminalStyle::new()).expect("valid char")
     }
 
     /// Pushes a string of text onto the frame, handling newlines and per-character widths.
@@ -372,7 +372,7 @@ mod tests {
                 _ => {
                     let width = char_width(c);
                     if width > 0 {
-                        frame.push_char(cell(c, width));
+                        frame.push_char(ch(c, width));
                     }
                 }
             }
@@ -416,9 +416,9 @@ mod tests {
     fn cursor_advances_by_width() {
         let size = TerminalSize::rows_cols(2, 4);
         let mut frame = TerminalFrame::new(size);
-        frame.push_char(cell('a', 1));
-        frame.push_char(cell('b', 1));
-        frame.push_char(cell('\u{3042}', 2));
+        frame.push_char(ch('a', 1));
+        frame.push_char(ch('b', 1));
+        frame.push_char(ch('\u{3042}', 2));
         assert_eq!(frame.cursor(), TerminalPosition::row_col(0, 4));
         frame.push_newline();
         assert_eq!(frame.cursor(), TerminalPosition::row_col(1, 0));
@@ -430,7 +430,7 @@ mod tests {
         let mut frame = TerminalFrame::new(size);
 
         // From column 1, advance to the next stop (8).
-        frame.push_char(cell('a', 1));
+        frame.push_char(ch('a', 1));
         frame.push_tab(8);
         assert_eq!(frame.cursor(), TerminalPosition::row_col(0, 8));
 
@@ -439,7 +439,7 @@ mod tests {
         assert_eq!(frame.cursor(), TerminalPosition::row_col(0, 16));
 
         // A non-aligned column advances to the next stop.
-        frame.push_char(cell('b', 1)); // col 17
+        frame.push_char(ch('b', 1)); // col 17
         frame.push_tab(8);
         assert_eq!(frame.cursor(), TerminalPosition::row_col(0, 24));
     }
@@ -448,8 +448,8 @@ mod tests {
     fn wide_char_continuation_is_blank_or_skipped() {
         let size = TerminalSize::rows_cols(1, 4);
         let mut frame = TerminalFrame::new(size);
-        frame.push_char(cell('\u{3042}', 2));
-        frame.push_char(cell('x', 1));
+        frame.push_char(ch('\u{3042}', 2));
+        frame.push_char(ch('x', 1));
 
         assert_eq!(
             frame
@@ -480,11 +480,11 @@ mod tests {
     fn clips_cells_at_right_edge() {
         let size = TerminalSize::rows_cols(1, 3);
         let mut frame = TerminalFrame::new(size);
-        assert!(frame.push_char(cell('a', 1)));
-        assert!(frame.push_char(cell('b', 1)));
-        assert!(frame.push_char(cell('c', 1)));
+        assert!(frame.push_char(ch('a', 1)));
+        assert!(frame.push_char(ch('b', 1)));
+        assert!(frame.push_char(ch('c', 1)));
         // The row is full; the next cell is clipped but the cursor still advances.
-        assert!(!frame.push_char(cell('d', 1)));
+        assert!(!frame.push_char(ch('d', 1)));
 
         assert_eq!(frame.cursor(), TerminalPosition::row_col(0, 4));
         let stored: Vec<_> = frame
@@ -499,12 +499,12 @@ mod tests {
     fn draw_removes_partial_overlap_and_clips() {
         let size = TerminalSize::rows_cols(1, 4);
         let mut dest = TerminalFrame::new(size);
-        dest.push_char(cell('\u{3042}', 2)); // wide char at col 0-1
-        dest.push_char(cell('y', 1));
+        dest.push_char(ch('\u{3042}', 2)); // wide char at col 0-1
+        dest.push_char(ch('y', 1));
 
         // A one-cell source drawn over the continuation column of the wide char.
         let mut src = TerminalFrame::new(TerminalSize::rows_cols(1, 1));
-        src.push_char(cell('x', 1));
+        src.push_char(ch('x', 1));
 
         // Draw 'x' over column 1, which is the continuation of the wide char.
         dest.draw(TerminalPosition::row_col(0, 1), &src);

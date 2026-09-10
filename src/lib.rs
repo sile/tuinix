@@ -58,7 +58,7 @@
 //!                 '\t' => frame.push_tab(8),
 //!                 c if c.is_control() => {}
 //!                 c => {
-//!                     frame.push_char(tuinix::TerminalChar::new(c, 1, style).expect("valid cell"));
+//!                     frame.push_char(tuinix::TerminalChar::new(c, 1, style).expect("valid char"));
 //!                 }
 //!             }
 //!         }

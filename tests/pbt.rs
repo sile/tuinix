@@ -299,12 +299,12 @@ fn region_operations_match_model() -> noprop::TestResult {
     Ok(())
 }
 
-/// A single write operation on a [`TerminalFrame`]: a styled cell with an
+/// A single write operation on a [`TerminalFrame`]: a styled character with an
 /// explicit width, or a newline.
 #[derive(Debug, Clone, Copy)]
 enum Op {
     Newline,
-    Cell(char, usize),
+    Char(char, usize),
 }
 
 fn sample_op(ctx: &mut noprop::TestCaseContext) -> Op {
@@ -314,12 +314,12 @@ fn sample_op(ctx: &mut noprop::TestCaseContext) -> Op {
             let c = char::from_u32(noprop::sample_usize_in(ctx, 0x21..=0x7e) as u32)
                 .expect("valid ASCII");
             let width = noprop::sample_choice(ctx, &[1usize, 1, 1, 2]);
-            Op::Cell(c, width)
+            Op::Char(c, width)
         }
     }
 }
 
-/// A cursor-position model for [`Op`]: a cell advances the column by
+/// A cursor-position model for [`Op`]: a character advances the column by
 /// its width, and `\n` resets the column, regardless of clipping.
 #[derive(Debug)]
 struct CursorModel {
@@ -335,7 +335,7 @@ impl CursorModel {
                 self.row += 1;
                 self.col = 0;
             }
-            Op::Cell(_, width) => {
+            Op::Char(_, width) => {
                 if self.row >= size.rows || self.col + width > size.cols {
                     self.clipped = true;
                 }
@@ -346,10 +346,10 @@ impl CursorModel {
 }
 
 /// The cursor of `TerminalFrame` must follow the model after applying
-/// a random sequence of cell writes and newlines.
+/// a random sequence of character writes and newlines.
 #[test]
 fn frame_push_cursor_matches_model() -> noprop::TestResult {
-    let observed_cell = Cell::new(false);
+    let observed_char = Cell::new(false);
     let observed_wide = Cell::new(false);
     let observed_newline = Cell::new(false);
     let observed_clipped = Cell::new(false);
@@ -380,10 +380,10 @@ fn frame_push_cursor_matches_model() -> noprop::TestResult {
             model.apply(op, size);
             match op {
                 Op::Newline => frame.push_newline(),
-                Op::Cell(c, width) => {
+                Op::Char(c, width) => {
                     frame.push_char(
                         tuinix::TerminalChar::new(c, width, tuinix::TerminalStyle::new())
-                            .expect("valid cell"),
+                            .expect("valid char"),
                     );
                 }
             }
@@ -393,10 +393,10 @@ fn frame_push_cursor_matches_model() -> noprop::TestResult {
             tuinix::TerminalPosition::row_col(model.row, model.col),
             "cursor mismatch for {ops:?}"
         );
-        if ops.iter().any(|op| matches!(op, Op::Cell(_, w) if *w > 0)) {
-            observed_cell.set(true);
+        if ops.iter().any(|op| matches!(op, Op::Char(_, w) if *w > 0)) {
+            observed_char.set(true);
         }
-        if ops.iter().any(|op| matches!(op, Op::Cell(_, w) if *w == 2)) {
+        if ops.iter().any(|op| matches!(op, Op::Char(_, w) if *w == 2)) {
             observed_wide.set(true);
         }
         if ops.iter().any(|op| matches!(op, Op::Newline)) {
@@ -407,9 +407,15 @@ fn frame_push_cursor_matches_model() -> noprop::TestResult {
         }
         Ok(())
     })?;
-    assert!(observed_cell.get(), "no case wrote a cell\n{runner}");
-    assert!(observed_wide.get(), "no case wrote a wide cell\n{runner}");
+    assert!(observed_char.get(), "no case wrote a character\n{runner}");
+    assert!(
+        observed_wide.get(),
+        "no case wrote a wide character\n{runner}"
+    );
     assert!(observed_newline.get(), "no case wrote a newline\n{runner}");
-    assert!(observed_clipped.get(), "no case clipped a cell\n{runner}");
+    assert!(
+        observed_clipped.get(),
+        "no case clipped a character\n{runner}"
+    );
     Ok(())
 }
