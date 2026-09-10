@@ -168,11 +168,6 @@ fn handle_input(
                         ),
                         BODY_STYLE,
                     );
-                    write_text(
-                        &mut frame,
-                        &format!("  Event detail: {:?}\n", mouse_input.event),
-                        BODY_STYLE,
-                    );
                 }
             }
 

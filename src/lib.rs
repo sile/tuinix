@@ -156,18 +156,13 @@ pub use input::{InputStream, KeyCode, KeyInput, MouseEvent, MouseInput, Terminal
 pub use style::{TerminalColor, TerminalStyle};
 pub use terminal::TerminalDriver;
 
-pub(crate) fn set_fd_nonblocking(fd: RawFd, nonblock: bool) -> std::io::Result<()> {
+pub(crate) fn set_fd_nonblocking(fd: RawFd) -> std::io::Result<()> {
     unsafe {
         let flags = libc::fcntl(fd, libc::F_GETFL, 0);
         if flags < 0 {
             return Err(std::io::Error::last_os_error());
         }
-        let new_flags = if nonblock {
-            flags | libc::O_NONBLOCK
-        } else {
-            flags & !libc::O_NONBLOCK
-        };
-        if libc::fcntl(fd, libc::F_SETFL, new_flags) < 0 {
+        if libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) < 0 {
             return Err(std::io::Error::last_os_error());
         }
         Ok(())
@@ -204,3 +199,12 @@ pub fn try_uninterrupted<T>(result: std::io::Result<T>) -> std::io::Result<Optio
         Ok(v) => Ok(Some(v)),
     }
 }
+
+/// Compiles the code examples in `README.md` as doctests so that they cannot
+/// drift away from the API.
+///
+/// The example is marked `no_run`: it drives a real terminal and is only
+/// type-checked.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadmeDoctests;

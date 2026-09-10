@@ -102,10 +102,6 @@ impl TerminalDriver {
             cached_size: TerminalSize::default(),
         };
 
-        // The signal pipe does not share an open file description with the output,
-        // so marking it non-blocking has no side effects on writes.
-        crate::set_fd_nonblocking(this.signal.as_raw_fd(), true)?;
-
         // Seed the cached size with the current terminal dimensions.
         this.cached_size = this.query_terminal_size()?;
 
@@ -286,12 +282,22 @@ impl TerminalDriver {
     }
 }
 
+/// Reads raw input bytes from the terminal.
+///
+/// The input descriptor is non-blocking, so this returns
+/// [`ErrorKind::WouldBlock`](io::ErrorKind::WouldBlock) when no input is
+/// available. An event loop should wait for readability with `poll` rather than
+/// relying on `read` to block.
 impl Read for TerminalDriver {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         self.input.read(buf)
     }
 }
 
+/// Writes raw output bytes to the terminal.
+///
+/// The bytes are buffered until [`Write::flush()`] is called, so the caller has
+/// to flush when the output needs to become visible.
 impl Write for TerminalDriver {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.output.write(buf)
@@ -371,6 +377,18 @@ fn check_libc_result(result: libc::c_int) -> io::Result<()> {
     }
 }
 
+/// Marks `fd` as close-on-exec so that child processes do not inherit it.
+fn set_fd_cloexec(fd: RawFd) -> io::Result<()> {
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+    if flags < 0 {
+        return Err(Error::last_os_error());
+    }
+    if unsafe { libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) } < 0 {
+        return Err(Error::last_os_error());
+    }
+    Ok(())
+}
+
 unsafe extern "C" fn handle_sigwinch(_: libc::c_int) {
     unsafe {
         let _ = libc::write(SIGWINCH_PIPE_FD, [0].as_ptr().cast(), 1);
@@ -393,22 +411,41 @@ unsafe extern "C" fn handle_sigwinch(_: libc::c_int) {
 fn set_sigwinch_handler() -> io::Result<File> {
     let mut pipefd = [0 as RawFd; 2];
     check_libc_result(unsafe { libc::pipe(pipefd.as_mut_ptr()) })?;
-    unsafe {
-        SIGWINCH_PIPE_FD = pipefd[1];
 
-        let mut sigaction = MaybeUninit::<libc::sigaction>::zeroed().assume_init();
+    // Both ends are owned by the driver for its whole lifetime, so they are marked
+    // close-on-exec. The read end must be non-blocking because `size()` drains it,
+    // and the write end must be non-blocking so the signal handler can never block
+    // on a full pipe.
+    let result = set_fd_cloexec(pipefd[0])
+        .and_then(|()| set_fd_cloexec(pipefd[1]))
+        .and_then(|()| crate::set_fd_nonblocking(pipefd[0]))
+        .and_then(|()| crate::set_fd_nonblocking(pipefd[1]))
+        .and_then(|()| {
+            let mut action = unsafe { MaybeUninit::<libc::sigaction>::zeroed().assume_init() };
+            action.sa_sigaction = handle_sigwinch as *const () as libc::sighandler_t;
+            action.sa_flags = libc::SA_RESTART;
+            unsafe {
+                check_libc_result(libc::sigemptyset(&mut action.sa_mask)).and_then(|()| {
+                    check_libc_result(libc::sigaction(
+                        libc::SIGWINCH,
+                        &action,
+                        std::ptr::null_mut(),
+                    ))
+                })
+            }
+        });
 
-        sigaction.sa_sigaction = handle_sigwinch as *const () as libc::sighandler_t;
-        sigaction.sa_flags = libc::SA_RESTART;
-
-        check_libc_result(libc::sigemptyset(&mut sigaction.sa_mask))?;
-        check_libc_result(libc::sigaction(
-            libc::SIGWINCH,
-            &sigaction,
-            std::ptr::null_mut(),
-        ))?;
-        Ok(File::from_raw_fd(pipefd[0]))
+    if let Err(err) = result {
+        unsafe {
+            libc::close(pipefd[0]);
+            libc::close(pipefd[1]);
+        }
+        return Err(err);
     }
+
+    // Publish the write end only after the handler that writes to it is installed.
+    unsafe { SIGWINCH_PIPE_FD = pipefd[1] };
+    Ok(unsafe { File::from_raw_fd(pipefd[0]) })
 }
 
 /// Opens a fresh, independent file description of the terminal device that
@@ -416,8 +453,10 @@ fn set_sigwinch_handler() -> io::Result<File> {
 /// description is not modified.
 fn open_nonblocking_input(input_fd: RawFd) -> io::Result<RawFd> {
     let mut path = [0u8; libc::PATH_MAX as usize];
-    if unsafe { libc::ttyname_r(input_fd, path.as_mut_ptr().cast(), path.len()) } != 0 {
-        return Err(Error::last_os_error());
+    let result = unsafe { libc::ttyname_r(input_fd, path.as_mut_ptr().cast(), path.len()) };
+    if result != 0 {
+        // `ttyname_r` returns the error number instead of setting `errno`.
+        return Err(Error::from_raw_os_error(result));
     }
     let fd = unsafe {
         libc::open(
@@ -428,7 +467,7 @@ fn open_nonblocking_input(input_fd: RawFd) -> io::Result<RawFd> {
     if fd < 0 {
         return Err(Error::last_os_error());
     }
-    if let Err(err) = crate::set_fd_nonblocking(fd, true) {
+    if let Err(err) = crate::set_fd_nonblocking(fd) {
         unsafe { libc::close(fd) };
         return Err(err);
     }

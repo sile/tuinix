@@ -46,7 +46,7 @@ driver, feed them into `InputStream::feed()`, pull parsed
 This example demonstrates basic terminal UI functionality including initializing the terminal,
 drawing styled text, processing keyboard events, and handling terminal resizing.
 
-```rust
+```rust,no_run
 use std::io::{Read, Write};
 
 // NOTE: This is an ASCII-oriented demo helper: every character is assigned a width of 1.
@@ -58,7 +58,9 @@ fn write_text(frame: &mut tuinix::TerminalFrame, text: &str, style: tuinix::Term
             '\n' => frame.push_newline(),
             '\t' => frame.push_tab(8),
             c if c.is_control() => {}
-            c => frame.push_char(tuinix::TerminalChar::new(c, 1, style).expect("valid cell")),
+            c => {
+                frame.push_char(tuinix::TerminalChar::new(c, 1, style).expect("valid cell"));
+            }
         }
     }
 }
