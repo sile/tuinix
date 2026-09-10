@@ -15,6 +15,7 @@
 //! Run it with `cargo run --example demo`.
 
 use std::io::{Read, Write};
+
 const TITLE_STYLE: tuinix::TerminalStyle = tuinix::TerminalStyle::new().bold();
 const INFO_STYLE: tuinix::TerminalStyle = tuinix::TerminalStyle::new().underline();
 const BODY_STYLE: tuinix::TerminalStyle = tuinix::TerminalStyle::new();
@@ -110,37 +111,33 @@ fn handle_input(
     cursor: Option<tuinix::TerminalPosition>,
 ) -> std::io::Result<bool> {
     let mut raw = [0u8; 256];
-    while let Some(n) = would_block_as_none(driver.read(&mut raw))? {
-        if n == 0 {
-            break;
-        }
+    // `n @ 1..` exits the loop on a zero-length read (EOF) without a separate
+    // `if n == 0` check: the range pattern only matches when at least one byte
+    // was read.
+    while let Some(n @ 1..) = would_block_as_none(driver.read(&mut raw))? {
         input.feed(&raw[..n]);
         // Query the physical size for this batch of events so the reply frames are
         // drawn at the terminal's actual dimensions.
         let size = driver.size()?;
         while let Some(event) = input.next() {
+            // The header and the render/write/bookkeeping steps are common to every
+            // event, so only the event-specific body stays inside the `match`.
+            let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(size);
+            draw_header(&mut frame);
+
             match event {
                 tuinix::TerminalInput::Key(key_input) => {
                     // Quit on 'q'.
                     if let tuinix::KeyCode::Char('q') = key_input.code {
                         return Ok(false);
                     }
-                    let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(size);
-                    draw_header(&mut frame);
                     write_text(
                         &mut frame,
                         &format!("\nLast event: Key pressed: {:?}\n", key_input),
                         INFO_STYLE,
                     );
-                    let out = frame.render(prev_frame.as_ref(), cursor);
-                    driver.write_all(&out)?;
-                    driver.flush()?;
-                    *prev_frame = Some(frame);
                 }
                 tuinix::TerminalInput::Mouse(mouse_input) => {
-                    let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(size);
-                    draw_header(&mut frame);
-
                     write_text(&mut frame, "\nMouse Event Details:\n", MOUSE_STYLE);
                     write_text(
                         &mut frame,
@@ -176,13 +173,13 @@ fn handle_input(
                         &format!("  Event detail: {:?}\n", mouse_input.event),
                         BODY_STYLE,
                     );
-
-                    let out = frame.render(prev_frame.as_ref(), cursor);
-                    driver.write_all(&out)?;
-                    driver.flush()?;
-                    *prev_frame = Some(frame);
                 }
             }
+
+            let out = frame.render(prev_frame.as_ref(), cursor);
+            driver.write_all(&out)?;
+            driver.flush()?;
+            *prev_frame = Some(frame);
         }
     }
     Ok(true)
