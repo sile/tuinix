@@ -84,7 +84,7 @@ fn main() -> std::io::Result<()> {
 
     // Add styled content to a frame
     let title_style = tuinix::Style::new().bold().fg_color(tuinix::Color::GREEN);
-    let mut frame: tuinix::Frame = tuinix::Frame::new(size);
+    let mut frame = tuinix::Frame::new(size);
     write_text(&mut frame, "Welcome to tuinix!\n", title_style);
     write_text(&mut frame, "\nPress any key ('q' to quit)\n", tuinix::Style::new());
 
@@ -119,7 +119,7 @@ fn main() -> std::io::Result<()> {
             let new_size = driver.size()?;
             if new_size != size {
                 size = new_size;
-                let mut frame: tuinix::Frame = tuinix::Frame::new(size);
+                let mut frame = tuinix::Frame::new(size);
                 write_text(&mut frame, "Welcome to tuinix!\n", title_style);
                 write_text(&mut frame, "\nPress any key ('q' to quit)\n", tuinix::Style::new());
                 let out = frame.render(prev.as_ref(), cursor);
@@ -144,7 +144,7 @@ fn main() -> std::io::Result<()> {
                     }
 
                     // Display the input
-                    let mut frame: tuinix::Frame = tuinix::Frame::new(size);
+                    let mut frame = tuinix::Frame::new(size);
                     write_text(&mut frame, &format!("Key pressed: {:?}\n", key_input), tuinix::Style::new());
                     write_text(&mut frame, "\nPress any key ('q' to quit)\n", tuinix::Style::new());
                     let out = frame.render(prev.as_ref(), cursor);

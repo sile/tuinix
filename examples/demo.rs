@@ -99,7 +99,7 @@ fn handle_resize(
     if prev_frame.as_ref().is_some_and(|f| f.size() == new_size) {
         return Ok(());
     }
-    let mut frame: tuinix::Frame = tuinix::Frame::new(new_size);
+    let mut frame = tuinix::Frame::new(new_size);
     draw_header(&mut frame);
     write_text(
         &mut frame,
@@ -127,7 +127,7 @@ fn handle_event(
 ) -> std::io::Result<bool> {
     // The frame is built at the terminal's current dimensions, so a resize is
     // picked up on whichever event is handled first afterwards.
-    let mut frame: tuinix::Frame = tuinix::Frame::new(driver.size()?);
+    let mut frame = tuinix::Frame::new(driver.size()?);
     draw_header(&mut frame);
 
     match event {
@@ -218,7 +218,7 @@ fn main() -> std::io::Result<()> {
     driver.enable_mouse_reporting()?;
 
     // Build an initial frame at the terminal's current dimensions.
-    let mut frame: tuinix::Frame = tuinix::Frame::new(driver.size()?);
+    let mut frame = tuinix::Frame::new(driver.size()?);
     draw_header(&mut frame);
     write_text(&mut frame, "\nLast event: None\n", INFO_STYLE);
 
