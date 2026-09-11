@@ -14,20 +14,20 @@ pub struct Size {
 }
 
 impl Size {
-    /// A terminal size with zero rows and zero columns.
+    /// A size with zero rows and zero columns.
     pub const EMPTY: Self = Self { rows: 0, cols: 0 };
 
-    /// Creates a new terminal size with the given number of rows and columns.
+    /// Creates a new size with the given number of rows and columns.
     pub const fn rows_cols(rows: usize, cols: usize) -> Self {
         Self { rows, cols }
     }
 
-    /// Returns `true` if the terminal has zero rows or zero columns.
+    /// Returns `true` if this size has zero rows or zero columns.
     pub const fn is_empty(self) -> bool {
         self.rows == 0 || self.cols == 0
     }
 
-    /// Returns `true` if the given position falls within the boundaries of this terminal size.
+    /// Returns `true` if the given position falls within the boundaries of this size.
     pub const fn contains(self, position: Position) -> bool {
         position.row < self.rows && position.col < self.cols
     }

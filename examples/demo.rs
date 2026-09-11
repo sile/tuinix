@@ -143,10 +143,10 @@ fn handle_event(
             );
         }
         tuinix::Input::Mouse(mouse_input) => {
-            write_text(&mut frame, "\nMouse Event Details:\n", MOUSE_STYLE);
+            write_text(&mut frame, "\nMouse Input Details:\n", MOUSE_STYLE);
             write_text(
                 &mut frame,
-                &format!("  Event: {:?}\n", mouse_input.kind),
+                &format!("  Kind: {:?}\n", mouse_input.kind),
                 BODY_STYLE,
             );
             write_text(
@@ -185,8 +185,8 @@ fn handle_event(
 
 /// Reads whatever input bytes are ready into `input`.
 ///
-/// This only moves bytes into the stream; the parsed events are drained from the
-/// stream by the caller. Reading and draining are kept apart so that a timeout,
+/// This only moves bytes into `input`; the parsed inputs are drained from it by
+/// the caller. Reading and draining are kept apart so that a timeout,
 /// which produces no bytes, can still reach the same drain path by committing a
 /// lone `ESC` and looping back.
 fn read_input(
@@ -197,10 +197,10 @@ fn read_input(
     // `n @ 1..` exits the loop on a zero-length read (EOF) without a separate
     // `if n == 0` check: the range pattern only matches when at least one byte
     // was read. Each read is fed immediately so at most one chunk sits in the
-    // stream at a time.
+    // decoder at a time.
     while let Some(n @ 1..) = would_block_as_none(driver.read(&mut raw))? {
         input.feed(&raw[..n]);
-        // Drop the oldest bytes if the stream holds more than the demo wants to
+        // Drop the oldest bytes if the decoder holds more than the demo wants to
         // keep, so a flood of unparsable input cannot grow it without bound.
         if input.buffered_bytes() > MAX_BUFFERED_BYTES {
             input.discard_buffered_bytes(input.buffered_bytes() - MAX_BUFFERED_BYTES);

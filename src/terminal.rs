@@ -165,7 +165,7 @@ impl TerminalDriver {
 
     /// Enables mouse input reporting in the terminal.
     ///
-    /// Mouse events will be reported as raw bytes on the input stream, which the
+    /// Mouse input will be reported as raw bytes, which the
     /// application feeds into [`InputDecoder::feed()`](crate::InputDecoder::feed)
     /// so they parse as [`Input::Mouse`](crate::Input::Mouse) values.
     pub fn enable_mouse_input(&mut self) -> io::Result<()> {

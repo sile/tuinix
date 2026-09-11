@@ -12,7 +12,7 @@ use std::{
 /// # Examples
 ///
 /// ```
-/// // Create a basic terminal frame
+/// // Create a basic frame
 /// let size = tuinix::Size::rows_cols(10, 40);
 /// let mut frame: tuinix::Frame = tuinix::Frame::new(size);
 ///
@@ -108,7 +108,7 @@ impl Style {
         bg_color: None,
     };
 
-    /// Makes a new terminal style with all formatting options disabled.
+    /// Makes a new style with all formatting options disabled.
     ///
     /// This returns a style instance equivalent to [`Style::RESET`],
     /// which can be used as a starting point to build more complex styles
@@ -290,7 +290,7 @@ impl FromStr for Style {
     }
 }
 
-/// Terminal color (RGB).
+/// A color (RGB).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Color {
     /// Red component.

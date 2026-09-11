@@ -66,16 +66,16 @@ pub struct MouseInput {
     /// The kind of mouse input that occurred.
     pub kind: MouseInputKind,
 
-    /// The position where the mouse event occurred.
+    /// The position where the mouse input occurred.
     pub position: Position,
 
-    /// Indicates whether the Ctrl modifier key was pressed during the event.
+    /// Indicates whether the Ctrl modifier key was pressed for this input.
     pub ctrl: bool,
 
-    /// Indicates whether the Alt modifier key was pressed during the event.
+    /// Indicates whether the Alt modifier key was pressed for this input.
     pub alt: bool,
 
-    /// Indicates whether the Shift modifier key was pressed during the event.
+    /// Indicates whether the Shift modifier key was pressed for this input.
     pub shift: bool,
 }
 
@@ -102,19 +102,19 @@ pub enum MouseInputKind {
     ScrollDown,
 }
 
-/// The pure, I/O-free input stream that accumulates raw bytes until a complete
-/// input event can be parsed.
+/// The pure, I/O-free decoder that accumulates raw bytes until a complete
+/// [`Input`] can be parsed.
 ///
-/// The stream is driven by the application: it has no awareness of any `Read`
-/// source, so it can live outside the driver and be fed whatever bytes the
-/// application reads from a terminal or elsewhere.
+/// It is driven by the application: it has no awareness of any `Read` source,
+/// so it can live outside the driver and be fed whatever bytes the application
+/// reads from a terminal or elsewhere.
 ///
 /// Feed raw bytes with [`InputDecoder::feed()`](Self::feed) and pull parsed
 /// [`Input`] values with [`InputDecoder::next()`](Self::next). A lone
 /// `ESC` byte is held until it is completed by more bytes or committed as the
 /// Escape key with [`InputDecoder::commit_escape()`](Self::commit_escape).
 ///
-/// The stream does not bound how many bytes it holds. An application that can
+/// It does not bound how many bytes it holds. An application that can
 /// receive unparsable input (for example a large paste) should watch
 /// [`buffered_bytes()`](Self::buffered_bytes) and drop the excess with
 /// [`discard_buffered_bytes()`](Self::discard_buffered_bytes).
@@ -129,15 +129,16 @@ pub struct InputDecoder {
 }
 
 impl InputDecoder {
-    /// Creates an empty input stream.
+    /// Creates an empty input decoder.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Feeds raw bytes into the stream.
+    /// Feeds raw bytes into the decoder.
     ///
-    /// Unparsed bytes are held until [`next()`](Self::next) can produce an event
-    /// from them. The stream does not bound how many bytes it holds; an
+    /// Unparsed bytes are held until [`next()`](Self::next) can produce an
+    /// [`Input`] from them. The decoder does not bound how many bytes it holds;
+    /// an
     /// application that can receive unparsable input should watch
     /// [`buffered_bytes()`](Self::buffered_bytes) and drop the excess with
     /// [`discard_buffered_bytes()`](Self::discard_buffered_bytes).
@@ -145,9 +146,9 @@ impl InputDecoder {
         self.buf.extend_from_slice(bytes);
     }
 
-    /// Parses and returns the next complete input event, consuming its bytes.
+    /// Parses and returns the next complete [`Input`], consuming its bytes.
     ///
-    /// Returns `None` when no complete event can be produced from the bytes fed
+    /// Returns `None` when no complete [`Input`] can be produced from the bytes fed
     /// so far. That is the normal outcome of an incomplete sequence: a lone
     /// `ESC` byte is held until more bytes arrive or it is committed with
     /// [`commit_escape()`](Self::commit_escape). You do not need to track the
@@ -155,8 +156,8 @@ impl InputDecoder {
     //
     // `InputDecoder` is a stateful parser, not an iterator; the name `next` is
     // kept for symmetry with `feed`. Implementing `Iterator` would not be a
-    // natural fit here: `None` means "no complete event from the bytes fed so
-    // far", not "the stream is exhausted", so the `Iterator` contract would
+    // natural fit here: `None` means "no complete input from the bytes fed so
+    // far", not "the decoder is exhausted", so the `Iterator` contract would
     // mislead a caller into reading it as end of input.
     #[expect(
         clippy::should_implement_trait,
@@ -184,7 +185,7 @@ impl InputDecoder {
     /// [`next()`](Self::next).
     ///
     /// The count includes an incomplete sequence that is being held for more
-    /// bytes. Use it to bound how much memory a stream can take: when the count
+    /// bytes. Use it to bound how much memory a decoder can take: when the count
     /// grows past what the application wants to keep, drop the excess with
     /// [`discard_buffered_bytes()`](Self::discard_buffered_bytes).
     pub fn buffered_bytes(&self) -> usize {
@@ -197,7 +198,7 @@ impl InputDecoder {
     /// `len` is clipped to the number of buffered bytes, so passing a larger
     /// value discards everything and returns the buffer length. This is how an
     /// application enforces its own bound on [`buffered_bytes()`](Self::buffered_bytes):
-    /// the stream never drops bytes on its own, because only the application
+    /// the decoder never drops bytes on its own, because only the application
     /// knows whether discarding a partial sequence is acceptable.
     pub fn discard_buffered_bytes(&mut self, len: usize) -> usize {
         let len = len.min(self.buf.len());
@@ -205,14 +206,14 @@ impl InputDecoder {
         len
     }
 
-    // Returns `true` when the stream holds unconsumed bytes. Only the tests
+    // Returns `true` when the decoder holds unconsumed bytes. Only the tests
     // assert on the residual buffer, so this is not part of the public surface.
     #[cfg(test)]
     fn has_pending(&self) -> bool {
         self.buffered_bytes() > 0
     }
 
-    /// Returns `true` when the stream holds a lone `ESC` byte that
+    /// Returns `true` when the decoder holds a lone `ESC` byte that
     /// [`commit_escape()`](Self::commit_escape) would turn into the Escape key.
     ///
     /// A lone `ESC` is ambiguous: the terminal sends the same byte whether the
@@ -233,12 +234,12 @@ impl InputDecoder {
         self.buf.as_slice() == [0x1b].as_slice()
     }
 
-    /// Commits a lone `ESC` byte held by the stream as the Escape key.
+    /// Commits a lone `ESC` byte held by the decoder as the Escape key.
     ///
     /// This is the second half of the wait described by
     /// [`has_uncommitted_escape()`](Self::has_uncommitted_escape): call it once
     /// the wait has elapsed. The committed Escape key is then returned by
-    /// [`next()`](Self::next). A call is a no-op when the stream holds no lone
+    /// [`next()`](Self::next). A call is a no-op when the decoder holds no lone
     /// `ESC` byte, so it is harmless when `next()` already consumed the byte or
     /// it turned out to be the start of a sequence.
     pub fn commit_escape(&mut self) {
@@ -2193,8 +2194,8 @@ mod tests {
     /// sequence, stopping at the same incomplete or fully consumed
     /// sequence.
     #[test]
-    fn pbt_input_stream_matches_parse_model() -> noprop::TestResult {
-        let observed_event = Cell::new(false);
+    fn pbt_input_decoder_matches_parse_model() -> noprop::TestResult {
+        let observed_input = Cell::new(false);
         let observed_partial = Cell::new(false);
         let observed_unknown = Cell::new(false);
         let observed_pending_escape = Cell::new(false);
@@ -2275,7 +2276,7 @@ mod tests {
                 );
             }
             if !actual.is_empty() {
-                observed_event.set(true);
+                observed_input.set(true);
             }
             if expected_partial {
                 observed_partial.set(true);
@@ -2285,7 +2286,7 @@ mod tests {
             }
             Ok(())
         })?;
-        assert!(observed_event.get(), "no case parsed any event\n{runner}");
+        assert!(observed_input.get(), "no case parsed any input\n{runner}");
         assert!(
             observed_partial.get(),
             "no case stopped at an incomplete sequence\n{runner}"
