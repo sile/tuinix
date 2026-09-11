@@ -38,9 +38,11 @@ use std::{
 ///
 /// # Style Application
 ///
-/// When applying styles, each new style overrides any previous style completely.
-/// This means that applying a style like `underline()` after `bold()` won't result
-/// in text that is both bold and underlined - only the underline will be applied.
+/// A [`Frame`](crate::Frame) stores a complete [`Style`] for each character, and
+/// rendering switches styles by emitting the full style rather than a patch. A
+/// style therefore overrides whatever came before it completely: applying
+/// `underline()` after `bold()` does not produce bold and underlined text, only
+/// underlined text.
 ///
 /// ```
 /// let size = tuinix::Size::rows_cols(24, 80);
@@ -94,8 +96,10 @@ pub struct Style {
 }
 
 impl Style {
-    /// An alias of [`Style::new()`] that
-    /// can be used to reset all terminal styling.
+    /// A style with every formatting option disabled.
+    ///
+    /// It is equal to [`Style::new()`] and can be used to reset all terminal
+    /// styling.
     pub const RESET: Self = Self {
         bold: false,
         italic: false,
@@ -110,9 +114,8 @@ impl Style {
 
     /// Makes a new style with all formatting options disabled.
     ///
-    /// This returns a style instance equivalent to [`Style::RESET`],
-    /// which can be used as a starting point to build more complex styles
-    /// through the builder methods.
+    /// The result is equal to [`Style::RESET`] and can be used as a starting
+    /// point to build more complex styles through the builder methods.
     ///
     /// # Examples
     ///

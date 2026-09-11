@@ -1,9 +1,10 @@
 use std::ops::{Add, AddAssign, Sub, SubAssign};
 
-/// The number of rows and columns of a [`Frame`](crate::Frame).
+/// The number of rows and columns of a terminal display area.
 ///
-/// This structure stores the number of rows (height) and columns (width) that define
-/// the size of a terminal display area.
+/// This describes the extent of a [`Frame`](crate::Frame) or a
+/// [`Region`], and it is also how [`TerminalDriver::size()`](crate::TerminalDriver::size)
+/// reports the physical terminal size.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Size {
     /// Number of rows (height) in the terminal.
@@ -67,7 +68,9 @@ impl Position {
         Self::row_col(row, 0)
     }
 
-    /// Makes a new position with the specified column at the first row.
+    /// Makes a new position at the beginning of the specified column.
+    ///
+    /// This is a convenience constructor that sets the row to 0.
     pub const fn col(col: usize) -> Self {
         Self::row_col(0, col)
     }
@@ -109,8 +112,9 @@ impl SubAssign for Position {
 
 /// A rectangular region within a terminal, defined by a position and size.
 ///
-/// This structure represents a bounded area within a terminal, useful for
-/// creating sub-regions or windows within the terminal display.
+/// Useful for describing sub-regions or windows within the terminal display,
+/// and they can be carved out of one another with the `take_*`, `drop_*`, and
+/// `expand_*` methods.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Region {
     /// The top-left position of the region.

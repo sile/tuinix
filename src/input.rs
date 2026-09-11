@@ -152,7 +152,7 @@ pub struct InputDecoder {
 }
 
 impl InputDecoder {
-    /// Creates an empty input decoder.
+    /// Makes a new, empty input decoder.
     pub fn new() -> Self {
         Self::default()
     }

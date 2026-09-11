@@ -180,8 +180,7 @@ impl TerminalDriver {
 
     /// Disables mouse reporting in the terminal.
     ///
-    /// This method disables all mouse reporting that was previously enabled with
-    /// [`TerminalDriver::enable_mouse_reporting()`].
+    /// This undoes [`TerminalDriver::enable_mouse_reporting()`].
     pub fn disable_mouse_reporting(&mut self) -> io::Result<()> {
         // Disable mouse reporting (reverse order)
         write!(self.output, "\x1b[?1006l")?; // Disable SGR extended coordinate reporting
