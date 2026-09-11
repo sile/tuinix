@@ -96,7 +96,7 @@ impl RegionModel {
         let mut cells = BTreeSet::new();
         for row in self.position.row..self.position.row + self.size.rows {
             for col in self.position.col..self.position.col + self.size.cols {
-                cells.insert(tuinix::Position::row_col(row, col));
+                cells.insert(tuinix::Position { row, col });
             }
         }
         cells
@@ -132,14 +132,14 @@ fn region_operations_match_model() -> noprop::TestResult {
     let observed_zero = Cell::new(false);
     let observed_max = Cell::new(false);
     let runner = run(256, |ctx| {
-        let position = tuinix::Position::row_col(
-            noprop::sample_usize_in(ctx, 0..=10),
-            noprop::sample_usize_in(ctx, 0..=10),
-        );
-        let size = tuinix::Size::rows_cols(
-            noprop::sample_usize_in(ctx, 0..=10),
-            noprop::sample_usize_in(ctx, 0..=10),
-        );
+        let position = tuinix::Position {
+            row: noprop::sample_usize_in(ctx, 0..=10),
+            col: noprop::sample_usize_in(ctx, 0..=10),
+        };
+        let size = tuinix::Size {
+            rows: noprop::sample_usize_in(ctx, 0..=10),
+            cols: noprop::sample_usize_in(ctx, 0..=10),
+        };
         let mut region = tuinix::Region { position, size };
         let mut model = RegionModel { position, size };
         let steps =
@@ -156,10 +156,10 @@ fn region_operations_match_model() -> noprop::TestResult {
                 (model.position, model.size),
                 "{op:?}({n}) mismatch"
             );
-            let probe = tuinix::Position::row_col(
-                noprop::sample_usize_in(ctx, 0..=20),
-                noprop::sample_usize_in(ctx, 0..=20),
-            );
+            let probe = tuinix::Position {
+                row: noprop::sample_usize_in(ctx, 0..=20),
+                col: noprop::sample_usize_in(ctx, 0..=20),
+            };
             assert_eq!(
                 region.contains(probe),
                 model.cells().contains(&probe),

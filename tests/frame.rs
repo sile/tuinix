@@ -66,14 +66,20 @@ fn push_text(frame: &mut tuinix::Frame, text: &str) {
 }
 
 fn sample_size(ctx: &mut noprop::TestCaseContext) -> tuinix::Size {
-    tuinix::Size::rows_cols(
-        noprop::sample_with_boundaries(ctx, &[0usize, 12], noprop::Ratio::one_nth(5), |ctx| {
-            noprop::sample_usize_in(ctx, 0..=12)
-        }),
-        noprop::sample_with_boundaries(ctx, &[0usize, 12], noprop::Ratio::one_nth(5), |ctx| {
-            noprop::sample_usize_in(ctx, 0..=12)
-        }),
-    )
+    tuinix::Size {
+        rows: noprop::sample_with_boundaries(
+            ctx,
+            &[0usize, 12],
+            noprop::Ratio::one_nth(5),
+            |ctx| noprop::sample_usize_in(ctx, 0..=12),
+        ),
+        cols: noprop::sample_with_boundaries(
+            ctx,
+            &[0usize, 12],
+            noprop::Ratio::one_nth(5),
+            |ctx| noprop::sample_usize_in(ctx, 0..=12),
+        ),
+    }
 }
 
 fn sample_text(ctx: &mut noprop::TestCaseContext) -> String {
@@ -153,14 +159,20 @@ fn push_cursor_matches_model() -> noprop::TestResult {
     let observed_newline = Cell::new(false);
     let observed_clipped = Cell::new(false);
     let runner = run(256, |ctx| {
-        let size = tuinix::Size::rows_cols(
-            noprop::sample_with_boundaries(ctx, &[0usize, 12], noprop::Ratio::one_nth(5), |ctx| {
-                noprop::sample_usize_in(ctx, 0..=12)
-            }),
-            noprop::sample_with_boundaries(ctx, &[0usize, 12], noprop::Ratio::one_nth(5), |ctx| {
-                noprop::sample_usize_in(ctx, 0..=12)
-            }),
-        );
+        let size = tuinix::Size {
+            rows: noprop::sample_with_boundaries(
+                ctx,
+                &[0usize, 12],
+                noprop::Ratio::one_nth(5),
+                |ctx| noprop::sample_usize_in(ctx, 0..=12),
+            ),
+            cols: noprop::sample_with_boundaries(
+                ctx,
+                &[0usize, 12],
+                noprop::Ratio::one_nth(5),
+                |ctx| noprop::sample_usize_in(ctx, 0..=12),
+            ),
+        };
         let mut ops = Vec::new();
         let n_ops =
             noprop::sample_with_boundaries(ctx, &[0usize, 64], noprop::Ratio::one_nth(5), |ctx| {
@@ -186,7 +198,10 @@ fn push_cursor_matches_model() -> noprop::TestResult {
         }
         assert_eq!(
             frame.next_push_position(),
-            tuinix::Position::row_col(model.row, model.col),
+            tuinix::Position {
+                row: model.row,
+                col: model.col
+            },
             "write position mismatch for {ops:?}"
         );
         if ops.iter().any(|op| matches!(op, Op::Char(_, w) if *w > 0)) {
@@ -229,20 +244,20 @@ fn draw_matches_model() -> noprop::TestResult {
         let structured = noprop::sample_bool(ctx);
         let (size, dest_text, src_text, position) = if structured {
             (
-                tuinix::Size::rows_cols(1, 4),
+                tuinix::Size { rows: 1, cols: 4 },
                 "\u{3042}".to_string(),
                 "x".to_string(),
-                tuinix::Position::row_col(0, 1),
+                tuinix::Position { row: 0, col: 1 },
             )
         } else {
             (
                 sample_size(ctx),
                 sample_text(ctx),
                 sample_text(ctx),
-                tuinix::Position::row_col(
-                    noprop::sample_usize_in(ctx, 0..=16),
-                    noprop::sample_usize_in(ctx, 0..=16),
-                ),
+                tuinix::Position {
+                    row: noprop::sample_usize_in(ctx, 0..=16),
+                    col: noprop::sample_usize_in(ctx, 0..=16),
+                },
             )
         };
 
@@ -258,8 +273,10 @@ fn draw_matches_model() -> noprop::TestResult {
         let mut removals = 0usize;
         let mut skipped = 0usize;
         for (src_pos, c) in src.chars() {
-            let target_pos =
-                tuinix::Position::row_col(position.row + src_pos.row, position.col + src_pos.col);
+            let target_pos = tuinix::Position {
+                row: position.row + src_pos.row,
+                col: position.col + src_pos.col,
+            };
             if target_pos.row >= size.rows || target_pos.col + c.width() > size.cols {
                 skipped += 1;
                 continue;
@@ -272,10 +289,10 @@ fn draw_matches_model() -> noprop::TestResult {
                 }
             }
             for i in 0..c.width() {
-                expected.remove(&tuinix::Position::row_col(
-                    target_pos.row,
-                    target_pos.col + i,
-                ));
+                expected.remove(&tuinix::Position {
+                    row: target_pos.row,
+                    col: target_pos.col + i,
+                });
             }
             expected.insert(target_pos, c);
         }
@@ -327,7 +344,7 @@ impl ScreenModel {
     fn new() -> Self {
         Self {
             cells: BTreeMap::new(),
-            cursor: tuinix::Position::ZERO,
+            cursor: tuinix::Position::ORIGIN,
             writes: 0,
         }
     }
@@ -346,10 +363,10 @@ impl ScreenModel {
                 match remainder[end] {
                     b'H' => {
                         let (row, col) = params.split_once(';').expect("row;col");
-                        self.cursor = tuinix::Position::row_col(
-                            row.parse::<usize>().expect("row") - 1,
-                            col.parse::<usize>().expect("col") - 1,
-                        );
+                        self.cursor = tuinix::Position {
+                            row: row.parse::<usize>().expect("row") - 1,
+                            col: col.parse::<usize>().expect("col") - 1,
+                        };
                     }
                     b'h' | b'l' => assert_eq!(params, "?25", "unexpected mode change"),
                     _ => {} // SGR style sequence: does not move the cursor.
@@ -379,10 +396,10 @@ impl ScreenModel {
                 self.cells.remove(&pos);
             }
             for i in 0..width {
-                self.cells.remove(&tuinix::Position::row_col(
-                    self.cursor.row,
-                    self.cursor.col + i,
-                ));
+                self.cells.remove(&tuinix::Position {
+                    row: self.cursor.row,
+                    col: self.cursor.col + i,
+                });
             }
             self.cells.insert(self.cursor, c);
             self.cursor.col += width;
@@ -483,10 +500,10 @@ fn render_diff_matches_model() -> noprop::TestResult {
 
         let cursor = if !size.is_empty() && noprop::sample_bool(ctx) {
             observed_cursor.set(true);
-            Some(tuinix::Position::row_col(
-                noprop::sample_usize_in(ctx, 0..size.rows),
-                noprop::sample_usize_in(ctx, 0..size.cols),
-            ))
+            Some(tuinix::Position {
+                row: noprop::sample_usize_in(ctx, 0..size.rows),
+                col: noprop::sample_usize_in(ctx, 0..size.cols),
+            })
         } else {
             None
         };

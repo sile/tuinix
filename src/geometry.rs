@@ -13,11 +13,6 @@ pub struct Size {
 }
 
 impl Size {
-    /// Creates a new size with the given number of rows and columns.
-    pub const fn rows_cols(rows: usize, cols: usize) -> Self {
-        Self { rows, cols }
-    }
-
     /// Returns `true` if this size has zero rows or zero columns.
     pub const fn is_empty(self) -> bool {
         self.rows == 0 || self.cols == 0
@@ -26,7 +21,7 @@ impl Size {
     /// Returns a region that starts at the origin and has this size.
     pub const fn to_region(self) -> Region {
         Region {
-            position: Position::ZERO,
+            position: Position::ORIGIN,
             size: self,
         }
     }
@@ -44,12 +39,7 @@ pub struct Position {
 
 impl Position {
     /// Origin position (0,0).
-    pub const ZERO: Self = Self::row_col(0, 0);
-
-    /// Makes a new position with the specified row and column coordinates.
-    pub const fn row_col(row: usize, col: usize) -> Self {
-        Self { row, col }
-    }
+    pub const ORIGIN: Self = Self { row: 0, col: 0 };
 }
 
 /// A rectangular region within a terminal, defined by a position and size.

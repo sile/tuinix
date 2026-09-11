@@ -93,7 +93,7 @@ impl Char {
 /// # Examples
 ///
 /// ```
-/// let size = tuinix::Size::rows_cols(24, 80);
+/// let size = tuinix::Size { rows: 24, cols: 80 };
 /// let mut frame = tuinix::Frame::new(size);
 ///
 /// let bold = tuinix::Style::new().bold();
@@ -120,7 +120,7 @@ impl Frame {
         Self {
             size,
             data: BTreeMap::new(),
-            tail: Position::ZERO,
+            tail: Position::ORIGIN,
         }
     }
 
@@ -203,8 +203,10 @@ impl Frame {
     /// partial glyph.
     pub fn draw(&mut self, position: Position, frame: &Frame) {
         for (src_pos, c) in frame.chars() {
-            let target_pos =
-                Position::row_col(position.row + src_pos.row, position.col + src_pos.col);
+            let target_pos = Position {
+                row: position.row + src_pos.row,
+                col: position.col + src_pos.col,
+            };
             if target_pos.row >= self.size.rows || target_pos.col + c.width > self.size.cols {
                 continue;
             }
@@ -216,8 +218,10 @@ impl Frame {
                 }
             }
             for i in 0..c.width {
-                self.data
-                    .remove(&Position::row_col(target_pos.row, target_pos.col + i));
+                self.data.remove(&Position {
+                    row: target_pos.row,
+                    col: target_pos.col + i,
+                });
             }
             self.data.insert(target_pos, c);
         }
@@ -248,16 +252,16 @@ impl Frame {
     /// [`Char::is_blank()`] to visit only the characters that were written:
     ///
     /// ```
-    /// let mut frame = tuinix::Frame::new(tuinix::Size::rows_cols(2, 4));
+    /// let mut frame = tuinix::Frame::new(tuinix::Size { rows: 2, cols: 4 });
     /// frame.push_char(tuinix::Char::new('a', 1, Default::default()).expect("valid char"));
     ///
     /// let written = frame.chars().filter(|(_, c)| !c.is_blank()).count();
     /// assert_eq!(written, 1);
     /// ```
     pub fn chars(&self) -> impl '_ + Iterator<Item = (Position, Char)> {
-        let mut next_pos = Position::ZERO;
+        let mut next_pos = Position::ORIGIN;
         (0..self.size.rows)
-            .flat_map(|row| (0..self.size.cols).map(move |col| Position::row_col(row, col)))
+            .flat_map(|row| (0..self.size.cols).map(move |col| Position { row, col }))
             .filter_map(move |pos| {
                 if pos < next_pos {
                     return None;
@@ -293,7 +297,7 @@ impl Frame {
     /// # Examples
     ///
     /// ```
-    /// let size = tuinix::Size::rows_cols(24, 80);
+    /// let size = tuinix::Size { rows: 24, cols: 80 };
     /// let mut frame = tuinix::Frame::new(size);
     /// frame.push_char(tuinix::Char::new(
     ///     'h',
@@ -356,50 +360,50 @@ mod tests {
 
     #[test]
     fn next_push_position_advances_by_width() {
-        let size = Size::rows_cols(2, 4);
+        let size = Size { rows: 2, cols: 4 };
         let mut frame = Frame::new(size);
         frame.push_char(ch('a', 1));
         frame.push_char(ch('b', 1));
         frame.push_char(ch('\u{3042}', 2));
-        assert_eq!(frame.next_push_position(), Position::row_col(0, 4));
+        assert_eq!(frame.next_push_position(), Position { row: 0, col: 4 });
         frame.push_newline();
-        assert_eq!(frame.next_push_position(), Position::row_col(1, 0));
+        assert_eq!(frame.next_push_position(), Position { row: 1, col: 0 });
     }
 
     #[test]
     fn push_tab_advances_to_tab_stop() {
-        let size = Size::rows_cols(2, 32);
+        let size = Size { rows: 2, cols: 32 };
         let mut frame = Frame::new(size);
 
         // From column 1, advance to the next stop (8).
         frame.push_char(ch('a', 1));
         frame.push_tab(8);
-        assert_eq!(frame.next_push_position(), Position::row_col(0, 8));
+        assert_eq!(frame.next_push_position(), Position { row: 0, col: 8 });
 
         // Already at a stop: advance one full stop.
         frame.push_tab(8);
-        assert_eq!(frame.next_push_position(), Position::row_col(0, 16));
+        assert_eq!(frame.next_push_position(), Position { row: 0, col: 16 });
 
         // A non-aligned column advances to the next stop.
         frame.push_char(ch('b', 1)); // col 17
         frame.push_tab(8);
-        assert_eq!(frame.next_push_position(), Position::row_col(0, 24));
+        assert_eq!(frame.next_push_position(), Position { row: 0, col: 24 });
     }
 
     #[test]
     fn wide_char_continuation_is_blank_or_skipped() {
-        let size = Size::rows_cols(1, 4);
+        let size = Size { rows: 1, cols: 4 };
         let mut frame = Frame::new(size);
         frame.push_char(ch('\u{3042}', 2));
         frame.push_char(ch('x', 1));
 
         assert_eq!(
-            frame.get_char(Position::row_col(0, 0)).map(|c| c.value),
+            frame.get_char(Position { row: 0, col: 0 }).map(|c| c.value),
             Some('\u{3042}')
         );
-        assert_eq!(frame.get_char(Position::row_col(0, 1)), None);
+        assert_eq!(frame.get_char(Position { row: 0, col: 1 }), None);
         assert_eq!(
-            frame.get_char(Position::row_col(0, 2)).map(|c| c.value),
+            frame.get_char(Position { row: 0, col: 2 }).map(|c| c.value),
             Some('x')
         );
 
@@ -407,16 +411,16 @@ mod tests {
         assert_eq!(
             positions,
             [
-                (Position::row_col(0, 0), '\u{3042}'),
-                (Position::row_col(0, 2), 'x'),
-                (Position::row_col(0, 3), ' '),
+                (Position { row: 0, col: 0 }, '\u{3042}'),
+                (Position { row: 0, col: 2 }, 'x'),
+                (Position { row: 0, col: 3 }, ' '),
             ]
         );
     }
 
     #[test]
     fn clips_cells_at_right_edge() {
-        let size = Size::rows_cols(1, 3);
+        let size = Size { rows: 1, cols: 3 };
         let mut frame = Frame::new(size);
         assert!(frame.push_char(ch('a', 1)));
         assert!(frame.push_char(ch('b', 1)));
@@ -424,7 +428,7 @@ mod tests {
         // The row is full; the next cell is clipped but the write position still advances.
         assert!(!frame.push_char(ch('d', 1)));
 
-        assert_eq!(frame.next_push_position(), Position::row_col(0, 4));
+        assert_eq!(frame.next_push_position(), Position { row: 0, col: 4 });
         let stored: Vec<_> = frame
             .chars()
             .filter(|(_, c)| *c != Char::BLANK)
@@ -435,17 +439,17 @@ mod tests {
 
     #[test]
     fn draw_removes_partial_overlap_and_clips() {
-        let size = Size::rows_cols(1, 4);
+        let size = Size { rows: 1, cols: 4 };
         let mut dest = Frame::new(size);
         dest.push_char(ch('\u{3042}', 2)); // wide char at col 0-1
         dest.push_char(ch('y', 1));
 
         // A one-cell source drawn over the continuation column of the wide char.
-        let mut src = Frame::new(Size::rows_cols(1, 1));
+        let mut src = Frame::new(Size { rows: 1, cols: 1 });
         src.push_char(ch('x', 1));
 
         // Draw 'x' over column 1, which is the continuation of the wide char.
-        dest.draw(Position::row_col(0, 1), &src);
+        dest.draw(Position { row: 0, col: 1 }, &src);
 
         // The partially overlapped wide char should be removed entirely,
         // while the unaffected 'y' at column 2 remains.

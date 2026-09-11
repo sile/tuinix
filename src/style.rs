@@ -13,7 +13,7 @@ use std::{
 ///
 /// ```
 /// // Create a basic frame
-/// let size = tuinix::Size::rows_cols(10, 40);
+/// let size = tuinix::Size { rows: 10, cols: 40 };
 /// let mut frame = tuinix::Frame::new(size);
 ///
 /// // Create a simple green, bold text style
@@ -45,7 +45,7 @@ use std::{
 /// underlined text.
 ///
 /// ```
-/// let size = tuinix::Size::rows_cols(24, 80);
+/// let size = tuinix::Size { rows: 24, cols: 80 };
 /// let mut frame = tuinix::Frame::new(size);
 ///
 /// // This will produce text that is ONLY underlined, not bold+underlined

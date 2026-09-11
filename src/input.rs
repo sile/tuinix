@@ -595,7 +595,10 @@ fn create_sgr_mouse_input(button: u16, x: u16, y: u16, is_release: bool) -> Opti
 
     Some(MouseInput {
         kind,
-        position: Position::row_col(y.saturating_sub(1) as usize, x.saturating_sub(1) as usize),
+        position: Position {
+            row: y.saturating_sub(1) as usize,
+            col: x.saturating_sub(1) as usize,
+        },
         ctrl,
         alt,
         shift,
@@ -636,7 +639,10 @@ fn create_x10_mouse_input(button_byte: u8, x: u16, y: u16) -> MouseInput {
 
     MouseInput {
         kind,
-        position: Position::row_col(y.saturating_sub(33) as usize, x.saturating_sub(33) as usize),
+        position: Position {
+            row: y.saturating_sub(33) as usize,
+            col: x.saturating_sub(33) as usize,
+        },
         ctrl,
         alt,
         shift,
@@ -1382,7 +1388,7 @@ mod tests {
             result.0,
             Some(Input::Mouse(MouseInput {
                 kind: MouseInputKind::ScrollUp,
-                position: Position::row_col(4, 9), // row: 5-1, col: 10-1
+                position: Position { row: 4, col: 9 }, // row: 5-1, col: 10-1
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1396,7 +1402,7 @@ mod tests {
             result.0,
             Some(Input::Mouse(MouseInput {
                 kind: MouseInputKind::ScrollDown,
-                position: Position::row_col(4, 9),
+                position: Position { row: 4, col: 9 },
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1413,7 +1419,7 @@ mod tests {
             result.0,
             Some(Input::Mouse(MouseInput {
                 kind: MouseInputKind::LeftPress,
-                position: Position::row_col(4, 9), // row: 5-1, col: 10-1
+                position: Position { row: 4, col: 9 }, // row: 5-1, col: 10-1
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1428,7 +1434,7 @@ mod tests {
             result.0,
             Some(Input::Mouse(MouseInput {
                 kind: MouseInputKind::MiddlePress,
-                position: Position::row_col(4, 9),
+                position: Position { row: 4, col: 9 },
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1442,7 +1448,7 @@ mod tests {
             result.0,
             Some(Input::Mouse(MouseInput {
                 kind: MouseInputKind::RightPress,
-                position: Position::row_col(4, 9),
+                position: Position { row: 4, col: 9 },
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1459,7 +1465,7 @@ mod tests {
             result.0,
             Some(Input::Mouse(MouseInput {
                 kind: MouseInputKind::LeftRelease,
-                position: Position::row_col(4, 9),
+                position: Position { row: 4, col: 9 },
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1473,7 +1479,7 @@ mod tests {
             result.0,
             Some(Input::Mouse(MouseInput {
                 kind: MouseInputKind::MiddleRelease,
-                position: Position::row_col(4, 9),
+                position: Position { row: 4, col: 9 },
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1487,7 +1493,7 @@ mod tests {
             result.0,
             Some(Input::Mouse(MouseInput {
                 kind: MouseInputKind::RightRelease,
-                position: Position::row_col(4, 9),
+                position: Position { row: 4, col: 9 },
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1504,7 +1510,7 @@ mod tests {
             result.0,
             Some(Input::Mouse(MouseInput {
                 kind: MouseInputKind::LeftPress,
-                position: Position::row_col(4, 9),
+                position: Position { row: 4, col: 9 },
                 ctrl: true,
                 alt: false,
                 shift: false,
@@ -1518,7 +1524,7 @@ mod tests {
             result.0,
             Some(Input::Mouse(MouseInput {
                 kind: MouseInputKind::LeftPress,
-                position: Position::row_col(4, 9),
+                position: Position { row: 4, col: 9 },
                 ctrl: false,
                 alt: true,
                 shift: false,
@@ -1532,7 +1538,7 @@ mod tests {
             result.0,
             Some(Input::Mouse(MouseInput {
                 kind: MouseInputKind::LeftPress,
-                position: Position::row_col(4, 9),
+                position: Position { row: 4, col: 9 },
                 ctrl: false,
                 alt: false,
                 shift: true,
@@ -1546,7 +1552,7 @@ mod tests {
             result.0,
             Some(Input::Mouse(MouseInput {
                 kind: MouseInputKind::LeftPress,
-                position: Position::row_col(4, 9),
+                position: Position { row: 4, col: 9 },
                 ctrl: true,
                 alt: true,
                 shift: true,
@@ -1562,7 +1568,7 @@ mod tests {
             result.0,
             Some(Input::Mouse(MouseInput {
                 kind: MouseInputKind::Drag,
-                position: Position::row_col(4, 9),
+                position: Position { row: 4, col: 9 },
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1576,7 +1582,7 @@ mod tests {
             result.0,
             Some(Input::Mouse(MouseInput {
                 kind: MouseInputKind::Drag,
-                position: Position::row_col(4, 9),
+                position: Position { row: 4, col: 9 },
                 ctrl: true,
                 alt: true,
                 shift: true,
@@ -1594,7 +1600,7 @@ mod tests {
             result.0,
             Some(Input::Mouse(MouseInput {
                 kind: MouseInputKind::LeftPress,
-                position: Position::row_col(5, 10),
+                position: Position { row: 5, col: 10 },
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1610,7 +1616,7 @@ mod tests {
             result.0,
             Some(Input::Mouse(MouseInput {
                 kind: MouseInputKind::MiddlePress,
-                position: Position::row_col(5, 10),
+                position: Position { row: 5, col: 10 },
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1625,7 +1631,7 @@ mod tests {
             result.0,
             Some(Input::Mouse(MouseInput {
                 kind: MouseInputKind::RightPress,
-                position: Position::row_col(5, 10),
+                position: Position { row: 5, col: 10 },
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1640,7 +1646,7 @@ mod tests {
             result.0,
             Some(Input::Mouse(MouseInput {
                 kind: MouseInputKind::LeftRelease,
-                position: Position::row_col(5, 10),
+                position: Position { row: 5, col: 10 },
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1657,7 +1663,7 @@ mod tests {
             result.0,
             Some(Input::Mouse(MouseInput {
                 kind: MouseInputKind::LeftPress,
-                position: Position::row_col(5, 10),
+                position: Position { row: 5, col: 10 },
                 ctrl: true,
                 alt: false,
                 shift: false,
@@ -1671,7 +1677,7 @@ mod tests {
             result.0,
             Some(Input::Mouse(MouseInput {
                 kind: MouseInputKind::LeftPress,
-                position: Position::row_col(5, 10),
+                position: Position { row: 5, col: 10 },
                 ctrl: false,
                 alt: true,
                 shift: false,
@@ -1685,7 +1691,7 @@ mod tests {
             result.0,
             Some(Input::Mouse(MouseInput {
                 kind: MouseInputKind::LeftPress,
-                position: Position::row_col(5, 10),
+                position: Position { row: 5, col: 10 },
                 ctrl: false,
                 alt: false,
                 shift: true,
@@ -1702,7 +1708,7 @@ mod tests {
             result.0,
             Some(Input::Mouse(MouseInput {
                 kind: MouseInputKind::ScrollUp,
-                position: Position::row_col(5, 10),
+                position: Position { row: 5, col: 10 },
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1716,7 +1722,7 @@ mod tests {
             result.0,
             Some(Input::Mouse(MouseInput {
                 kind: MouseInputKind::ScrollDown,
-                position: Position::row_col(5, 10),
+                position: Position { row: 5, col: 10 },
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1733,7 +1739,7 @@ mod tests {
             result.0,
             Some(Input::Mouse(MouseInput {
                 kind: MouseInputKind::Drag,
-                position: Position::row_col(5, 10),
+                position: Position { row: 5, col: 10 },
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1750,7 +1756,7 @@ mod tests {
             result.0,
             Some(Input::Mouse(MouseInput {
                 kind: MouseInputKind::LeftPress,
-                position: Position::row_col(0, 0),
+                position: Position { row: 0, col: 0 },
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1764,7 +1770,7 @@ mod tests {
             result.0,
             Some(Input::Mouse(MouseInput {
                 kind: MouseInputKind::LeftPress,
-                position: Position::row_col(199, 99), // row: 200-1, col: 100-1
+                position: Position { row: 199, col: 99 }, // row: 200-1, col: 100-1
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1781,7 +1787,7 @@ mod tests {
             result.0,
             Some(Input::Mouse(MouseInput {
                 kind: MouseInputKind::LeftPress,
-                position: Position::row_col(0, 0), // saturating_sub(1) on 0 = 0
+                position: Position { row: 0, col: 0 }, // saturating_sub(1) on 0 = 0
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1795,7 +1801,7 @@ mod tests {
             result.0,
             Some(Input::Mouse(MouseInput {
                 kind: MouseInputKind::LeftPress,
-                position: Position::row_col(0, 0), // 33-33 = 0
+                position: Position { row: 0, col: 0 }, // 33-33 = 0
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1813,7 +1819,7 @@ mod tests {
             buffer.next(),
             Some(Input::Mouse(MouseInput {
                 kind: MouseInputKind::LeftPress,
-                position: Position::row_col(4, 9),
+                position: Position { row: 4, col: 9 },
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1826,7 +1832,7 @@ mod tests {
             buffer.next(),
             Some(Input::Mouse(MouseInput {
                 kind: MouseInputKind::LeftPress,
-                position: Position::row_col(4, 9),
+                position: Position { row: 4, col: 9 },
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1836,7 +1842,7 @@ mod tests {
             buffer.next(),
             Some(Input::Mouse(MouseInput {
                 kind: MouseInputKind::LeftRelease,
-                position: Position::row_col(4, 9),
+                position: Position { row: 4, col: 9 },
                 ctrl: false,
                 alt: false,
                 shift: false,
