@@ -155,9 +155,13 @@ impl InputStream {
     //
     // `InputStream` is a stateful parser, not an iterator; the name `next` is
     // kept for symmetry with `feed`. Implementing `Iterator` would not be a
-    // natural fit here (it would require a meaningful `Item` and a separate
-    // iteration model).
-    #[allow(clippy::should_implement_trait)]
+    // natural fit here: `None` means "no complete event from the bytes fed so
+    // far", not "the stream is exhausted", so the `Iterator` contract would
+    // mislead a caller into reading it as end of input.
+    #[expect(
+        clippy::should_implement_trait,
+        reason = "`InputStream` is a stateful parser; `next` is kept for symmetry with `feed`"
+    )]
     pub fn next(&mut self) -> Option<TerminalInput> {
         if self.committed_escape {
             self.committed_escape = false;
