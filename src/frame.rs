@@ -5,8 +5,8 @@ use crate::{Position, Size, Style};
 
 /// A single styled character in a [`Frame`].
 ///
-/// The number of grid columns a character occupies, its [`width()`](Self::width), is
-/// always `1` or more. A character wider than one column spans several adjacent
+/// The number of terminal columns a character occupies, its [`width()`](Self::width),
+/// is always `1` or more. A character wider than one column spans several adjacent
 /// columns; the frame stores it only at its starting column.
 ///
 /// Zero-width (combining) characters are not supported, and neither are control

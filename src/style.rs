@@ -120,10 +120,16 @@ impl Style {
     /// # Examples
     ///
     /// ```
+    /// let size = tuinix::Size { rows: 1, cols: 5 };
+    /// let mut frame = tuinix::Frame::new(size);
     ///
     /// let style = tuinix::Style::new()
     ///     .bold()
     ///     .fg_color(tuinix::Color::GREEN);
+    ///
+    /// for c in "hello".chars() {
+    ///     frame.push_char(tuinix::Char::new(c, 1, style).expect("valid char"));
+    /// }
     /// ```
     pub const fn new() -> Self {
         Self::RESET

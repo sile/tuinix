@@ -3,10 +3,10 @@ use crate::Position;
 /// User input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Input {
-    /// A key was pressed.
+    /// A key event.
     Key(KeyInput),
 
-    /// The mouse produced a button, drag, or wheel input.
+    /// A mouse event: a button press or release, a drag, or a wheel scroll.
     Mouse(MouseInput),
 }
 
@@ -97,31 +97,31 @@ pub struct MouseInput {
 /// Mouse input kinds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum MouseInputKind {
-    /// The left button was pressed.
+    /// The left button went down.
     LeftPress,
 
-    /// The left button was released.
+    /// The left button came up.
     LeftRelease,
 
-    /// The right button was pressed.
+    /// The right button went down.
     RightPress,
 
-    /// The right button was released.
+    /// The right button came up.
     RightRelease,
 
-    /// The middle button was pressed.
+    /// The middle button went down.
     MiddlePress,
 
-    /// The middle button was released.
+    /// The middle button came up.
     MiddleRelease,
 
-    /// The mouse moved while a button was held down (drag).
+    /// The mouse moved while a button was held down.
     Drag,
 
-    /// The wheel was scrolled up.
+    /// The wheel turned away from the user.
     ScrollUp,
 
-    /// The wheel was scrolled down.
+    /// The wheel turned toward the user.
     ScrollDown,
 }
 

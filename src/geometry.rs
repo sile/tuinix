@@ -5,10 +5,10 @@
 /// reports the physical terminal size.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Size {
-    /// Number of rows (height) in the terminal.
+    /// Number of rows (height).
     pub rows: usize,
 
-    /// Number of columns (width) in the terminal.
+    /// Number of columns (width).
     pub cols: usize,
 }
 
