@@ -2,11 +2,9 @@
 //!
 //! The properties covered here use only the public API:
 //!
-//! - `Position::add` and `sub` follow the documented component-wise
-//!   semantics (plain addition, saturating subtraction).
-//! - The `take` / `drop` / `expand` operations of `Region` match an
-//!   independent `(position, size)` model, and `contains` agrees with a
-//!   cell-set model on random probe points.
+//! - The `take` / `drop` operations of `Region` match an independent
+//!   `(position, size)` model, and `contains` agrees with a cell-set model
+//!   on random probe points.
 
 mod helpers;
 
@@ -25,13 +23,9 @@ enum RegionOp {
     DropBottom,
     DropLeft,
     DropRight,
-    ExpandTop,
-    ExpandBottom,
-    ExpandLeft,
-    ExpandRight,
 }
 
-const REGION_OPS: [RegionOp; 12] = [
+const REGION_OPS: [RegionOp; 8] = [
     RegionOp::TakeTop,
     RegionOp::TakeBottom,
     RegionOp::TakeLeft,
@@ -40,10 +34,6 @@ const REGION_OPS: [RegionOp; 12] = [
     RegionOp::DropBottom,
     RegionOp::DropLeft,
     RegionOp::DropRight,
-    RegionOp::ExpandTop,
-    RegionOp::ExpandBottom,
-    RegionOp::ExpandLeft,
-    RegionOp::ExpandRight,
 ];
 
 /// An independent `(position, size)` model of region arithmetic, written
@@ -98,20 +88,6 @@ impl RegionModel {
             RegionOp::DropRight => {
                 size.cols = size.cols.saturating_sub(n);
             }
-            RegionOp::ExpandTop => {
-                position.row = position.row.saturating_sub(n);
-                size.rows = size.rows.saturating_add(n);
-            }
-            RegionOp::ExpandBottom => {
-                size.rows = size.rows.saturating_add(n);
-            }
-            RegionOp::ExpandLeft => {
-                position.col = position.col.saturating_sub(n);
-                size.cols = size.cols.saturating_add(n);
-            }
-            RegionOp::ExpandRight => {
-                size.cols = size.cols.saturating_add(n);
-            }
         }
         Self { position, size }
     }
@@ -137,10 +113,6 @@ fn apply_op(region: tuinix::Region, op: RegionOp, n: usize) -> tuinix::Region {
         RegionOp::DropBottom => region.drop_bottom(n),
         RegionOp::DropLeft => region.drop_left(n),
         RegionOp::DropRight => region.drop_right(n),
-        RegionOp::ExpandTop => region.expand_top(n),
-        RegionOp::ExpandBottom => region.expand_bottom(n),
-        RegionOp::ExpandLeft => region.expand_left(n),
-        RegionOp::ExpandRight => region.expand_right(n),
     }
 }
 
@@ -215,44 +187,5 @@ fn region_operations_match_model() -> noprop::TestResult {
     );
     assert!(observed_zero.get(), "no case used amount 0\n{runner}");
     assert!(observed_max.get(), "no case used the max amount\n{runner}");
-    Ok(())
-}
-
-/// Samples a position with a bias toward the boundaries of the range.
-fn sample_position(ctx: &mut noprop::TestCaseContext) -> tuinix::Position {
-    let row =
-        noprop::sample_with_boundaries(ctx, &[0usize, 1000], noprop::Ratio::one_nth(5), |ctx| {
-            noprop::sample_usize_in(ctx, 0..=1000)
-        });
-    let col =
-        noprop::sample_with_boundaries(ctx, &[0usize, 1000], noprop::Ratio::one_nth(5), |ctx| {
-            noprop::sample_usize_in(ctx, 0..=1000)
-        });
-    tuinix::Position::row_col(row, col)
-}
-
-/// `Position::add` adds component-wise and `sub` saturates
-/// component-wise, as documented.
-#[test]
-fn position_add_sub_match_definitions() -> noprop::TestResult {
-    run(256, |ctx| {
-        let p = sample_position(ctx);
-        let q = sample_position(ctx);
-        let sum = p + q;
-        assert_eq!(sum.row, p.row + q.row, "add row mismatch: {p:?} + {q:?}");
-        assert_eq!(sum.col, p.col + q.col, "add col mismatch: {p:?} + {q:?}");
-        let diff = p - q;
-        assert_eq!(
-            diff.row,
-            p.row.saturating_sub(q.row),
-            "sub row mismatch: {p:?} - {q:?}"
-        );
-        assert_eq!(
-            diff.col,
-            p.col.saturating_sub(q.col),
-            "sub col mismatch: {p:?} - {q:?}"
-        );
-        Ok(())
-    })?;
     Ok(())
 }

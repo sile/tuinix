@@ -203,19 +203,21 @@ impl Frame {
     /// partial glyph.
     pub fn draw(&mut self, position: Position, frame: &Frame) {
         for (src_pos, c) in frame.chars() {
-            let target_pos = position + src_pos;
+            let target_pos =
+                Position::row_col(position.row + src_pos.row, position.col + src_pos.col);
             if target_pos.row >= self.size.rows || target_pos.col + c.width > self.size.cols {
                 continue;
             }
 
             if let Some((&prev_pos, prev_c)) = self.data.range(..target_pos).next_back() {
-                let end_pos = prev_pos + Position::col(prev_c.width);
-                if target_pos < end_pos {
+                let end_col = prev_pos.col + prev_c.width;
+                if target_pos.row == prev_pos.row && target_pos.col < end_col {
                     self.data.remove(&prev_pos);
                 }
             }
             for i in 0..c.width {
-                self.data.remove(&(target_pos + Position::col(i)));
+                self.data
+                    .remove(&Position::row_col(target_pos.row, target_pos.col + i));
             }
             self.data.insert(target_pos, c);
         }

@@ -258,20 +258,24 @@ fn draw_matches_model() -> noprop::TestResult {
         let mut removals = 0usize;
         let mut skipped = 0usize;
         for (src_pos, c) in src.chars() {
-            let target_pos = position + src_pos;
+            let target_pos =
+                tuinix::Position::row_col(position.row + src_pos.row, position.col + src_pos.col);
             if target_pos.row >= size.rows || target_pos.col + c.width() > size.cols {
                 skipped += 1;
                 continue;
             }
             if let Some((&prev_pos, prev_c)) = expected.range(..target_pos).next_back() {
-                let end_pos = prev_pos + tuinix::Position::col(prev_c.width());
-                if target_pos < end_pos {
+                let end_col = prev_pos.col + prev_c.width();
+                if target_pos.row == prev_pos.row && target_pos.col < end_col {
                     expected.remove(&prev_pos);
                     removals += 1;
                 }
             }
             for i in 0..c.width() {
-                expected.remove(&(target_pos + tuinix::Position::col(i)));
+                expected.remove(&tuinix::Position::row_col(
+                    target_pos.row,
+                    target_pos.col + i,
+                ));
             }
             expected.insert(target_pos, c);
         }
@@ -369,12 +373,16 @@ impl ScreenModel {
             // invalidates a wide character written to its left that spans into
             // the new character's first cell.
             if let Some((&pos, prev)) = self.cells.range(..self.cursor).next_back()
-                && self.cursor < pos + tuinix::Position::col(char_width(*prev))
+                && self.cursor.row == pos.row
+                && self.cursor.col < pos.col + char_width(*prev)
             {
                 self.cells.remove(&pos);
             }
             for i in 0..width {
-                self.cells.remove(&(self.cursor + tuinix::Position::col(i)));
+                self.cells.remove(&tuinix::Position::row_col(
+                    self.cursor.row,
+                    self.cursor.col + i,
+                ));
             }
             self.cells.insert(self.cursor, c);
             self.cursor.col += width;
