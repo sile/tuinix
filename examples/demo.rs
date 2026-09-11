@@ -32,6 +32,14 @@ const MOUSE_STYLE: tuinix::TerminalStyle = tuinix::TerminalStyle::new()
 /// briefly. 50 ms matches the default of Vim's `ttimeoutlen`.
 const ESCAPE_TIMEOUT_MS: libc::c_int = 50;
 
+/// How many bytes of unparsed input to keep before dropping the oldest ones.
+///
+/// `InputStream` does not bound its buffer, so the application decides what to
+/// do with input it cannot make sense of. A well-formed sequence is far shorter
+/// than this; the bound only stops a never-terminating sequence (for example a
+/// truncated mouse report) from growing the buffer without limit.
+const MAX_BUFFERED_BYTES: usize = 4096;
+
 // NOTE: This is an ASCII-oriented demo helper: every character is assigned a width of 1.
 // Non-ASCII characters (for example CJK or emoji) would need the caller to supply their
 // actual width, because TerminalFrame does not compute character widths itself.
@@ -177,28 +185,30 @@ fn handle_event(
     Ok(true)
 }
 
-/// Reads available input bytes into `input` and draws a reply frame for each
-/// parsed event. Returns `false` when the user presses `q` (so the caller should
-/// stop the loop); otherwise returns `true` to keep running.
-fn handle_input(
+/// Reads whatever input bytes are ready into `input`.
+///
+/// This only moves bytes into the stream; the parsed events are drained from the
+/// stream by the caller. Reading and draining are kept apart so that a timeout,
+/// which produces no bytes, can still reach the same drain path by committing a
+/// lone `ESC` and looping back.
+fn read_input(
     driver: &mut tuinix::TerminalDriver,
     input: &mut tuinix::InputStream,
-    prev_frame: &mut Option<tuinix::TerminalFrame>,
-    cursor: Option<tuinix::TerminalPosition>,
-) -> std::io::Result<bool> {
+) -> std::io::Result<()> {
     let mut raw = [0u8; 256];
     // `n @ 1..` exits the loop on a zero-length read (EOF) without a separate
     // `if n == 0` check: the range pattern only matches when at least one byte
-    // was read.
+    // was read. Each read is fed immediately so at most one chunk sits in the
+    // stream at a time.
     while let Some(n @ 1..) = would_block_as_none(driver.read(&mut raw))? {
         input.feed(&raw[..n]);
-        while let Some(event) = input.next() {
-            if !handle_event(driver, prev_frame, cursor, event)? {
-                return Ok(false);
-            }
+        // Drop the oldest bytes if the stream holds more than the demo wants to
+        // keep, so a flood of unparsable input cannot grow it without bound.
+        if input.buffered_bytes() > MAX_BUFFERED_BYTES {
+            input.discard_buffered_bytes(input.buffered_bytes() - MAX_BUFFERED_BYTES);
         }
     }
-    Ok(true)
+    Ok(())
 }
 
 fn main() -> std::io::Result<()> {
@@ -240,7 +250,7 @@ fn main() -> std::io::Result<()> {
         // the start of a sequence such as `ESC [ A` identically. When one is
         // held, wait only briefly so it is reported as Escape promptly instead of
         // sitting there until the next key arrives.
-        let timeout = if input.has_pending_escape() {
+        let timeout = if input.has_uncommitted_escape() {
             ESCAPE_TIMEOUT_MS
         } else {
             -1
@@ -269,12 +279,8 @@ fn main() -> std::io::Result<()> {
 
         if n == 0 {
             // The wait elapsed with the lone `ESC` still held, so commit it as the
-            // Escape key.
-            if let Some(event) = input.resolve_escape()
-                && !handle_event(&mut driver, &mut prev_frame, cursor, event)?
-            {
-                return Ok(());
-            }
+            // Escape key. The drain loop below picks it up on the next iteration.
+            input.commit_escape();
             continue;
         }
 
@@ -282,10 +288,17 @@ fn main() -> std::io::Result<()> {
             handle_resize(&mut driver, &mut prev_frame, cursor)?;
         }
 
-        if fds[1].revents & libc::POLLIN != 0
-            && !handle_input(&mut driver, &mut input, &mut prev_frame, cursor)?
-        {
-            return Ok(());
+        if fds[1].revents & libc::POLLIN != 0 {
+            read_input(&mut driver, &mut input)?;
+        }
+
+        // Drain every event that the bytes fed above (or the committed `ESC`)
+        // made available. This is the single place that consumes `InputStream`,
+        // so a timeout and normal input share one path.
+        while let Some(event) = input.next() {
+            if !handle_event(&mut driver, &mut prev_frame, cursor, event)? {
+                return Ok(());
+            }
         }
     }
 }
