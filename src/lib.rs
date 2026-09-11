@@ -48,6 +48,15 @@
 //!     let cursor = None;
 //!     let mut prev = None;
 //!
+//!     // Maps a non-blocking I/O result's `WouldBlock` to `Ok(None)`.
+//!     fn would_block_as_none<T>(result: std::io::Result<T>) -> std::io::Result<Option<T>> {
+//!         match result {
+//!             Ok(v) => Ok(Some(v)),
+//!             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
+//!             Err(e) => Err(e),
+//!         }
+//!     }
+//!
 //!     // NOTE: This is an ASCII-oriented demo helper: every character is assigned a width of 1.
 //!     // Non-ASCII characters (for example CJK or emoji) would need the caller to supply their
 //!     // actual width, because TerminalFrame does not compute character widths itself.
@@ -113,10 +122,7 @@
 //!
 //!         // Handle available input.
 //!         if fds[1].revents & libc::POLLIN != 0 {
-//!             while let Some(n) = tuinix::try_nonblocking(driver.read(&mut raw))? {
-//!                 if n == 0 {
-//!                     break;
-//!                 }
+//!             while let Some(n @ 1..) = would_block_as_none(driver.read(&mut raw))? {
 //!                 input.feed(&raw[..n]);
 //!                 while let Some(event) = input.next() {
 //!                     let tuinix::TerminalInput::Key(key_input) = event else {
@@ -151,7 +157,7 @@
 //!
 //! [demo.rs]: https://github.com/sile/tuinix/blob/main/examples/demo.rs
 #![warn(missing_docs)]
-use std::{io::ErrorKind, os::fd::RawFd};
+use std::os::fd::RawFd;
 
 mod frame;
 mod geometry;
@@ -175,37 +181,6 @@ pub(crate) fn set_fd_nonblocking(fd: RawFd) -> std::io::Result<()> {
             return Err(std::io::Error::last_os_error());
         }
         Ok(())
-    }
-}
-
-/// Handles the result of a non-blocking I/O operation by converting [`ErrorKind::WouldBlock`] errors to `Ok(None)`.
-///
-/// This utility function is designed to work with non-blocking I/O operations. The
-/// input and signal file descriptors of [`TerminalDriver`] are non-blocking, so it
-/// is useful when reading from them in an event loop. When a non-blocking operation returns a
-/// [`ErrorKind::WouldBlock`] error, indicating that the operation would need to block to complete, this function
-/// converts it to `Ok(None)` for easier handling in caller code.
-pub fn try_nonblocking<T>(result: std::io::Result<T>) -> std::io::Result<Option<T>> {
-    match result {
-        Err(e) if e.kind() == ErrorKind::WouldBlock => Ok(None),
-        Err(e) => Err(e),
-        Ok(v) => Ok(Some(v)),
-    }
-}
-
-/// Handles the result of an I/O operation that might be interrupted by converting [`ErrorKind::Interrupted`] errors to `Ok(None)`.
-///
-/// This utility function manages system calls that can be interrupted by signals. When an I/O operation
-/// returns an [`ErrorKind::Interrupted`] error, indicating that a system call was interrupted by a signal
-/// before it could complete, this function converts it to `Ok(None)` for easier handling in caller code.
-///
-/// This is particularly useful in scenarios where you want to retry operations that were interrupted,
-/// rather than propagating the error.
-pub fn try_uninterrupted<T>(result: std::io::Result<T>) -> std::io::Result<Option<T>> {
-    match result {
-        Err(e) if e.kind() == ErrorKind::Interrupted => Ok(None),
-        Err(e) => Err(e),
-        Ok(v) => Ok(Some(v)),
     }
 }
 

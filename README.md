@@ -65,6 +65,15 @@ fn write_text(frame: &mut tuinix::TerminalFrame, text: &str, style: tuinix::Term
     }
 }
 
+/// Maps a non-blocking I/O result's `WouldBlock` to `Ok(None)`.
+fn would_block_as_none<T>(result: std::io::Result<T>) -> std::io::Result<Option<T>> {
+    match result {
+        Ok(v) => Ok(Some(v)),
+        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
 fn main() -> std::io::Result<()> {
     // Initialize the terminal driver and query its size
     let mut driver = tuinix::TerminalDriver::new()?;
@@ -122,10 +131,7 @@ fn main() -> std::io::Result<()> {
 
         // Handle available input.
         if fds[1].revents & libc::POLLIN != 0 {
-            while let Some(n) = tuinix::try_nonblocking(driver.read(&mut raw))? {
-                if n == 0 {
-                    break;
-                }
+            while let Some(n @ 1..) = would_block_as_none(driver.read(&mut raw))? {
                 input.feed(&raw[..n]);
                 while let Some(event) = input.next() {
                     let tuinix::TerminalInput::Key(key_input) = event else {
