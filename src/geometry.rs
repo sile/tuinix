@@ -33,7 +33,7 @@ impl Size {
         position.row < self.rows && position.col < self.cols
     }
 
-    /// Converts this size into a region starting at the origin.
+    /// Returns a region that starts at the origin and has this size.
     pub const fn to_region(self) -> Region {
         Region {
             position: Position::ZERO,
@@ -112,8 +112,8 @@ impl SubAssign for Position {
 
 /// A rectangular region within a terminal, defined by a position and size.
 ///
-/// Useful for describing sub-regions or windows within the terminal display,
-/// and they can be carved out of one another with the `take_*`, `drop_*`, and
+/// Useful for describing sub-regions or windows within the terminal display;
+/// a region can be carved out of another with the `take_*`, `drop_*`, and
 /// `expand_*` methods.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Region {

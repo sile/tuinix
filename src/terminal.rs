@@ -150,6 +150,9 @@ impl TerminalDriver {
     }
 
     /// Returns the output file descriptor.
+    ///
+    /// This is the descriptor for the terminal's output side. It stays
+    /// blocking; only the input and signal descriptors are non-blocking.
     pub fn output_fd(&self) -> RawFd {
         self.output.get_ref().as_raw_fd()
     }
