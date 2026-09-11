@@ -279,9 +279,9 @@ fn main() -> std::io::Result<()> {
 
         if n == 0 {
             // The wait elapsed with the lone `ESC` still held, so commit it as the
-            // Escape key. The drain loop below picks it up on the next iteration.
+            // Escape key. `revents` stayed empty, so the blocks below are skipped
+            // and the drain loop picks the committed Escape up right away.
             input.commit_escape();
-            continue;
         }
 
         if fds[0].revents & libc::POLLIN != 0 {
