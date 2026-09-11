@@ -3,10 +3,10 @@ use crate::Position;
 /// User input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Input {
-    /// Keyboard input.
+    /// A key was pressed.
     Key(KeyInput),
 
-    /// Mouse input.
+    /// The mouse produced a button, drag, or wheel input.
     Mouse(MouseInput),
 }
 
@@ -26,37 +26,52 @@ pub struct KeyInput {
 /// Key code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum KeyCode {
-    /// Enter key.
+    /// The Enter key.
     Enter,
-    /// Escape key.
+
+    /// The Escape key.
     Escape,
-    /// Backspace key.
+
+    /// The Backspace key.
     Backspace,
-    /// Tab key.
+
+    /// The Tab key.
     Tab,
-    /// BackTab key.
+
+    /// The Tab key with Shift held (backwards tab).
     BackTab,
-    /// Delete key.
+
+    /// The Delete key.
     Delete,
-    /// Insert key.
+
+    /// The Insert key.
     Insert,
-    /// Up arrow key.
+
+    /// The Up arrow key.
     Up,
-    /// Down arrow key.
+
+    /// The Down arrow key.
     Down,
-    /// Left arrow key.
+
+    /// The Left arrow key.
     Left,
-    /// Right arrow key.
+
+    /// The Right arrow key.
     Right,
-    /// Home key.
+
+    /// The Home key.
     Home,
-    /// End key.
+
+    /// The End key.
     End,
-    /// Page Up key.
+
+    /// The Page Up key.
     PageUp,
-    /// Page Down key.
+
+    /// The Page Down key.
     PageDown,
-    /// Character key.
+
+    /// A character key.
     Char(char),
 }
 
@@ -82,23 +97,31 @@ pub struct MouseInput {
 /// Mouse input kinds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum MouseInputKind {
-    /// Left mouse button pressed.
+    /// The left button was pressed.
     LeftPress,
-    /// Left mouse button released.
+
+    /// The left button was released.
     LeftRelease,
-    /// Right mouse button pressed.
+
+    /// The right button was pressed.
     RightPress,
-    /// Right mouse button released.
+
+    /// The right button was released.
     RightRelease,
-    /// Middle mouse button pressed.
+
+    /// The middle button was pressed.
     MiddlePress,
-    /// Middle mouse button released.
+
+    /// The middle button was released.
     MiddleRelease,
-    /// Mouse moved while a button is held down (drag).
+
+    /// The mouse moved while a button was held down (drag).
     Drag,
-    /// Mouse wheel scrolled up.
+
+    /// The wheel was scrolled up.
     ScrollUp,
-    /// Mouse wheel scrolled down.
+
+    /// The wheel was scrolled down.
     ScrollDown,
 }
 
@@ -138,8 +161,7 @@ impl InputDecoder {
     ///
     /// Unparsed bytes are held until [`next()`](Self::next) can produce an
     /// [`Input`] from them. The decoder does not bound how many bytes it holds;
-    /// an
-    /// application that can receive unparsable input should watch
+    /// an application that can receive unparsable input should watch
     /// [`buffered_bytes()`](Self::buffered_bytes) and drop the excess with
     /// [`discard_buffered_bytes()`](Self::discard_buffered_bytes).
     pub fn feed(&mut self, bytes: &[u8]) {

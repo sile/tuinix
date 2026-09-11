@@ -215,7 +215,7 @@ fn main() -> std::io::Result<()> {
     let mut input = tuinix::InputDecoder::new();
     let cursor = None;
     let mut prev_frame = None;
-    driver.enable_mouse_input()?;
+    driver.enable_mouse_reporting()?;
 
     // Build an initial frame at the terminal's current dimensions.
     let mut frame: tuinix::Frame = tuinix::Frame::new(driver.size()?);

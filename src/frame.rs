@@ -84,7 +84,8 @@ impl Char {
 /// glyph, the number of terminal columns it occupies, and the style.
 ///
 /// Characters are written with [`push_char()`](Self::push_char) and advanced sequentially
-/// from an internal cursor. Use [`push_newline()`](Self::push_newline) to move to the
+/// from the position returned by [`next_push_position()`](Self::next_push_position).
+/// Use [`push_newline()`](Self::push_newline) to move to the
 /// next line and [`push_tab()`](Self::push_tab) to advance to a tab stop. A frame can be
 /// composed onto another with [`draw()`](Self::draw), and its contents inspected with
 /// [`chars()`](Self::chars).
@@ -104,7 +105,7 @@ impl Char {
 /// // A full-width (CJK) character occupies two columns.
 /// frame.push_char(tuinix::Char::new('\u{3042}', 2, tuinix::Style::new()).expect("valid character"));
 ///
-/// assert_eq!(frame.cursor().col, 2);
+/// assert_eq!(frame.next_push_position().col, 2);
 /// ```
 #[derive(Debug, Default, Clone)]
 pub struct Frame {
@@ -128,17 +129,21 @@ impl Frame {
         self.size
     }
 
-    /// Returns the current cursor position (where the next character would be written).
-    pub fn cursor(&self) -> Position {
+    /// Returns the position where the next [`push_char()`](Self::push_char) will write.
+    ///
+    /// This is unrelated to the position of the terminal's display cursor, which is an
+    /// argument of [`render()`](Self::render).
+    pub fn next_push_position(&self) -> Position {
         self.tail
     }
 
-    /// Writes a single styled character at the current cursor and advances the cursor.
+    /// Writes a single styled character at [`next_push_position()`](Self::next_push_position)
+    /// and advances that position.
     ///
     /// Returns `true` when the character was stored, and `false` when it was clipped
     /// because it did not fit within the frame: the character would extend past the right
-    /// edge of the current row, or there was no row left beneath the cursor. Clipped
-    /// characters are not stored, but the cursor still advances by the character's width,
+    /// edge of the current row, or there was no row left beneath the position. Clipped
+    /// characters are not stored, but the position still advances by the character's width,
     /// so a caller that wants to wrap the line does so itself.
     pub fn push_char(&mut self, ch: Char) -> bool {
         if self.tail.row < self.size.rows && self.tail.col + ch.width <= self.size.cols {
@@ -151,24 +156,24 @@ impl Frame {
         }
     }
 
-    /// Moves the cursor to the beginning of the next line.
+    /// Moves the write position to the beginning of the next line.
     ///
     /// Content already written is not cleared or shifted; this only moves the write
-    /// cursor.
+    /// position.
     pub fn push_newline(&mut self) {
         self.tail.row += 1;
         self.tail.col = 0;
     }
 
-    /// Moves the cursor to the next tab stop.
+    /// Moves the write position to the next tab stop.
     ///
     /// Tab stops are placed every `tab_width` columns, starting at column `0`. This only
-    /// moves the cursor: the columns that are skipped are left blank and need not be
-    /// written explicitly (as with [`push_newline()`](Self::push_newline), existing content
-    /// is neither cleared nor shifted).
+    /// moves the write position: the columns that are skipped are left blank and need not
+    /// be written explicitly (as with [`push_newline()`](Self::push_newline), existing
+    /// content is neither cleared nor shifted).
     ///
-    /// As with [`push_char()`](Self::push_char), the cursor may be advanced past the right
-    /// edge of the frame; use [`push_newline()`](Self::push_newline) to wrap.
+    /// As with [`push_char()`](Self::push_char), the write position may be advanced past
+    /// the right edge of the frame; use [`push_newline()`](Self::push_newline) to wrap.
     ///
     /// # Panics
     ///
@@ -348,15 +353,15 @@ mod tests {
     }
 
     #[test]
-    fn cursor_advances_by_width() {
+    fn next_push_position_advances_by_width() {
         let size = Size::rows_cols(2, 4);
         let mut frame = Frame::new(size);
         frame.push_char(ch('a', 1));
         frame.push_char(ch('b', 1));
         frame.push_char(ch('\u{3042}', 2));
-        assert_eq!(frame.cursor(), Position::row_col(0, 4));
+        assert_eq!(frame.next_push_position(), Position::row_col(0, 4));
         frame.push_newline();
-        assert_eq!(frame.cursor(), Position::row_col(1, 0));
+        assert_eq!(frame.next_push_position(), Position::row_col(1, 0));
     }
 
     #[test]
@@ -367,16 +372,16 @@ mod tests {
         // From column 1, advance to the next stop (8).
         frame.push_char(ch('a', 1));
         frame.push_tab(8);
-        assert_eq!(frame.cursor(), Position::row_col(0, 8));
+        assert_eq!(frame.next_push_position(), Position::row_col(0, 8));
 
         // Already at a stop: advance one full stop.
         frame.push_tab(8);
-        assert_eq!(frame.cursor(), Position::row_col(0, 16));
+        assert_eq!(frame.next_push_position(), Position::row_col(0, 16));
 
         // A non-aligned column advances to the next stop.
         frame.push_char(ch('b', 1)); // col 17
         frame.push_tab(8);
-        assert_eq!(frame.cursor(), Position::row_col(0, 24));
+        assert_eq!(frame.next_push_position(), Position::row_col(0, 24));
     }
 
     #[test]
@@ -414,10 +419,10 @@ mod tests {
         assert!(frame.push_char(ch('a', 1)));
         assert!(frame.push_char(ch('b', 1)));
         assert!(frame.push_char(ch('c', 1)));
-        // The row is full; the next cell is clipped but the cursor still advances.
+        // The row is full; the next cell is clipped but the write position still advances.
         assert!(!frame.push_char(ch('d', 1)));
 
-        assert_eq!(frame.cursor(), Position::row_col(0, 4));
+        assert_eq!(frame.next_push_position(), Position::row_col(0, 4));
         let stored: Vec<_> = frame
             .chars()
             .filter(|(_, c)| *c != Char::BLANK)

@@ -2,9 +2,9 @@
 //!
 //! The properties covered here use only the public API:
 //!
-//! - The cursor after `push_char` / `push_newline` matches a model: a
-//!   character advances the cursor by its width, and `\n` resets the column,
-//!   regardless of clipping.
+//! - The write position after `push_char` / `push_newline` matches a model:
+//!   a character advances the position by its width, and `\n` resets the
+//!   column, regardless of clipping.
 //! - `draw` matches a model that replays the overlap handling: a partially
 //!   overlapped character is removed, the cells a drawn character covers are
 //!   cleared, and characters drawn outside the frame are ignored.
@@ -118,7 +118,7 @@ fn sample_op(ctx: &mut noprop::TestCaseContext) -> Op {
     }
 }
 
-/// A cursor-position model for `Op`: a character advances the column by its
+/// A write-position model for `Op`: a character advances the column by its
 /// width, and `\n` resets the column, regardless of clipping.
 #[derive(Debug)]
 struct CursorModel {
@@ -144,8 +144,8 @@ impl CursorModel {
     }
 }
 
-/// The cursor must follow the model after applying a random sequence of
-/// character writes and newlines.
+/// The write position must follow the model after applying a random sequence
+/// of character writes and newlines.
 #[test]
 fn push_cursor_matches_model() -> noprop::TestResult {
     let observed_char = Cell::new(false);
@@ -185,9 +185,9 @@ fn push_cursor_matches_model() -> noprop::TestResult {
             }
         }
         assert_eq!(
-            frame.cursor(),
+            frame.next_push_position(),
             tuinix::Position::row_col(model.row, model.col),
-            "cursor mismatch for {ops:?}"
+            "write position mismatch for {ops:?}"
         );
         if ops.iter().any(|op| matches!(op, Op::Char(_, w) if *w > 0)) {
             observed_char.set(true);

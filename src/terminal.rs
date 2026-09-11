@@ -163,12 +163,12 @@ impl TerminalDriver {
         self.signal.as_raw_fd()
     }
 
-    /// Enables mouse input reporting in the terminal.
+    /// Enables mouse reporting in the terminal.
     ///
     /// Mouse input will be reported as raw bytes, which the
     /// application feeds into [`InputDecoder::feed()`](crate::InputDecoder::feed)
     /// so they parse as [`Input::Mouse`](crate::Input::Mouse) values.
-    pub fn enable_mouse_input(&mut self) -> io::Result<()> {
+    pub fn enable_mouse_reporting(&mut self) -> io::Result<()> {
         // Enable mouse reporting in SGR mode (more reliable than X10/X11 mode)
         write!(self.output, "\x1b[?1000h")?; // Enable basic mouse reporting
         write!(self.output, "\x1b[?1002h")?; // Enable button event tracking and motion
@@ -178,11 +178,11 @@ impl TerminalDriver {
         Ok(())
     }
 
-    /// Disables mouse input reporting in the terminal.
+    /// Disables mouse reporting in the terminal.
     ///
-    /// This method disables all mouse event reporting that was previously enabled
-    /// with [`TerminalDriver::enable_mouse_input()`].
-    pub fn disable_mouse_input(&mut self) -> io::Result<()> {
+    /// This method disables all mouse reporting that was previously enabled with
+    /// [`TerminalDriver::enable_mouse_reporting()`].
+    pub fn disable_mouse_reporting(&mut self) -> io::Result<()> {
         // Disable mouse reporting (reverse order)
         write!(self.output, "\x1b[?1006l")?; // Disable SGR extended coordinate reporting
         write!(self.output, "\x1b[?1015l")?; // Disable urxvt extended coordinate reporting
@@ -310,7 +310,7 @@ impl Write for TerminalDriver {
 
 impl Drop for TerminalDriver {
     fn drop(&mut self) {
-        let _ = self.disable_mouse_input();
+        let _ = self.disable_mouse_reporting();
         let _ = self.disable_alternate_screen();
         let _ = self.disable_raw_mode();
         let _ = self.show_cursor();
