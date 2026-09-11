@@ -1,4 +1,4 @@
-//! Property-based tests for `TerminalStyle`, driven by noprop.
+//! Property-based tests for `Style`, driven by noprop.
 //!
 //! The properties covered here use only the public API:
 //!
@@ -13,8 +13,8 @@ use helpers::run;
 
 /// Draws a color biased toward the `0` / `128` / `255` components, so that the
 /// boundaries of the decimal rendering are exercised.
-fn sample_color(ctx: &mut noprop::TestCaseContext) -> tuinix::TerminalColor {
-    tuinix::TerminalColor::new(
+fn sample_color(ctx: &mut noprop::TestCaseContext) -> tuinix::Color {
+    tuinix::Color::new(
         sample_color_component(ctx),
         sample_color_component(ctx),
         sample_color_component(ctx),
@@ -28,21 +28,21 @@ fn sample_color_component(ctx: &mut noprop::TestCaseContext) -> u8 {
     })
 }
 
-/// Draws a random `TerminalStyle`, including the reset style.
-fn sample_style(ctx: &mut noprop::TestCaseContext) -> tuinix::TerminalStyle {
-    const SETTERS: [fn(tuinix::TerminalStyle) -> tuinix::TerminalStyle; 7] = [
-        tuinix::TerminalStyle::bold,
-        tuinix::TerminalStyle::italic,
-        tuinix::TerminalStyle::underline,
-        tuinix::TerminalStyle::blink,
-        tuinix::TerminalStyle::reverse,
-        tuinix::TerminalStyle::dim,
-        tuinix::TerminalStyle::strikethrough,
+/// Draws a random `Style`, including the reset style.
+fn sample_style(ctx: &mut noprop::TestCaseContext) -> tuinix::Style {
+    const SETTERS: [fn(tuinix::Style) -> tuinix::Style; 7] = [
+        tuinix::Style::bold,
+        tuinix::Style::italic,
+        tuinix::Style::underline,
+        tuinix::Style::blink,
+        tuinix::Style::reverse,
+        tuinix::Style::dim,
+        tuinix::Style::strikethrough,
     ];
     if noprop::sample_weighted_index(ctx, &[1, 9]) == 0 {
-        return tuinix::TerminalStyle::new();
+        return tuinix::Style::new();
     }
-    let mut style = tuinix::TerminalStyle::new();
+    let mut style = tuinix::Style::new();
     for setter in SETTERS {
         if noprop::sample_bool(ctx) {
             style = setter(style);
@@ -57,7 +57,7 @@ fn sample_style(ctx: &mut noprop::TestCaseContext) -> tuinix::TerminalStyle {
     style
 }
 
-/// Every `TerminalStyle` must round-trip through its ANSI escape sequence
+/// Every `Style` must round-trip through its ANSI escape sequence
 /// representation.
 #[test]
 fn style_roundtrip_matches_display() -> noprop::TestResult {
@@ -69,10 +69,10 @@ fn style_roundtrip_matches_display() -> noprop::TestResult {
         let style = sample_style(ctx);
         let text = style.to_string();
         let parsed = text
-            .parse::<tuinix::TerminalStyle>()
+            .parse::<tuinix::Style>()
             .unwrap_or_else(|e| panic!("{style:?} emitted {text:?}, which fails to parse: {e}"));
         assert_eq!(parsed, style, "style round-trip mismatch");
-        if style == tuinix::TerminalStyle::new() {
+        if style == tuinix::Style::new() {
             observed_default.set(true);
         } else {
             observed_styled.set(true);

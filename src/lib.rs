@@ -15,9 +15,9 @@
 //! The library separates the *I/O* of a terminal from the *pure data* that an
 //! application works with.
 //!
-//! - [`InputStream`] is a pure input parser. It accumulates raw bytes and yields
-//!   parsed [`TerminalInput`] values, but it never performs I/O itself.
-//! - [`TerminalFrame`] is a pure frame buffer. It renders itself into a byte
+//! - [`InputDecoder`] is a pure input parser. It accumulates raw bytes and yields
+//!   parsed [`Input`] values, but it never performs I/O itself.
+//! - [`Frame`] is a pure frame buffer. It renders itself into a byte
 //!   buffer, comparing against a previous frame to redraw only what changed, and
 //!   it never performs I/O itself.
 //! - [`TerminalDriver`] owns the file descriptors and terminal modes. It is
@@ -27,10 +27,10 @@
 //!   bytes back to it.
 //!
 //! The application is responsible for driving the loop: read raw bytes from the
-//! driver, feed them into [`InputStream::feed()`], pull parsed
-//! [`TerminalInput`] values out with [`InputStream::next()`], build a
-//! [`TerminalFrame`], render it into a byte buffer with
-//! [`TerminalFrame::render()`], and write that buffer to the driver.
+//! driver, feed them into [`InputDecoder::feed()`], pull parsed
+//! [`Input`] values out with [`InputDecoder::next()`], build a
+//! [`Frame`], render it into a byte buffer with
+//! [`Frame::render()`], and write that buffer to the driver.
 //!
 //! ## Basic Example
 //!
@@ -44,31 +44,40 @@
 //!     // Initialize terminal driver and query its size
 //!     let mut driver = tuinix::TerminalDriver::new()?;
 //!     let mut size = driver.size()?;
-//!     let mut input = tuinix::InputStream::new();
+//!     let mut input = tuinix::InputDecoder::new();
 //!     let cursor = None;
 //!     let mut prev = None;
 //!
+//!     // Maps a non-blocking I/O result's `WouldBlock` to `Ok(None)`.
+//!     fn would_block_as_none<T>(result: std::io::Result<T>) -> std::io::Result<Option<T>> {
+//!         match result {
+//!             Ok(v) => Ok(Some(v)),
+//!             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
+//!             Err(e) => Err(e),
+//!         }
+//!     }
+//!
 //!     // NOTE: This is an ASCII-oriented demo helper: every character is assigned a width of 1.
 //!     // Non-ASCII characters (for example CJK or emoji) would need the caller to supply their
-//!     // actual width, because TerminalFrame does not compute character widths itself.
-//!     fn write_text(frame: &mut tuinix::TerminalFrame, text: &str, style: tuinix::TerminalStyle) {
+//!     // actual width, because Frame does not compute character widths itself.
+//!     fn write_text(frame: &mut tuinix::Frame, text: &str, style: tuinix::Style) {
 //!         for c in text.chars() {
 //!             match c {
 //!                 '\n' => frame.push_newline(),
 //!                 '\t' => frame.push_tab(8),
 //!                 c if c.is_control() => {}
 //!                 c => {
-//!                     frame.push_char(tuinix::TerminalChar::new(c, 1, style).expect("valid char"));
+//!                     frame.push_char(tuinix::Char::new(c, 1, style).expect("valid char"));
 //!                 }
 //!             }
 //!         }
 //!     }
 //!
 //!     // Add styled content to a frame
-//!     let title_style = tuinix::TerminalStyle::new().bold().fg_color(tuinix::TerminalColor::GREEN);
-//!     let mut frame = tuinix::TerminalFrame::new(size);
+//!     let title_style = tuinix::Style::new().bold().fg_color(tuinix::Color::GREEN);
+//!     let mut frame = tuinix::Frame::new(size);
 //!     write_text(&mut frame, "Welcome to tuinix!", title_style);
-//!     write_text(&mut frame, "\nPress any key ('q' to quit)", tuinix::TerminalStyle::new());
+//!     write_text(&mut frame, "\nPress any key ('q' to quit)", tuinix::Style::new());
 //!
 //!     // Render the frame to a byte buffer, then write it to the terminal.
 //!     let out = frame.render(prev.as_ref(), cursor);
@@ -101,9 +110,9 @@
 //!             let new_size = driver.size()?;
 //!             if new_size != size {
 //!                 size = new_size;
-//!                 let mut frame = tuinix::TerminalFrame::new(size);
+//!                 let mut frame = tuinix::Frame::new(size);
 //!                 write_text(&mut frame, "Welcome to tuinix!", title_style);
-//!                 write_text(&mut frame, "\nPress any key ('q' to quit)", tuinix::TerminalStyle::new());
+//!                 write_text(&mut frame, "\nPress any key ('q' to quit)", tuinix::Style::new());
 //!                 let out = frame.render(prev.as_ref(), cursor);
 //!                 driver.write_all(&out)?;
 //!                 driver.flush()?;
@@ -113,20 +122,17 @@
 //!
 //!         // Handle available input.
 //!         if fds[1].revents & libc::POLLIN != 0 {
-//!             while let Some(n) = tuinix::try_nonblocking(driver.read(&mut raw))? {
-//!                 if n == 0 {
-//!                     break;
-//!                 }
+//!             while let Some(n @ 1..) = would_block_as_none(driver.read(&mut raw))? {
 //!                 input.feed(&raw[..n]);
 //!                 while let Some(event) = input.next() {
-//!                     let tuinix::TerminalInput::Key(key_input) = event else {
+//!                     let tuinix::Input::Key(key_input) = event else {
 //!                         continue;  // Skip mouse events
 //!                     };
 //!
 //!                     // Display the input
-//!                     let mut frame = tuinix::TerminalFrame::new(size);
-//!                     write_text(&mut frame, &format!("Key pressed: {:?}\n", key_input), tuinix::TerminalStyle::new());
-//!                     write_text(&mut frame, "\nPress any key ('q' to quit)\n", tuinix::TerminalStyle::new());
+//!                     let mut frame = tuinix::Frame::new(size);
+//!                     write_text(&mut frame, &format!("Key pressed: {:?}\n", key_input), tuinix::Style::new());
+//!                     write_text(&mut frame, "\nPress any key ('q' to quit)\n", tuinix::Style::new());
 //!                     let out = frame.render(prev.as_ref(), cursor);
 //!                     driver.write_all(&out)?;
 //!                     driver.flush()?;
@@ -142,16 +148,16 @@
 //! user pressed the Escape key or started a sequence such as `ESC [ A`. Waiting
 //! for more input reports Escape only when the next key arrives, and the two
 //! bytes then read as one Alt+key sequence. The fix is to poll with a short
-//! timeout while [`InputStream::has_uncommitted_escape()`] is `true`, and to
-//! commit the byte with [`InputStream::commit_escape()`] once the wait has elapsed. The
-//! committed Escape key is then returned by [`InputStream::next()`]. Around
+//! timeout while [`InputDecoder::has_uncommitted_escape()`] is `true`, and to
+//! commit the byte with [`InputDecoder::commit_escape()`] once the wait has elapsed. The
+//! committed Escape key is then returned by [`InputDecoder::next()`]. Around
 //! 50 ms, the default of Vim's `ttimeoutlen`, is the usual choice.
 //!
 //! For a full example of an event loop driven with `poll`, and how to handle keyboard, mouse, and resize events together, see the [demo.rs] example.
 //!
 //! [demo.rs]: https://github.com/sile/tuinix/blob/main/examples/demo.rs
 #![warn(missing_docs)]
-use std::{io::ErrorKind, os::fd::RawFd};
+use std::os::fd::RawFd;
 
 mod frame;
 mod geometry;
@@ -159,10 +165,10 @@ mod input;
 mod style;
 mod terminal;
 
-pub use frame::{TerminalChar, TerminalFrame};
-pub use geometry::{TerminalPosition, TerminalRegion, TerminalSize};
-pub use input::{InputStream, KeyCode, KeyInput, MouseEvent, MouseInput, TerminalInput};
-pub use style::{TerminalColor, TerminalStyle};
+pub use frame::{Char, Frame};
+pub use geometry::{Position, Region, Size};
+pub use input::{Input, InputDecoder, KeyCode, KeyInput, MouseInput, MouseInputKind};
+pub use style::{Color, Style};
 pub use terminal::TerminalDriver;
 
 pub(crate) fn set_fd_nonblocking(fd: RawFd) -> std::io::Result<()> {
@@ -175,37 +181,6 @@ pub(crate) fn set_fd_nonblocking(fd: RawFd) -> std::io::Result<()> {
             return Err(std::io::Error::last_os_error());
         }
         Ok(())
-    }
-}
-
-/// Handles the result of a non-blocking I/O operation by converting [`ErrorKind::WouldBlock`] errors to `Ok(None)`.
-///
-/// This utility function is designed to work with non-blocking I/O operations. The
-/// input and signal file descriptors of [`TerminalDriver`] are non-blocking, so it
-/// is useful when reading from them in an event loop. When a non-blocking operation returns a
-/// [`ErrorKind::WouldBlock`] error, indicating that the operation would need to block to complete, this function
-/// converts it to `Ok(None)` for easier handling in caller code.
-pub fn try_nonblocking<T>(result: std::io::Result<T>) -> std::io::Result<Option<T>> {
-    match result {
-        Err(e) if e.kind() == ErrorKind::WouldBlock => Ok(None),
-        Err(e) => Err(e),
-        Ok(v) => Ok(Some(v)),
-    }
-}
-
-/// Handles the result of an I/O operation that might be interrupted by converting [`ErrorKind::Interrupted`] errors to `Ok(None)`.
-///
-/// This utility function manages system calls that can be interrupted by signals. When an I/O operation
-/// returns an [`ErrorKind::Interrupted`] error, indicating that a system call was interrupted by a signal
-/// before it could complete, this function converts it to `Ok(None)` for easier handling in caller code.
-///
-/// This is particularly useful in scenarios where you want to retry operations that were interrupted,
-/// rather than propagating the error.
-pub fn try_uninterrupted<T>(result: std::io::Result<T>) -> std::io::Result<Option<T>> {
-    match result {
-        Err(e) if e.kind() == ErrorKind::Interrupted => Ok(None),
-        Err(e) => Err(e),
-        Ok(v) => Ok(Some(v)),
     }
 }
 

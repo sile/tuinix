@@ -5,66 +5,68 @@ use std::{
 
 /// Styling options for terminal text output.
 ///
-/// [`TerminalStyle`] allows you to modify the appearance of text in terminal output
+/// [`Style`] allows you to modify the appearance of text in terminal output
 /// using ANSI escape sequences. It supports standard terminal formatting options
 /// including bold, italic, underline, colors, and more.
 ///
 /// # Examples
 ///
 /// ```
-/// // Create a basic terminal frame
-/// let size = tuinix::TerminalSize::rows_cols(10, 40);
-/// let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(size);
+/// // Create a basic frame
+/// let size = tuinix::Size { rows: 10, cols: 40 };
+/// let mut frame = tuinix::Frame::new(size);
 ///
 /// // Create a simple green, bold text style
-/// let style = tuinix::TerminalStyle::new()
+/// let style = tuinix::Style::new()
 ///     .bold()
-///     .fg_color(tuinix::TerminalColor::GREEN);
+///     .fg_color(tuinix::Color::GREEN);
 ///
 /// // Write styled text to the frame
 /// for c in "This text is bold and green".chars() {
-///     frame.push_char(tuinix::TerminalChar::new(c, 1, style).expect("valid char"));
+///     frame.push_char(tuinix::Char::new(c, 1, style).expect("valid char"));
 /// }
 ///
 /// // Create another style for highlighting
-/// let highlight = tuinix::TerminalStyle::new()
-///     .bg_color(tuinix::TerminalColor::YELLOW)
-///     .fg_color(tuinix::TerminalColor::BLACK);
+/// let highlight = tuinix::Style::new()
+///     .bg_color(tuinix::Color::YELLOW)
+///     .fg_color(tuinix::Color::BLACK);
 ///
 /// for c in "Important information".chars() {
-///     frame.push_char(tuinix::TerminalChar::new(c, 1, highlight).expect("valid char"));
+///     frame.push_char(tuinix::Char::new(c, 1, highlight).expect("valid char"));
 /// }
 /// ```
 ///
 /// # Style Application
 ///
-/// When applying styles, each new style overrides any previous style completely.
-/// This means that applying a style like `underline()` after `bold()` won't result
-/// in text that is both bold and underlined - only the underline will be applied.
+/// A [`Frame`](crate::Frame) stores a complete [`Style`] for each character, and
+/// rendering switches styles by emitting the full style rather than a patch. A
+/// style therefore overrides whatever came before it completely: applying
+/// `underline()` after `bold()` does not produce bold and underlined text, only
+/// underlined text.
 ///
 /// ```
-/// let size = tuinix::TerminalSize::rows_cols(24, 80);
-/// let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(size);
+/// let size = tuinix::Size { rows: 24, cols: 80 };
+/// let mut frame = tuinix::Frame::new(size);
 ///
 /// // This will produce text that is ONLY underlined, not bold+underlined
-/// let bold = tuinix::TerminalStyle::new().bold();
-/// let underline = tuinix::TerminalStyle::new().underline();
+/// let bold = tuinix::Style::new().bold();
+/// let underline = tuinix::Style::new().underline();
 ///
 /// for c in "This is bold.".chars() {
-///     frame.push_char(tuinix::TerminalChar::new(c, 1, bold).expect("valid char"));
+///     frame.push_char(tuinix::Char::new(c, 1, bold).expect("valid char"));
 /// }
 /// for c in "This is only underlined (not bold).".chars() {
-///     frame.push_char(tuinix::TerminalChar::new(c, 1, underline).expect("valid char"));
+///     frame.push_char(tuinix::Char::new(c, 1, underline).expect("valid char"));
 /// }
 ///
-/// // To apply multiple styles, combine them in a single TerminalStyle instance
-/// let bold_and_underlined = tuinix::TerminalStyle::new().bold().underline();
+/// // To apply multiple styles, combine them in a single Style instance
+/// let bold_and_underlined = tuinix::Style::new().bold().underline();
 /// for c in "This is both bold and underlined.".chars() {
-///     frame.push_char(tuinix::TerminalChar::new(c, 1, bold_and_underlined).expect("valid char"));
+///     frame.push_char(tuinix::Char::new(c, 1, bold_and_underlined).expect("valid char"));
 /// }
 /// ```
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct TerminalStyle {
+pub struct Style {
     /// Whether the text should be displayed in bold.
     pub bold: bool,
 
@@ -87,15 +89,17 @@ pub struct TerminalStyle {
     pub strikethrough: bool,
 
     /// The foreground (text) color, if specified.
-    pub fg_color: Option<TerminalColor>,
+    pub fg_color: Option<Color>,
 
     /// The background color, if specified.
-    pub bg_color: Option<TerminalColor>,
+    pub bg_color: Option<Color>,
 }
 
-impl TerminalStyle {
-    /// An alias of [`TerminalStyle::new()`] that
-    /// can be used to reset all terminal styling.
+impl Style {
+    /// A style with every formatting option disabled.
+    ///
+    /// It is equal to [`Style::new()`] and can be used to reset all terminal
+    /// styling.
     pub const RESET: Self = Self {
         bold: false,
         italic: false,
@@ -108,19 +112,24 @@ impl TerminalStyle {
         bg_color: None,
     };
 
-    /// Makes a new terminal style with all formatting options disabled.
+    /// Makes a new style with all formatting options disabled.
     ///
-    /// This returns a style instance equivalent to [`TerminalStyle::RESET`],
-    /// which can be used as a starting point to build more complex styles
-    /// through the builder methods.
+    /// The result is equal to [`Style::RESET`] and can be used as a starting
+    /// point to build more complex styles through the builder methods.
     ///
     /// # Examples
     ///
     /// ```
+    /// let size = tuinix::Size { rows: 1, cols: 5 };
+    /// let mut frame = tuinix::Frame::new(size);
     ///
-    /// let style = tuinix::TerminalStyle::new()
+    /// let style = tuinix::Style::new()
     ///     .bold()
-    ///     .fg_color(tuinix::TerminalColor::GREEN);
+    ///     .fg_color(tuinix::Color::GREEN);
+    ///
+    /// for c in "hello".chars() {
+    ///     frame.push_char(tuinix::Char::new(c, 1, style).expect("valid char"));
+    /// }
     /// ```
     pub const fn new() -> Self {
         Self::RESET
@@ -169,19 +178,19 @@ impl TerminalStyle {
     }
 
     /// Sets the foreground (text) color.
-    pub const fn fg_color(mut self, color: TerminalColor) -> Self {
+    pub const fn fg_color(mut self, color: Color) -> Self {
         self.fg_color = Some(color);
         self
     }
 
     /// Sets the background color behind the text.
-    pub const fn bg_color(mut self, color: TerminalColor) -> Self {
+    pub const fn bg_color(mut self, color: Color) -> Self {
         self.bg_color = Some(color);
         self
     }
 }
 
-impl Display for TerminalStyle {
+impl Display for Style {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "\x1b[0")?;
 
@@ -217,7 +226,7 @@ impl Display for TerminalStyle {
     }
 }
 
-impl FromStr for TerminalStyle {
+impl FromStr for Style {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -265,7 +274,7 @@ impl FromStr for TerminalStyle {
             let r = r.parse().map_err(|_| error())?;
             let g = g.parse().map_err(|_| error())?;
             let b = b.parse().map_err(|_| error())?;
-            this.fg_color = Some(TerminalColor::new(r, g, b));
+            this.fg_color = Some(Color::new(r, g, b));
             s = s0;
         }
         if let Some(s0) = s.strip_prefix(";48;2;") {
@@ -279,7 +288,7 @@ impl FromStr for TerminalStyle {
             let r = r.parse().map_err(|_| error())?;
             let g = g.parse().map_err(|_| error())?;
             let b = b.parse().map_err(|_| error())?;
-            this.bg_color = Some(TerminalColor::new(r, g, b));
+            this.bg_color = Some(Color::new(r, g, b));
             s = s0;
         }
 
@@ -290,9 +299,9 @@ impl FromStr for TerminalStyle {
     }
 }
 
-/// Terminal color (RGB).
+/// A color (RGB).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct TerminalColor {
+pub struct Color {
     /// Red component.
     pub r: u8,
 
@@ -303,7 +312,7 @@ pub struct TerminalColor {
     pub b: u8,
 }
 
-impl TerminalColor {
+impl Color {
     /// ANSI black color (RGB: 0, 0, 0).
     pub const BLACK: Self = Self::new(0, 0, 0);
 
@@ -352,7 +361,7 @@ impl TerminalColor {
     /// ANSI bright white color (RGB: 255, 255, 255).
     pub const BRIGHT_WHITE: Self = Self::new(255, 255, 255);
 
-    /// Makes a new [`TerminalColor`] instance.
+    /// Makes a new [`Color`] instance.
     pub const fn new(r: u8, g: u8, b: u8) -> Self {
         Self { r, g, b }
     }
@@ -364,14 +373,14 @@ mod tests {
 
     #[test]
     fn parse_style() {
-        let style: TerminalStyle = "\x1b[0;1;38;2;0;255;0m".parse().expect("invalid");
+        let style: Style = "\x1b[0;1;38;2;0;255;0m".parse().expect("invalid");
         assert!(style.bold);
-        assert_eq!(style.fg_color, Some(TerminalColor::GREEN));
+        assert_eq!(style.fg_color, Some(Color::GREEN));
 
-        let style: TerminalStyle = "\x1b[0;38;2;0;0;0;48;2;255;255;0m"
+        let style: Style = "\x1b[0;38;2;0;0;0;48;2;255;255;0m"
             .parse()
             .expect("invalid");
-        assert_eq!(style.fg_color, Some(TerminalColor::BLACK));
-        assert_eq!(style.bg_color, Some(TerminalColor::YELLOW));
+        assert_eq!(style.fg_color, Some(Color::BLACK));
+        assert_eq!(style.bg_color, Some(Color::YELLOW));
     }
 }

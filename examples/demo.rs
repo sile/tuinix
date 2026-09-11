@@ -2,12 +2,12 @@
 //!
 //! This demo drives a [`TerminalDriver`](tuinix::TerminalDriver) from a
 //! `libc::poll` event loop, feeding raw bytes into an
-//! [`InputStream`](tuinix::InputStream) and drawing frames with
-//! [`TerminalFrame::render`](tuinix::TerminalFrame::render). It shows:
+//! [`InputDecoder`](tuinix::InputDecoder) and drawing frames with
+//! [`Frame::render`](tuinix::Frame::render). It shows:
 //!
 //! * entering and leaving raw mode (via [`TerminalDriver`](tuinix::TerminalDriver)),
 //! * reading raw terminal bytes and turning them into
-//!   [`TerminalInput`](tuinix::TerminalInput) events,
+//!   [`Input`](tuinix::Input) events,
 //! * handling keyboard input (quitting on `q`),
 //! * reporting a lone Escape key without waiting for the next key,
 //! * reporting mouse events,
@@ -17,12 +17,10 @@
 
 use std::io::{Read, Write};
 
-const TITLE_STYLE: tuinix::TerminalStyle = tuinix::TerminalStyle::new().bold();
-const INFO_STYLE: tuinix::TerminalStyle = tuinix::TerminalStyle::new().underline();
-const BODY_STYLE: tuinix::TerminalStyle = tuinix::TerminalStyle::new();
-const MOUSE_STYLE: tuinix::TerminalStyle = tuinix::TerminalStyle::new()
-    .bold()
-    .fg_color(tuinix::TerminalColor::GREEN);
+const TITLE_STYLE: tuinix::Style = tuinix::Style::new().bold();
+const INFO_STYLE: tuinix::Style = tuinix::Style::new().underline();
+const BODY_STYLE: tuinix::Style = tuinix::Style::new();
+const MOUSE_STYLE: tuinix::Style = tuinix::Style::new().bold().fg_color(tuinix::Color::GREEN);
 
 /// How long to wait for the rest of an escape sequence before a lone `ESC` byte
 /// is treated as the Escape key.
@@ -34,7 +32,7 @@ const ESCAPE_TIMEOUT_MS: libc::c_int = 50;
 
 /// How many bytes of unparsed input to keep before dropping the oldest ones.
 ///
-/// `InputStream` does not bound its buffer, so the application decides what to
+/// `InputDecoder` does not bound its buffer, so the application decides what to
 /// do with input it cannot make sense of. A well-formed sequence is far shorter
 /// than this; the bound only stops a never-terminating sequence (for example a
 /// truncated mouse report) from growing the buffer without limit.
@@ -42,15 +40,15 @@ const MAX_BUFFERED_BYTES: usize = 4096;
 
 // NOTE: This is an ASCII-oriented demo helper: every character is assigned a width of 1.
 // Non-ASCII characters (for example CJK or emoji) would need the caller to supply their
-// actual width, because TerminalFrame does not compute character widths itself.
-fn write_text(frame: &mut tuinix::TerminalFrame, text: &str, style: tuinix::TerminalStyle) {
+// actual width, because Frame does not compute character widths itself.
+fn write_text(frame: &mut tuinix::Frame, text: &str, style: tuinix::Style) {
     for c in text.chars() {
         match c {
             '\n' => frame.push_newline(),
             '\t' => frame.push_tab(8),
             c if c.is_control() => {}
             c => {
-                frame.push_char(tuinix::TerminalChar::new(c, 1, style).expect("valid char"));
+                frame.push_char(tuinix::Char::new(c, 1, style).expect("valid char"));
             }
         }
     }
@@ -69,7 +67,7 @@ fn would_block_as_none<T>(result: std::io::Result<T>) -> std::io::Result<Option<
     }
 }
 
-fn draw_header(frame: &mut tuinix::TerminalFrame) {
+fn draw_header(frame: &mut tuinix::Frame) {
     write_text(frame, "tuinix Demo\n", TITLE_STYLE);
     write_text(frame, "\nInstructions:\n", INFO_STYLE);
     write_text(
@@ -92,8 +90,8 @@ fn draw_header(frame: &mut tuinix::TerminalFrame) {
 
 fn handle_resize(
     driver: &mut tuinix::TerminalDriver,
-    prev_frame: &mut Option<tuinix::TerminalFrame>,
-    cursor: Option<tuinix::TerminalPosition>,
+    prev_frame: &mut Option<tuinix::Frame>,
+    cursor: Option<tuinix::Position>,
 ) -> std::io::Result<()> {
     let new_size = driver.size()?;
     // Only redraw if the dimensions actually changed. If the previously rendered
@@ -101,7 +99,7 @@ fn handle_resize(
     if prev_frame.as_ref().is_some_and(|f| f.size() == new_size) {
         return Ok(());
     }
-    let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(new_size);
+    let mut frame = tuinix::Frame::new(new_size);
     draw_header(&mut frame);
     write_text(
         &mut frame,
@@ -123,17 +121,17 @@ fn handle_resize(
 /// keep running.
 fn handle_event(
     driver: &mut tuinix::TerminalDriver,
-    prev_frame: &mut Option<tuinix::TerminalFrame>,
-    cursor: Option<tuinix::TerminalPosition>,
-    event: tuinix::TerminalInput,
+    prev_frame: &mut Option<tuinix::Frame>,
+    cursor: Option<tuinix::Position>,
+    event: tuinix::Input,
 ) -> std::io::Result<bool> {
     // The frame is built at the terminal's current dimensions, so a resize is
     // picked up on whichever event is handled first afterwards.
-    let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(driver.size()?);
+    let mut frame = tuinix::Frame::new(driver.size()?);
     draw_header(&mut frame);
 
     match event {
-        tuinix::TerminalInput::Key(key_input) => {
+        tuinix::Input::Key(key_input) => {
             // Quit on 'q'.
             if let tuinix::KeyCode::Char('q') = key_input.code {
                 return Ok(false);
@@ -144,11 +142,11 @@ fn handle_event(
                 INFO_STYLE,
             );
         }
-        tuinix::TerminalInput::Mouse(mouse_input) => {
-            write_text(&mut frame, "\nMouse Event Details:\n", MOUSE_STYLE);
+        tuinix::Input::Mouse(mouse_input) => {
+            write_text(&mut frame, "\nMouse Input Details:\n", MOUSE_STYLE);
             write_text(
                 &mut frame,
-                &format!("  Event: {:?}\n", mouse_input.event),
+                &format!("  Kind: {:?}\n", mouse_input.kind),
                 BODY_STYLE,
             );
             write_text(
@@ -187,22 +185,22 @@ fn handle_event(
 
 /// Reads whatever input bytes are ready into `input`.
 ///
-/// This only moves bytes into the stream; the parsed events are drained from the
-/// stream by the caller. Reading and draining are kept apart so that a timeout,
+/// This only moves bytes into `input`; the parsed inputs are drained from it by
+/// the caller. Reading and draining are kept apart so that a timeout,
 /// which produces no bytes, can still reach the same drain path by committing a
 /// lone `ESC` and looping back.
 fn read_input(
     driver: &mut tuinix::TerminalDriver,
-    input: &mut tuinix::InputStream,
+    input: &mut tuinix::InputDecoder,
 ) -> std::io::Result<()> {
     let mut raw = [0u8; 256];
     // `n @ 1..` exits the loop on a zero-length read (EOF) without a separate
     // `if n == 0` check: the range pattern only matches when at least one byte
     // was read. Each read is fed immediately so at most one chunk sits in the
-    // stream at a time.
+    // decoder at a time.
     while let Some(n @ 1..) = would_block_as_none(driver.read(&mut raw))? {
         input.feed(&raw[..n]);
-        // Drop the oldest bytes if the stream holds more than the demo wants to
+        // Drop the oldest bytes if the decoder holds more than the demo wants to
         // keep, so a flood of unparsable input cannot grow it without bound.
         if input.buffered_bytes() > MAX_BUFFERED_BYTES {
             input.discard_buffered_bytes(input.buffered_bytes() - MAX_BUFFERED_BYTES);
@@ -214,13 +212,13 @@ fn read_input(
 fn main() -> std::io::Result<()> {
     // Initialize the terminal driver and enable mouse input reporting.
     let mut driver = tuinix::TerminalDriver::new()?;
-    let mut input = tuinix::InputStream::new();
+    let mut input = tuinix::InputDecoder::new();
     let cursor = None;
     let mut prev_frame = None;
-    driver.enable_mouse_input()?;
+    driver.enable_mouse_reporting()?;
 
     // Build an initial frame at the terminal's current dimensions.
-    let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(driver.size()?);
+    let mut frame = tuinix::Frame::new(driver.size()?);
     draw_header(&mut frame);
     write_text(&mut frame, "\nLast event: None\n", INFO_STYLE);
 
@@ -293,7 +291,7 @@ fn main() -> std::io::Result<()> {
         }
 
         // Drain every event that the bytes fed above (or the committed `ESC`)
-        // made available. This is the single place that consumes `InputStream`,
+        // made available. This is the single place that consumes `InputDecoder`,
         // so a timeout and normal input share one path.
         while let Some(event) = input.next() {
             if !handle_event(&mut driver, &mut prev_frame, cursor, event)? {

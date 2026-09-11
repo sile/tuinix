@@ -1,12 +1,12 @@
-use crate::TerminalPosition;
+use crate::Position;
 
 /// User input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum TerminalInput {
-    /// Keyboard input.
+pub enum Input {
+    /// A key event.
     Key(KeyInput),
 
-    /// Mouse input.
+    /// A mouse event: a button press or release, a drag, or a wheel scroll.
     Mouse(MouseInput),
 }
 
@@ -26,100 +26,123 @@ pub struct KeyInput {
 /// Key code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum KeyCode {
-    /// Enter key.
+    /// The Enter key.
     Enter,
-    /// Escape key.
+
+    /// The Escape key.
     Escape,
-    /// Backspace key.
+
+    /// The Backspace key.
     Backspace,
-    /// Tab key.
+
+    /// The Tab key.
     Tab,
-    /// BackTab key.
+
+    /// The Tab key with Shift held (backwards tab).
     BackTab,
-    /// Delete key.
+
+    /// The Delete key.
     Delete,
-    /// Insert key.
+
+    /// The Insert key.
     Insert,
-    /// Up arrow key.
+
+    /// The Up arrow key.
     Up,
-    /// Down arrow key.
+
+    /// The Down arrow key.
     Down,
-    /// Left arrow key.
+
+    /// The Left arrow key.
     Left,
-    /// Right arrow key.
+
+    /// The Right arrow key.
     Right,
-    /// Home key.
+
+    /// The Home key.
     Home,
-    /// End key.
+
+    /// The End key.
     End,
-    /// Page Up key.
+
+    /// The Page Up key.
     PageUp,
-    /// Page Down key.
+
+    /// The Page Down key.
     PageDown,
-    /// Character key.
+
+    /// A character key.
     Char(char),
 }
 
 /// Mouse input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MouseInput {
-    /// The type of mouse event that occurred.
-    pub event: MouseEvent,
+    /// The kind of mouse input that occurred.
+    pub kind: MouseInputKind,
 
-    /// The position where the mouse event occurred.
-    pub position: TerminalPosition,
+    /// The position where the mouse input occurred.
+    pub position: Position,
 
-    /// Indicates whether the Ctrl modifier key was pressed during the event.
+    /// Indicates whether the Ctrl modifier key was pressed for this input.
     pub ctrl: bool,
 
-    /// Indicates whether the Alt modifier key was pressed during the event.
+    /// Indicates whether the Alt modifier key was pressed for this input.
     pub alt: bool,
 
-    /// Indicates whether the Shift modifier key was pressed during the event.
+    /// Indicates whether the Shift modifier key was pressed for this input.
     pub shift: bool,
 }
 
-/// Mouse event types.
+/// Mouse input kinds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum MouseEvent {
-    /// Left mouse button pressed.
+pub enum MouseInputKind {
+    /// The left button went down.
     LeftPress,
-    /// Left mouse button released.
+
+    /// The left button came up.
     LeftRelease,
-    /// Right mouse button pressed.
+
+    /// The right button went down.
     RightPress,
-    /// Right mouse button released.
+
+    /// The right button came up.
     RightRelease,
-    /// Middle mouse button pressed.
+
+    /// The middle button went down.
     MiddlePress,
-    /// Middle mouse button released.
+
+    /// The middle button came up.
     MiddleRelease,
-    /// Mouse moved while a button is held down (drag).
+
+    /// The mouse moved while a button was held down.
     Drag,
-    /// Mouse wheel scrolled up.
+
+    /// The wheel turned away from the user.
     ScrollUp,
-    /// Mouse wheel scrolled down.
+
+    /// The wheel turned toward the user.
     ScrollDown,
 }
 
-/// The pure, I/O-free input stream that accumulates raw bytes until a complete
-/// input event can be parsed.
+/// The pure, I/O-free decoder that accumulates raw bytes until a complete
+/// [`Input`] can be parsed.
 ///
-/// The stream is driven by the application: it has no awareness of any `Read`
-/// source, so it can live outside the driver and be fed whatever bytes the
-/// application reads from a terminal or elsewhere.
+/// It is driven by the application: it has no awareness of any `Read` source,
+/// so it can live outside the driver and be fed whatever bytes the application
+/// reads from a terminal or elsewhere.
 ///
-/// Feed raw bytes with [`InputStream::feed()`](Self::feed) and pull parsed
-/// [`TerminalInput`] values with [`InputStream::next()`](Self::next). A lone
+/// Feed raw bytes with [`InputDecoder::feed()`](Self::feed) and pull parsed
+/// [`Input`] values with [`InputDecoder::next()`](Self::next). A lone
 /// `ESC` byte is held until it is completed by more bytes or committed as the
-/// Escape key with [`InputStream::commit_escape()`](Self::commit_escape).
+/// Escape key with [`InputDecoder::commit_escape()`](Self::commit_escape).
 ///
-/// The stream does not bound how many bytes it holds. An application that can
+/// It does not bound how many bytes it holds. An application that can
 /// receive unparsable input (for example a large paste) should watch
 /// [`buffered_bytes()`](Self::buffered_bytes) and drop the excess with
 /// [`discard_buffered_bytes()`](Self::discard_buffered_bytes).
 #[derive(Debug, Default)]
-pub struct InputStream {
+pub struct InputDecoder {
     buf: Vec<u8>,
     // A lone `ESC` byte committed by `commit_escape()`, waiting for `next()` to
     // emit it. A flag is used instead of a sentinel byte because `parse_input`
@@ -128,41 +151,41 @@ pub struct InputStream {
     committed_escape: bool,
 }
 
-impl InputStream {
-    /// Creates an empty input stream.
+impl InputDecoder {
+    /// Makes a new, empty input decoder.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Feeds raw bytes into the stream.
+    /// Feeds raw bytes into the decoder.
     ///
-    /// Unparsed bytes are held until [`next()`](Self::next) can produce an event
-    /// from them. The stream does not bound how many bytes it holds; an
-    /// application that can receive unparsable input should watch
+    /// Unparsed bytes are held until [`next()`](Self::next) can produce an
+    /// [`Input`] from them. The decoder does not bound how many bytes it holds;
+    /// an application that can receive unparsable input should watch
     /// [`buffered_bytes()`](Self::buffered_bytes) and drop the excess with
     /// [`discard_buffered_bytes()`](Self::discard_buffered_bytes).
     pub fn feed(&mut self, bytes: &[u8]) {
         self.buf.extend_from_slice(bytes);
     }
 
-    /// Parses and returns the next complete input event, consuming its bytes.
+    /// Parses and returns the next complete [`Input`], consuming its bytes.
     ///
-    /// Returns `None` when no complete event can be produced from the bytes fed
+    /// Returns `None` when no complete [`Input`] can be produced from the bytes fed
     /// so far. That is the normal outcome of an incomplete sequence: a lone
     /// `ESC` byte is held until more bytes arrive or it is committed with
     /// [`commit_escape()`](Self::commit_escape). You do not need to track the
     /// buffer yourself; read with `feed()` and drain with `next()`.
     //
-    // `InputStream` is a stateful parser, not an iterator; the name `next` is
+    // `InputDecoder` is a stateful parser, not an iterator; the name `next` is
     // kept for symmetry with `feed`. Implementing `Iterator` would not be a
-    // natural fit here: `None` means "no complete event from the bytes fed so
-    // far", not "the stream is exhausted", so the `Iterator` contract would
+    // natural fit here: `None` means "no complete input from the bytes fed so
+    // far", not "the decoder is exhausted", so the `Iterator` contract would
     // mislead a caller into reading it as end of input.
     #[expect(
         clippy::should_implement_trait,
-        reason = "`InputStream` is a stateful parser; `next` is kept for symmetry with `feed`"
+        reason = "`InputDecoder` is a stateful parser; `next` is kept for symmetry with `feed`"
     )]
-    pub fn next(&mut self) -> Option<TerminalInput> {
+    pub fn next(&mut self) -> Option<Input> {
         if self.committed_escape {
             self.committed_escape = false;
             return Some(create_key_input(false, false, KeyCode::Escape));
@@ -184,7 +207,7 @@ impl InputStream {
     /// [`next()`](Self::next).
     ///
     /// The count includes an incomplete sequence that is being held for more
-    /// bytes. Use it to bound how much memory a stream can take: when the count
+    /// bytes. Use it to bound how much memory a decoder can take: when the count
     /// grows past what the application wants to keep, drop the excess with
     /// [`discard_buffered_bytes()`](Self::discard_buffered_bytes).
     pub fn buffered_bytes(&self) -> usize {
@@ -197,7 +220,7 @@ impl InputStream {
     /// `len` is clipped to the number of buffered bytes, so passing a larger
     /// value discards everything and returns the buffer length. This is how an
     /// application enforces its own bound on [`buffered_bytes()`](Self::buffered_bytes):
-    /// the stream never drops bytes on its own, because only the application
+    /// the decoder never drops bytes on its own, because only the application
     /// knows whether discarding a partial sequence is acceptable.
     pub fn discard_buffered_bytes(&mut self, len: usize) -> usize {
         let len = len.min(self.buf.len());
@@ -205,14 +228,14 @@ impl InputStream {
         len
     }
 
-    // Returns `true` when the stream holds unconsumed bytes. Only the tests
+    // Returns `true` when the decoder holds unconsumed bytes. Only the tests
     // assert on the residual buffer, so this is not part of the public surface.
     #[cfg(test)]
     fn has_pending(&self) -> bool {
         self.buffered_bytes() > 0
     }
 
-    /// Returns `true` when the stream holds a lone `ESC` byte that
+    /// Returns `true` when the decoder holds a lone `ESC` byte that
     /// [`commit_escape()`](Self::commit_escape) would turn into the Escape key.
     ///
     /// A lone `ESC` is ambiguous: the terminal sends the same byte whether the
@@ -233,12 +256,12 @@ impl InputStream {
         self.buf.as_slice() == [0x1b].as_slice()
     }
 
-    /// Commits a lone `ESC` byte held by the stream as the Escape key.
+    /// Commits a lone `ESC` byte held by the decoder as the Escape key.
     ///
     /// This is the second half of the wait described by
     /// [`has_uncommitted_escape()`](Self::has_uncommitted_escape): call it once
     /// the wait has elapsed. The committed Escape key is then returned by
-    /// [`next()`](Self::next). A call is a no-op when the stream holds no lone
+    /// [`next()`](Self::next). A call is a no-op when the decoder holds no lone
     /// `ESC` byte, so it is harmless when `next()` already consumed the byte or
     /// it turned out to be the start of a sequence.
     pub fn commit_escape(&mut self) {
@@ -252,7 +275,7 @@ impl InputStream {
     }
 }
 
-fn parse_input(bytes: &[u8]) -> (Option<TerminalInput>, usize) {
+fn parse_input(bytes: &[u8]) -> (Option<Input>, usize) {
     if bytes.is_empty() {
         return (None, 0);
     }
@@ -271,7 +294,7 @@ fn parse_input(bytes: &[u8]) -> (Option<TerminalInput>, usize) {
     }
 }
 
-fn parse_ascii_char(bytes: &[u8]) -> (Option<TerminalInput>, usize) {
+fn parse_ascii_char(bytes: &[u8]) -> (Option<Input>, usize) {
     let byte = bytes[0];
 
     // Control characters (Ctrl+A through Ctrl+Z)
@@ -291,7 +314,7 @@ fn parse_ascii_char(bytes: &[u8]) -> (Option<TerminalInput>, usize) {
     )
 }
 
-fn parse_escape_sequence(bytes: &[u8]) -> (Option<TerminalInput>, usize) {
+fn parse_escape_sequence(bytes: &[u8]) -> (Option<Input>, usize) {
     // Need at least 2 bytes for escape sequences
     if bytes.len() == 1 {
         return (None, 0);
@@ -307,7 +330,7 @@ fn parse_escape_sequence(bytes: &[u8]) -> (Option<TerminalInput>, usize) {
     }
 }
 
-fn parse_alt_char(bytes: &[u8]) -> (Option<TerminalInput>, usize) {
+fn parse_alt_char(bytes: &[u8]) -> (Option<Input>, usize) {
     let c = bytes[1] as char;
     let (ctrl, code) = if bytes[1] < 0x20 {
         // Control characters with Alt
@@ -324,7 +347,7 @@ fn parse_alt_char(bytes: &[u8]) -> (Option<TerminalInput>, usize) {
     (Some(create_key_input(ctrl, true, code)), 2)
 }
 
-fn parse_csi_sequence(bytes: &[u8]) -> (Option<TerminalInput>, usize) {
+fn parse_csi_sequence(bytes: &[u8]) -> (Option<Input>, usize) {
     // Need at least 3 bytes for basic CSI sequences (ESC [ X)
     if bytes.len() < 3 {
         return (None, 0);
@@ -339,7 +362,7 @@ fn parse_csi_sequence(bytes: &[u8]) -> (Option<TerminalInput>, usize) {
     }
 }
 
-fn parse_ss3_sequence(bytes: &[u8]) -> (Option<TerminalInput>, usize) {
+fn parse_ss3_sequence(bytes: &[u8]) -> (Option<Input>, usize) {
     // Need at least 3 bytes for SS3 sequences (ESC O X)
     if bytes.len() < 3 {
         return (None, 0);
@@ -358,7 +381,7 @@ fn parse_ss3_sequence(bytes: &[u8]) -> (Option<TerminalInput>, usize) {
     (Some(create_key_input(false, false, code)), 3)
 }
 
-fn parse_simple_csi_key(bytes: &[u8]) -> (Option<TerminalInput>, usize) {
+fn parse_simple_csi_key(bytes: &[u8]) -> (Option<Input>, usize) {
     let code = match bytes[2] {
         b'A' => KeyCode::Up,
         b'B' => KeyCode::Down,
@@ -373,7 +396,7 @@ fn parse_simple_csi_key(bytes: &[u8]) -> (Option<TerminalInput>, usize) {
     (Some(create_key_input(false, false, code)), 3)
 }
 
-fn parse_complex_csi_key(bytes: &[u8]) -> (Option<TerminalInput>, usize) {
+fn parse_complex_csi_key(bytes: &[u8]) -> (Option<Input>, usize) {
     // Handle sequences like ESC [ 1 ; 5 A (modified arrow keys)
     if bytes.len() >= 6 && bytes[2] == b'1' && bytes[3] == b';' && matches!(bytes[5], b'A'..=b'D') {
         return parse_modified_arrow_key(bytes);
@@ -396,7 +419,7 @@ fn parse_complex_csi_key(bytes: &[u8]) -> (Option<TerminalInput>, usize) {
     }
 }
 
-fn parse_modified_arrow_key(bytes: &[u8]) -> (Option<TerminalInput>, usize) {
+fn parse_modified_arrow_key(bytes: &[u8]) -> (Option<Input>, usize) {
     if !bytes[4].is_ascii_digit() {
         return (None, 6);
     }
@@ -416,7 +439,7 @@ fn parse_modified_arrow_key(bytes: &[u8]) -> (Option<TerminalInput>, usize) {
     (Some(create_key_input(ctrl, alt, code)), 6)
 }
 
-fn parse_special_key_simple(bytes: &[u8]) -> (Option<TerminalInput>, usize) {
+fn parse_special_key_simple(bytes: &[u8]) -> (Option<Input>, usize) {
     let code = match bytes[2] {
         b'1' | b'7' => KeyCode::Home,
         b'2' => KeyCode::Insert,
@@ -430,7 +453,7 @@ fn parse_special_key_simple(bytes: &[u8]) -> (Option<TerminalInput>, usize) {
     (Some(create_key_input(false, false, code)), 4)
 }
 
-fn parse_special_key_with_modifier(bytes: &[u8]) -> (Option<TerminalInput>, usize) {
+fn parse_special_key_with_modifier(bytes: &[u8]) -> (Option<Input>, usize) {
     let code = match bytes[2] {
         b'1' | b'7' => KeyCode::Home,
         b'2' => KeyCode::Insert,
@@ -452,7 +475,7 @@ fn parse_special_key_with_modifier(bytes: &[u8]) -> (Option<TerminalInput>, usiz
     (Some(create_key_input(ctrl, alt, code)), 6)
 }
 
-fn parse_sgr_mouse_sequence(bytes: &[u8]) -> (Option<TerminalInput>, usize) {
+fn parse_sgr_mouse_sequence(bytes: &[u8]) -> (Option<Input>, usize) {
     // Find the end of the sequence (M or m)
     let mut end_pos = None;
     for (i, &b) in bytes.iter().enumerate().skip(3) {
@@ -496,12 +519,12 @@ fn parse_sgr_mouse_sequence(bytes: &[u8]) -> (Option<TerminalInput>, usize) {
 
     let mouse_input = create_sgr_mouse_input(button, x, y, bytes[end] == b'm');
     match mouse_input {
-        Some(input) => (Some(TerminalInput::Mouse(input)), end + 1),
+        Some(input) => (Some(Input::Mouse(input)), end + 1),
         None => (None, end + 1),
     }
 }
 
-fn parse_x10_mouse_sequence(bytes: &[u8]) -> (Option<TerminalInput>, usize) {
+fn parse_x10_mouse_sequence(bytes: &[u8]) -> (Option<Input>, usize) {
     if bytes.len() < 6 {
         return (None, 0);
     }
@@ -511,10 +534,10 @@ fn parse_x10_mouse_sequence(bytes: &[u8]) -> (Option<TerminalInput>, usize) {
     let y = bytes[5] as u16;
 
     let mouse_input = create_x10_mouse_input(button_byte, x, y);
-    (Some(TerminalInput::Mouse(mouse_input)), 6)
+    (Some(Input::Mouse(mouse_input)), 6)
 }
 
-fn parse_utf8_char(bytes: &[u8]) -> (Option<TerminalInput>, usize) {
+fn parse_utf8_char(bytes: &[u8]) -> (Option<Input>, usize) {
     let width = match bytes[0] {
         b if b & 0xE0 == 0xC0 => 2,
         b if b & 0xF0 == 0xE0 => 3,
@@ -536,8 +559,8 @@ fn parse_utf8_char(bytes: &[u8]) -> (Option<TerminalInput>, usize) {
 }
 
 // Helper functions
-fn create_key_input(ctrl: bool, alt: bool, code: KeyCode) -> TerminalInput {
-    TerminalInput::Key(KeyInput { ctrl, alt, code })
+fn create_key_input(ctrl: bool, alt: bool, code: KeyCode) -> Input {
+    Input::Key(KeyInput { ctrl, alt, code })
 }
 
 fn create_sgr_mouse_input(button: u16, x: u16, y: u16, is_release: bool) -> Option<MouseInput> {
@@ -547,35 +570,35 @@ fn create_sgr_mouse_input(button: u16, x: u16, y: u16, is_release: bool) -> Opti
     let shift = (button & 0x04) != 0;
     let drag = (button & 0x20) != 0;
 
-    let event = if drag {
-        MouseEvent::Drag
+    let kind = if drag {
+        MouseInputKind::Drag
     } else if is_release {
         match button_code {
-            0 => MouseEvent::LeftRelease,
-            1 => MouseEvent::MiddleRelease,
-            2 => MouseEvent::RightRelease,
+            0 => MouseInputKind::LeftRelease,
+            1 => MouseInputKind::MiddleRelease,
+            2 => MouseInputKind::RightRelease,
             _ => return None,
         }
     } else {
         // Check for scroll events first
         match button {
-            64 => MouseEvent::ScrollUp,
-            65 => MouseEvent::ScrollDown,
+            64 => MouseInputKind::ScrollUp,
+            65 => MouseInputKind::ScrollDown,
             _ => match button_code {
-                0 => MouseEvent::LeftPress,
-                1 => MouseEvent::MiddlePress,
-                2 => MouseEvent::RightPress,
+                0 => MouseInputKind::LeftPress,
+                1 => MouseInputKind::MiddlePress,
+                2 => MouseInputKind::RightPress,
                 _ => return None,
             },
         }
     };
 
     Some(MouseInput {
-        event,
-        position: TerminalPosition::row_col(
-            y.saturating_sub(1) as usize,
-            x.saturating_sub(1) as usize,
-        ),
+        kind,
+        position: Position {
+            row: y.saturating_sub(1) as usize,
+            col: x.saturating_sub(1) as usize,
+        },
         ctrl,
         alt,
         shift,
@@ -587,27 +610,27 @@ fn create_x10_mouse_input(button_byte: u8, x: u16, y: u16) -> MouseInput {
     let alt = (button_byte & 0x08) != 0;
     let shift = (button_byte & 0x04) != 0;
 
-    let event = match button_byte {
-        96 => MouseEvent::ScrollUp,
-        97 => MouseEvent::ScrollDown,
+    let kind = match button_byte {
+        96 => MouseInputKind::ScrollUp,
+        97 => MouseInputKind::ScrollDown,
         _ => {
             // Remove modifier bits to get the base button code
             let base_button = button_byte & !0x1C; // Remove shift(4), alt(8), ctrl(16) bits
 
             match base_button {
-                32 => MouseEvent::LeftPress,   // 0x20
-                33 => MouseEvent::MiddlePress, // 0x21
-                34 => MouseEvent::RightPress,  // 0x22
-                35 => MouseEvent::LeftRelease, // 0x23
-                64 => MouseEvent::Drag,        // 0x40
+                32 => MouseInputKind::LeftPress,   // 0x20
+                33 => MouseInputKind::MiddlePress, // 0x21
+                34 => MouseInputKind::RightPress,  // 0x22
+                35 => MouseInputKind::LeftRelease, // 0x23
+                64 => MouseInputKind::Drag,        // 0x40
                 _ => {
                     // Fallback: check bottom 2 bits for button type
                     match button_byte & 0x03 {
-                        0 => MouseEvent::LeftPress,
-                        1 => MouseEvent::MiddlePress,
-                        2 => MouseEvent::RightPress,
-                        3 => MouseEvent::LeftRelease,
-                        _ => MouseEvent::LeftPress,
+                        0 => MouseInputKind::LeftPress,
+                        1 => MouseInputKind::MiddlePress,
+                        2 => MouseInputKind::RightPress,
+                        3 => MouseInputKind::LeftRelease,
+                        _ => MouseInputKind::LeftPress,
                     }
                 }
             }
@@ -615,11 +638,11 @@ fn create_x10_mouse_input(button_byte: u8, x: u16, y: u16) -> MouseInput {
     };
 
     MouseInput {
-        event,
-        position: TerminalPosition::row_col(
-            y.saturating_sub(33) as usize,
-            x.saturating_sub(33) as usize,
-        ),
+        kind,
+        position: Position {
+            row: y.saturating_sub(33) as usize,
+            col: x.saturating_sub(33) as usize,
+        },
         ctrl,
         alt,
         shift,
@@ -638,7 +661,7 @@ mod tests {
         let result = parse_input(b"a");
         assert_eq!(
             result.0,
-            Some(TerminalInput::Key(KeyInput {
+            Some(Input::Key(KeyInput {
                 ctrl: false,
                 alt: false,
                 code: KeyCode::Char('a'),
@@ -649,7 +672,7 @@ mod tests {
         let result = parse_input(b"Z");
         assert_eq!(
             result.0,
-            Some(TerminalInput::Key(KeyInput {
+            Some(Input::Key(KeyInput {
                 ctrl: false,
                 alt: false,
                 code: KeyCode::Char('Z'),
@@ -660,7 +683,7 @@ mod tests {
         let result = parse_input(b"5");
         assert_eq!(
             result.0,
-            Some(TerminalInput::Key(KeyInput {
+            Some(Input::Key(KeyInput {
                 ctrl: false,
                 alt: false,
                 code: KeyCode::Char('5'),
@@ -675,7 +698,7 @@ mod tests {
         let result = parse_input(&[0x01]);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Key(KeyInput {
+            Some(Input::Key(KeyInput {
                 ctrl: true,
                 alt: false,
                 code: KeyCode::Char('a'),
@@ -687,7 +710,7 @@ mod tests {
         let result = parse_input(&[0x1A]);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Key(KeyInput {
+            Some(Input::Key(KeyInput {
                 ctrl: true,
                 alt: false,
                 code: KeyCode::Char('z'),
@@ -699,7 +722,7 @@ mod tests {
         let result = parse_input(&[0x0D]);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Key(KeyInput {
+            Some(Input::Key(KeyInput {
                 ctrl: false,
                 alt: false,
                 code: KeyCode::Enter,
@@ -711,7 +734,7 @@ mod tests {
         let result = parse_input(&[0x09]);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Key(KeyInput {
+            Some(Input::Key(KeyInput {
                 ctrl: false,
                 alt: false,
                 code: KeyCode::Tab,
@@ -725,7 +748,7 @@ mod tests {
         let result = parse_input(&[0x7F]);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Key(KeyInput {
+            Some(Input::Key(KeyInput {
                 ctrl: false,
                 alt: false,
                 code: KeyCode::Backspace,
@@ -745,7 +768,7 @@ mod tests {
         let result = parse_input(&[0x1b, b'x']);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Key(KeyInput {
+            Some(Input::Key(KeyInput {
                 ctrl: false,
                 alt: true,
                 code: KeyCode::Char('x'),
@@ -760,7 +783,7 @@ mod tests {
         let result = parse_input(&[0x1b, b'a']);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Key(KeyInput {
+            Some(Input::Key(KeyInput {
                 ctrl: false,
                 alt: true,
                 code: KeyCode::Char('a'),
@@ -772,7 +795,7 @@ mod tests {
         let result = parse_input(&[0x1b, 0x0D]);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Key(KeyInput {
+            Some(Input::Key(KeyInput {
                 ctrl: false,
                 alt: true,
                 code: KeyCode::Enter,
@@ -784,7 +807,7 @@ mod tests {
         let result = parse_input(&[0x1b, 0x09]);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Key(KeyInput {
+            Some(Input::Key(KeyInput {
                 ctrl: false,
                 alt: true,
                 code: KeyCode::Tab,
@@ -799,7 +822,7 @@ mod tests {
         let result = parse_input(&[0x1b, b'[', b'A']);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Key(KeyInput {
+            Some(Input::Key(KeyInput {
                 ctrl: false,
                 alt: false,
                 code: KeyCode::Up,
@@ -811,7 +834,7 @@ mod tests {
         let result = parse_input(&[0x1b, b'[', b'B']);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Key(KeyInput {
+            Some(Input::Key(KeyInput {
                 ctrl: false,
                 alt: false,
                 code: KeyCode::Down,
@@ -823,7 +846,7 @@ mod tests {
         let result = parse_input(&[0x1b, b'[', b'C']);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Key(KeyInput {
+            Some(Input::Key(KeyInput {
                 ctrl: false,
                 alt: false,
                 code: KeyCode::Right,
@@ -835,7 +858,7 @@ mod tests {
         let result = parse_input(&[0x1b, b'[', b'D']);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Key(KeyInput {
+            Some(Input::Key(KeyInput {
                 ctrl: false,
                 alt: false,
                 code: KeyCode::Left,
@@ -850,7 +873,7 @@ mod tests {
         let result = parse_input(&[0x1b, b'O', b'A']);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Key(KeyInput {
+            Some(Input::Key(KeyInput {
                 ctrl: false,
                 alt: false,
                 code: KeyCode::Up,
@@ -862,7 +885,7 @@ mod tests {
         let result = parse_input(&[0x1b, b'O', b'B']);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Key(KeyInput {
+            Some(Input::Key(KeyInput {
                 ctrl: false,
                 alt: false,
                 code: KeyCode::Down,
@@ -877,7 +900,7 @@ mod tests {
         let result = parse_input(&[0x1b, b'[', b'H']);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Key(KeyInput {
+            Some(Input::Key(KeyInput {
                 ctrl: false,
                 alt: false,
                 code: KeyCode::Home,
@@ -889,7 +912,7 @@ mod tests {
         let result = parse_input(&[0x1b, b'[', b'F']);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Key(KeyInput {
+            Some(Input::Key(KeyInput {
                 ctrl: false,
                 alt: false,
                 code: KeyCode::End,
@@ -901,7 +924,7 @@ mod tests {
         let result = parse_input(&[0x1b, b'O', b'H']);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Key(KeyInput {
+            Some(Input::Key(KeyInput {
                 ctrl: false,
                 alt: false,
                 code: KeyCode::Home,
@@ -913,7 +936,7 @@ mod tests {
         let result = parse_input(&[0x1b, b'O', b'F']);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Key(KeyInput {
+            Some(Input::Key(KeyInput {
                 ctrl: false,
                 alt: false,
                 code: KeyCode::End,
@@ -928,7 +951,7 @@ mod tests {
         let result = parse_input(&[0x1b, b'[', b'Z']);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Key(KeyInput {
+            Some(Input::Key(KeyInput {
                 ctrl: false,
                 alt: false,
                 code: KeyCode::BackTab,
@@ -940,7 +963,7 @@ mod tests {
         let result = parse_input(&[0x1b, b'[', b'2', b'~']);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Key(KeyInput {
+            Some(Input::Key(KeyInput {
                 ctrl: false,
                 alt: false,
                 code: KeyCode::Insert,
@@ -952,7 +975,7 @@ mod tests {
         let result = parse_input(&[0x1b, b'[', b'3', b'~']);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Key(KeyInput {
+            Some(Input::Key(KeyInput {
                 ctrl: false,
                 alt: false,
                 code: KeyCode::Delete,
@@ -964,7 +987,7 @@ mod tests {
         let result = parse_input(&[0x1b, b'[', b'5', b'~']);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Key(KeyInput {
+            Some(Input::Key(KeyInput {
                 ctrl: false,
                 alt: false,
                 code: KeyCode::PageUp,
@@ -976,7 +999,7 @@ mod tests {
         let result = parse_input(&[0x1b, b'[', b'6', b'~']);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Key(KeyInput {
+            Some(Input::Key(KeyInput {
                 ctrl: false,
                 alt: false,
                 code: KeyCode::PageDown,
@@ -991,7 +1014,7 @@ mod tests {
         let result = parse_input(&[0x1b, b'[', b'1', b';', b'5', b'A']);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Key(KeyInput {
+            Some(Input::Key(KeyInput {
                 ctrl: true,
                 alt: false,
                 code: KeyCode::Up,
@@ -1003,7 +1026,7 @@ mod tests {
         let result = parse_input(&[0x1b, b'[', b'1', b';', b'3', b'C']);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Key(KeyInput {
+            Some(Input::Key(KeyInput {
                 ctrl: false,
                 alt: true,
                 code: KeyCode::Right,
@@ -1015,7 +1038,7 @@ mod tests {
         let result = parse_input(&[0x1b, b'[', b'1', b';', b'7', b'D']);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Key(KeyInput {
+            Some(Input::Key(KeyInput {
                 ctrl: true,
                 alt: true,
                 code: KeyCode::Left,
@@ -1030,7 +1053,7 @@ mod tests {
         let result = parse_input(&[0x1b, b'[', b'3', b';', b'5', b'~']);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Key(KeyInput {
+            Some(Input::Key(KeyInput {
                 ctrl: true,
                 alt: false,
                 code: KeyCode::Delete,
@@ -1042,7 +1065,7 @@ mod tests {
         let result = parse_input(&[0x1b, b'[', b'1', b';', b'3', b'~']);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Key(KeyInput {
+            Some(Input::Key(KeyInput {
                 ctrl: false,
                 alt: true,
                 code: KeyCode::Home,
@@ -1057,7 +1080,7 @@ mod tests {
         let result = parse_input(&[0xC3, 0xA9]);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Key(KeyInput {
+            Some(Input::Key(KeyInput {
                 ctrl: false,
                 alt: false,
                 code: KeyCode::Char('é'),
@@ -1069,7 +1092,7 @@ mod tests {
         let result = parse_input(&[0xE2, 0x82, 0xAC]);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Key(KeyInput {
+            Some(Input::Key(KeyInput {
                 ctrl: false,
                 alt: false,
                 code: KeyCode::Char('€'),
@@ -1127,8 +1150,8 @@ mod tests {
     }
 
     #[test]
-    fn test_input_stream_preserves_incomplete_sequence_across_pushes() {
-        let mut buffer = InputStream::new();
+    fn test_input_decoder_preserves_incomplete_sequence_across_pushes() {
+        let mut buffer = InputDecoder::new();
 
         // An incomplete escape sequence stays in the buffer.
         buffer.feed(&[0x1b, b'[']);
@@ -1139,7 +1162,7 @@ mod tests {
         buffer.feed(b"A");
         assert_eq!(
             buffer.next(),
-            Some(TerminalInput::Key(KeyInput {
+            Some(Input::Key(KeyInput {
                 ctrl: false,
                 alt: false,
                 code: KeyCode::Up,
@@ -1149,14 +1172,14 @@ mod tests {
     }
 
     #[test]
-    fn test_input_stream_drains_partial_bytes_in_order() {
-        let mut buffer = InputStream::new();
+    fn test_input_decoder_drains_partial_bytes_in_order() {
+        let mut buffer = InputDecoder::new();
 
         // Feed multiple complete inputs plus a trailing incomplete byte.
         buffer.feed(b"ab\x1b[");
         assert_eq!(
             buffer.next(),
-            Some(TerminalInput::Key(KeyInput {
+            Some(Input::Key(KeyInput {
                 ctrl: false,
                 alt: false,
                 code: KeyCode::Char('a'),
@@ -1164,7 +1187,7 @@ mod tests {
         );
         assert_eq!(
             buffer.next(),
-            Some(TerminalInput::Key(KeyInput {
+            Some(Input::Key(KeyInput {
                 ctrl: false,
                 alt: false,
                 code: KeyCode::Char('b'),
@@ -1176,8 +1199,8 @@ mod tests {
     }
 
     #[test]
-    fn test_input_stream_buffered_bytes_and_discard() {
-        let mut input = InputStream::new();
+    fn test_input_decoder_buffered_bytes_and_discard() {
+        let mut input = InputDecoder::new();
         assert_eq!(input.buffered_bytes(), 0);
 
         // An SGR mouse prefix that is never terminated keeps growing until the
@@ -1202,8 +1225,8 @@ mod tests {
     }
 
     #[test]
-    fn test_input_stream_recovers_from_unterminated_mouse_prefix() {
-        let mut input = InputStream::new();
+    fn test_input_decoder_recovers_from_unterminated_mouse_prefix() {
+        let mut input = InputDecoder::new();
 
         // A byte that cannot occur in the parameters of an SGR sequence means the
         // prefix can never become a valid sequence. Only the prefix is dropped, so
@@ -1211,7 +1234,7 @@ mod tests {
         input.feed(b"\x1b[<12a");
         assert_eq!(
             input.next(),
-            Some(TerminalInput::Key(KeyInput {
+            Some(Input::Key(KeyInput {
                 ctrl: false,
                 alt: false,
                 code: KeyCode::Char('a'),
@@ -1226,9 +1249,9 @@ mod tests {
     }
 
     #[test]
-    fn test_input_stream_reports_only_a_lone_esc_as_pending_escape() {
+    fn test_input_decoder_reports_only_a_lone_esc_as_pending_escape() {
         // A lone `ESC` is the only held state that a timeout can commit.
-        let mut input = InputStream::new();
+        let mut input = InputDecoder::new();
         input.feed(b"\x1b");
         assert!(input.has_uncommitted_escape());
 
@@ -1236,7 +1259,7 @@ mod tests {
         input.feed(b"\x1b");
         assert_eq!(
             input.next(),
-            Some(TerminalInput::Key(KeyInput {
+            Some(Input::Key(KeyInput {
                 ctrl: false,
                 alt: false,
                 code: KeyCode::Escape,
@@ -1247,7 +1270,7 @@ mod tests {
         // A sequence prefix and a UTF-8 lead byte need more bytes, not a
         // timeout.
         for prefix in [b"\x1b[".as_slice(), b"\x1bO".as_slice(), b"\xe3".as_slice()] {
-            let mut input = InputStream::new();
+            let mut input = InputDecoder::new();
             input.feed(prefix);
             assert!(
                 !input.has_uncommitted_escape(),
@@ -1256,12 +1279,12 @@ mod tests {
         }
 
         // `ESC` followed by a regular character is an Alt+key sequence.
-        let mut input = InputStream::new();
+        let mut input = InputDecoder::new();
         input.feed(b"\x1ba");
         assert!(!input.has_uncommitted_escape());
         assert_eq!(
             input.next(),
-            Some(TerminalInput::Key(KeyInput {
+            Some(Input::Key(KeyInput {
                 ctrl: false,
                 alt: true,
                 code: KeyCode::Char('a'),
@@ -1270,8 +1293,8 @@ mod tests {
     }
 
     #[test]
-    fn test_input_stream_commit_escape() {
-        let mut input = InputStream::new();
+    fn test_input_decoder_commit_escape() {
+        let mut input = InputDecoder::new();
 
         // Nothing is held, so there is nothing to commit and nothing comes out.
         input.commit_escape();
@@ -1283,7 +1306,7 @@ mod tests {
         input.commit_escape();
         assert_eq!(
             input.next(),
-            Some(TerminalInput::Key(KeyInput {
+            Some(Input::Key(KeyInput {
                 ctrl: false,
                 alt: false,
                 code: KeyCode::Escape,
@@ -1300,7 +1323,7 @@ mod tests {
         input.feed(b"A");
         assert_eq!(
             input.next(),
-            Some(TerminalInput::Key(KeyInput {
+            Some(Input::Key(KeyInput {
                 ctrl: false,
                 alt: false,
                 code: KeyCode::Up,
@@ -1311,14 +1334,14 @@ mod tests {
     }
 
     #[test]
-    fn test_input_stream() {
-        let mut buffer = InputStream::new();
+    fn test_input_decoder() {
+        let mut buffer = InputDecoder::new();
 
         // A simple character.
         buffer.feed(b"a");
         assert_eq!(
             buffer.next(),
-            Some(TerminalInput::Key(KeyInput {
+            Some(Input::Key(KeyInput {
                 ctrl: false,
                 alt: false,
                 code: KeyCode::Char('a'),
@@ -1329,7 +1352,7 @@ mod tests {
         buffer.feed(&[0x1b, b'[', b'A'][..]);
         assert_eq!(
             buffer.next(),
-            Some(TerminalInput::Key(KeyInput {
+            Some(Input::Key(KeyInput {
                 ctrl: false,
                 alt: false,
                 code: KeyCode::Up,
@@ -1340,7 +1363,7 @@ mod tests {
         buffer.feed(b"ab");
         assert_eq!(
             buffer.next(),
-            Some(TerminalInput::Key(KeyInput {
+            Some(Input::Key(KeyInput {
                 ctrl: false,
                 alt: false,
                 code: KeyCode::Char('a'),
@@ -1348,7 +1371,7 @@ mod tests {
         );
         assert_eq!(
             buffer.next(),
-            Some(TerminalInput::Key(KeyInput {
+            Some(Input::Key(KeyInput {
                 ctrl: false,
                 alt: false,
                 code: KeyCode::Char('b'),
@@ -1363,9 +1386,9 @@ mod tests {
         let result = parse_input(input);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Mouse(MouseInput {
-                event: MouseEvent::ScrollUp,
-                position: TerminalPosition::row_col(4, 9), // row: 5-1, col: 10-1
+            Some(Input::Mouse(MouseInput {
+                kind: MouseInputKind::ScrollUp,
+                position: Position { row: 4, col: 9 }, // row: 5-1, col: 10-1
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1377,9 +1400,9 @@ mod tests {
         let result = parse_input(input);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Mouse(MouseInput {
-                event: MouseEvent::ScrollDown,
-                position: TerminalPosition::row_col(4, 9),
+            Some(Input::Mouse(MouseInput {
+                kind: MouseInputKind::ScrollDown,
+                position: Position { row: 4, col: 9 },
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1394,9 +1417,9 @@ mod tests {
         let result = parse_input(input);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Mouse(MouseInput {
-                event: MouseEvent::LeftPress,
-                position: TerminalPosition::row_col(4, 9), // row: 5-1, col: 10-1
+            Some(Input::Mouse(MouseInput {
+                kind: MouseInputKind::LeftPress,
+                position: Position { row: 4, col: 9 }, // row: 5-1, col: 10-1
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1409,9 +1432,9 @@ mod tests {
         let result = parse_input(input);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Mouse(MouseInput {
-                event: MouseEvent::MiddlePress,
-                position: TerminalPosition::row_col(4, 9),
+            Some(Input::Mouse(MouseInput {
+                kind: MouseInputKind::MiddlePress,
+                position: Position { row: 4, col: 9 },
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1423,9 +1446,9 @@ mod tests {
         let result = parse_input(input);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Mouse(MouseInput {
-                event: MouseEvent::RightPress,
-                position: TerminalPosition::row_col(4, 9),
+            Some(Input::Mouse(MouseInput {
+                kind: MouseInputKind::RightPress,
+                position: Position { row: 4, col: 9 },
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1440,9 +1463,9 @@ mod tests {
         let result = parse_input(input);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Mouse(MouseInput {
-                event: MouseEvent::LeftRelease,
-                position: TerminalPosition::row_col(4, 9),
+            Some(Input::Mouse(MouseInput {
+                kind: MouseInputKind::LeftRelease,
+                position: Position { row: 4, col: 9 },
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1454,9 +1477,9 @@ mod tests {
         let result = parse_input(input);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Mouse(MouseInput {
-                event: MouseEvent::MiddleRelease,
-                position: TerminalPosition::row_col(4, 9),
+            Some(Input::Mouse(MouseInput {
+                kind: MouseInputKind::MiddleRelease,
+                position: Position { row: 4, col: 9 },
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1468,9 +1491,9 @@ mod tests {
         let result = parse_input(input);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Mouse(MouseInput {
-                event: MouseEvent::RightRelease,
-                position: TerminalPosition::row_col(4, 9),
+            Some(Input::Mouse(MouseInput {
+                kind: MouseInputKind::RightRelease,
+                position: Position { row: 4, col: 9 },
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1485,9 +1508,9 @@ mod tests {
         let result = parse_input(input);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Mouse(MouseInput {
-                event: MouseEvent::LeftPress,
-                position: TerminalPosition::row_col(4, 9),
+            Some(Input::Mouse(MouseInput {
+                kind: MouseInputKind::LeftPress,
+                position: Position { row: 4, col: 9 },
                 ctrl: true,
                 alt: false,
                 shift: false,
@@ -1499,9 +1522,9 @@ mod tests {
         let result = parse_input(input);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Mouse(MouseInput {
-                event: MouseEvent::LeftPress,
-                position: TerminalPosition::row_col(4, 9),
+            Some(Input::Mouse(MouseInput {
+                kind: MouseInputKind::LeftPress,
+                position: Position { row: 4, col: 9 },
                 ctrl: false,
                 alt: true,
                 shift: false,
@@ -1513,9 +1536,9 @@ mod tests {
         let result = parse_input(input);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Mouse(MouseInput {
-                event: MouseEvent::LeftPress,
-                position: TerminalPosition::row_col(4, 9),
+            Some(Input::Mouse(MouseInput {
+                kind: MouseInputKind::LeftPress,
+                position: Position { row: 4, col: 9 },
                 ctrl: false,
                 alt: false,
                 shift: true,
@@ -1527,9 +1550,9 @@ mod tests {
         let result = parse_input(input);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Mouse(MouseInput {
-                event: MouseEvent::LeftPress,
-                position: TerminalPosition::row_col(4, 9),
+            Some(Input::Mouse(MouseInput {
+                kind: MouseInputKind::LeftPress,
+                position: Position { row: 4, col: 9 },
                 ctrl: true,
                 alt: true,
                 shift: true,
@@ -1543,9 +1566,9 @@ mod tests {
         let result = parse_input(input);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Mouse(MouseInput {
-                event: MouseEvent::Drag,
-                position: TerminalPosition::row_col(4, 9),
+            Some(Input::Mouse(MouseInput {
+                kind: MouseInputKind::Drag,
+                position: Position { row: 4, col: 9 },
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1557,9 +1580,9 @@ mod tests {
         let result = parse_input(input);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Mouse(MouseInput {
-                event: MouseEvent::Drag,
-                position: TerminalPosition::row_col(4, 9),
+            Some(Input::Mouse(MouseInput {
+                kind: MouseInputKind::Drag,
+                position: Position { row: 4, col: 9 },
                 ctrl: true,
                 alt: true,
                 shift: true,
@@ -1575,9 +1598,9 @@ mod tests {
         let result = parse_input(input);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Mouse(MouseInput {
-                event: MouseEvent::LeftPress,
-                position: TerminalPosition::row_col(5, 10),
+            Some(Input::Mouse(MouseInput {
+                kind: MouseInputKind::LeftPress,
+                position: Position { row: 5, col: 10 },
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1591,9 +1614,9 @@ mod tests {
         let result = parse_input(input);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Mouse(MouseInput {
-                event: MouseEvent::MiddlePress,
-                position: TerminalPosition::row_col(5, 10),
+            Some(Input::Mouse(MouseInput {
+                kind: MouseInputKind::MiddlePress,
+                position: Position { row: 5, col: 10 },
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1606,9 +1629,9 @@ mod tests {
         let result = parse_input(input);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Mouse(MouseInput {
-                event: MouseEvent::RightPress,
-                position: TerminalPosition::row_col(5, 10),
+            Some(Input::Mouse(MouseInput {
+                kind: MouseInputKind::RightPress,
+                position: Position { row: 5, col: 10 },
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1621,9 +1644,9 @@ mod tests {
         let result = parse_input(input);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Mouse(MouseInput {
-                event: MouseEvent::LeftRelease,
-                position: TerminalPosition::row_col(5, 10),
+            Some(Input::Mouse(MouseInput {
+                kind: MouseInputKind::LeftRelease,
+                position: Position { row: 5, col: 10 },
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1638,9 +1661,9 @@ mod tests {
         let result = parse_input(input);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Mouse(MouseInput {
-                event: MouseEvent::LeftPress,
-                position: TerminalPosition::row_col(5, 10),
+            Some(Input::Mouse(MouseInput {
+                kind: MouseInputKind::LeftPress,
+                position: Position { row: 5, col: 10 },
                 ctrl: true,
                 alt: false,
                 shift: false,
@@ -1652,9 +1675,9 @@ mod tests {
         let result = parse_input(input);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Mouse(MouseInput {
-                event: MouseEvent::LeftPress,
-                position: TerminalPosition::row_col(5, 10),
+            Some(Input::Mouse(MouseInput {
+                kind: MouseInputKind::LeftPress,
+                position: Position { row: 5, col: 10 },
                 ctrl: false,
                 alt: true,
                 shift: false,
@@ -1666,9 +1689,9 @@ mod tests {
         let result = parse_input(input);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Mouse(MouseInput {
-                event: MouseEvent::LeftPress,
-                position: TerminalPosition::row_col(5, 10),
+            Some(Input::Mouse(MouseInput {
+                kind: MouseInputKind::LeftPress,
+                position: Position { row: 5, col: 10 },
                 ctrl: false,
                 alt: false,
                 shift: true,
@@ -1683,9 +1706,9 @@ mod tests {
         let result = parse_input(input);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Mouse(MouseInput {
-                event: MouseEvent::ScrollUp,
-                position: TerminalPosition::row_col(5, 10),
+            Some(Input::Mouse(MouseInput {
+                kind: MouseInputKind::ScrollUp,
+                position: Position { row: 5, col: 10 },
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1697,9 +1720,9 @@ mod tests {
         let result = parse_input(input);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Mouse(MouseInput {
-                event: MouseEvent::ScrollDown,
-                position: TerminalPosition::row_col(5, 10),
+            Some(Input::Mouse(MouseInput {
+                kind: MouseInputKind::ScrollDown,
+                position: Position { row: 5, col: 10 },
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1714,9 +1737,9 @@ mod tests {
         let result = parse_input(input);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Mouse(MouseInput {
-                event: MouseEvent::Drag,
-                position: TerminalPosition::row_col(5, 10),
+            Some(Input::Mouse(MouseInput {
+                kind: MouseInputKind::Drag,
+                position: Position { row: 5, col: 10 },
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1731,9 +1754,9 @@ mod tests {
         let result = parse_input(input);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Mouse(MouseInput {
-                event: MouseEvent::LeftPress,
-                position: TerminalPosition::row_col(0, 0),
+            Some(Input::Mouse(MouseInput {
+                kind: MouseInputKind::LeftPress,
+                position: Position { row: 0, col: 0 },
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1745,9 +1768,9 @@ mod tests {
         let result = parse_input(input);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Mouse(MouseInput {
-                event: MouseEvent::LeftPress,
-                position: TerminalPosition::row_col(199, 99), // row: 200-1, col: 100-1
+            Some(Input::Mouse(MouseInput {
+                kind: MouseInputKind::LeftPress,
+                position: Position { row: 199, col: 99 }, // row: 200-1, col: 100-1
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1762,9 +1785,9 @@ mod tests {
         let result = parse_input(input);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Mouse(MouseInput {
-                event: MouseEvent::LeftPress,
-                position: TerminalPosition::row_col(0, 0), // saturating_sub(1) on 0 = 0
+            Some(Input::Mouse(MouseInput {
+                kind: MouseInputKind::LeftPress,
+                position: Position { row: 0, col: 0 }, // saturating_sub(1) on 0 = 0
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1776,9 +1799,9 @@ mod tests {
         let result = parse_input(input);
         assert_eq!(
             result.0,
-            Some(TerminalInput::Mouse(MouseInput {
-                event: MouseEvent::LeftPress,
-                position: TerminalPosition::row_col(0, 0), // 33-33 = 0
+            Some(Input::Mouse(MouseInput {
+                kind: MouseInputKind::LeftPress,
+                position: Position { row: 0, col: 0 }, // 33-33 = 0
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1787,16 +1810,16 @@ mod tests {
     }
 
     #[test]
-    fn test_input_stream_mouse_events() {
-        let mut buffer = InputStream::new();
+    fn test_input_decoder_mouse_inputs() {
+        let mut buffer = InputDecoder::new();
 
         // A mouse click.
         buffer.feed(b"\x1b[<0;10;5M");
         assert_eq!(
             buffer.next(),
-            Some(TerminalInput::Mouse(MouseInput {
-                event: MouseEvent::LeftPress,
-                position: TerminalPosition::row_col(4, 9),
+            Some(Input::Mouse(MouseInput {
+                kind: MouseInputKind::LeftPress,
+                position: Position { row: 4, col: 9 },
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1807,9 +1830,9 @@ mod tests {
         buffer.feed(b"\x1b[<0;10;5M\x1b[<0;10;5m");
         assert_eq!(
             buffer.next(),
-            Some(TerminalInput::Mouse(MouseInput {
-                event: MouseEvent::LeftPress,
-                position: TerminalPosition::row_col(4, 9),
+            Some(Input::Mouse(MouseInput {
+                kind: MouseInputKind::LeftPress,
+                position: Position { row: 4, col: 9 },
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1817,9 +1840,9 @@ mod tests {
         );
         assert_eq!(
             buffer.next(),
-            Some(TerminalInput::Mouse(MouseInput {
-                event: MouseEvent::LeftRelease,
-                position: TerminalPosition::row_col(4, 9),
+            Some(Input::Mouse(MouseInput {
+                kind: MouseInputKind::LeftRelease,
+                position: Position { row: 4, col: 9 },
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -2137,7 +2160,7 @@ mod tests {
             let (input, consumed) = parse_input(&bytes);
             assert_eq!(
                 input,
-                Some(TerminalInput::Key(key)),
+                Some(Input::Key(key)),
                 "round-trip mismatch: {key:?} -> {bytes:?}"
             );
             assert_eq!(
@@ -2194,13 +2217,13 @@ mod tests {
         Ok(())
     }
 
-    /// `InputStream::next` must agree with a model that applies
+    /// `InputDecoder::next` must agree with a model that applies
     /// `parse_input` repeatedly to the same bytes: the same event
     /// sequence, stopping at the same incomplete or fully consumed
     /// sequence.
     #[test]
-    fn pbt_input_stream_matches_parse_model() -> noprop::TestResult {
-        let observed_event = Cell::new(false);
+    fn pbt_input_decoder_matches_parse_model() -> noprop::TestResult {
+        let observed_input = Cell::new(false);
         let observed_partial = Cell::new(false);
         let observed_unknown = Cell::new(false);
         let observed_pending_escape = Cell::new(false);
@@ -2208,7 +2231,7 @@ mod tests {
         let mut runner = noprop::Runner::new(seed);
         runner.run(256, |ctx| {
             let bytes = sample_pbt_fragments(ctx);
-            let mut buffer = InputStream::new();
+            let mut buffer = InputDecoder::new();
             buffer.feed(&bytes);
             let mut actual = Vec::new();
             let actual_partial;
@@ -2261,7 +2284,7 @@ mod tests {
                 buffer.commit_escape();
                 assert_eq!(
                     buffer.next(),
-                    Some(TerminalInput::Key(KeyInput {
+                    Some(Input::Key(KeyInput {
                         ctrl: false,
                         alt: false,
                         code: KeyCode::Escape,
@@ -2281,7 +2304,7 @@ mod tests {
                 );
             }
             if !actual.is_empty() {
-                observed_event.set(true);
+                observed_input.set(true);
             }
             if expected_partial {
                 observed_partial.set(true);
@@ -2291,7 +2314,7 @@ mod tests {
             }
             Ok(())
         })?;
-        assert!(observed_event.get(), "no case parsed any event\n{runner}");
+        assert!(observed_input.get(), "no case parsed any input\n{runner}");
         assert!(
             observed_partial.get(),
             "no case stopped at an incomplete sequence\n{runner}"
