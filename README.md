@@ -10,41 +10,36 @@ A Rust library for building terminal user interface (TUI) applications on Unix s
 
 ## Overview
 
-`tuinix` provides a lightweight foundation for building terminal-based user interfaces with minimal dependencies (only `libc` is required). The library offers a clean API for:
+The library offers a clean API for:
 
 - Managing the terminal device (raw mode, alternate screen)
-- Capturing and processing keyboard input
+- Parsing keyboard and mouse input
 - Drawing styled text with ANSI colors
 - Handling terminal resize events
-- Creating efficient terminal frames with differential updates
-- Non-blocking input and resize notifications for use with external event loops
+- Rendering frames with differential updates
 
 ## Architecture
 
 The library separates the *I/O* of a terminal from the *pure data* that an
 application works with.
 
-- [`TerminalDriver`] owns the file descriptors and terminal modes. It is
-  responsible for entering and leaving raw mode and the alternate screen, and
-  it implements [`Read`](std::io::Read) and [`Write`](std::io::Write) so an
-  application can read raw input bytes from the terminal and write raw output
-  bytes back to it.
-- [`InputDecoder`] is a pure input parser. It accumulates raw bytes and yields
-  parsed [`Input`] values, but it never performs I/O itself.
-- [`Frame`] is a pure frame buffer. It renders itself into a byte
-  buffer, comparing against a previous frame to redraw only what changed, and
-  it never performs I/O itself.
+- `TerminalDriver` owns the file descriptors and terminal modes. It enters and
+  leaves raw mode and the alternate screen, and it implements `Read` and `Write`
+  so an application can read raw input bytes and write raw output bytes.
+- `InputDecoder` is a pure input parser. It accumulates raw bytes and yields
+  parsed `Input` values, but it never performs I/O itself.
+- `Frame` is a pure frame buffer. It renders itself into a byte buffer,
+  comparing against a previous frame to redraw only what changed, and it never
+  performs I/O itself.
 
-The application is responsible for driving the loop: read raw bytes from the
-driver, feed them into `InputDecoder::feed()`, pull parsed
-`Input` values out with `InputDecoder::next()`, build a
-`Frame`, render it into a byte buffer with
-`Frame::render()`, and write that buffer to the driver.
+The application drives the loop: read raw bytes from the driver, feed them into
+`InputDecoder`, pull `Input` values out, build a `Frame`, render it into a byte
+buffer, and write that buffer back to the driver.
 
-## Basic Example
+## Example
 
-This example demonstrates basic terminal UI functionality including initializing the terminal,
-drawing styled text, processing keyboard events, and handling terminal resizing.
+The example below initializes the terminal, draws styled text, processes
+keyboard input, and handles terminal resizing.
 
 ```rust,no_run
 use std::io::{Read, Write};
@@ -158,19 +153,6 @@ fn main() -> std::io::Result<()> {
 }
 ```
 
-A lone `ESC` byte is ambiguous: a terminal sends the same byte whether the user
-pressed the Escape key or started a sequence such as `ESC [ A`. Waiting for more
-input reports Escape only when the next key arrives, and the two bytes then read
-as one Alt+key sequence. The fix is to poll with a short timeout while
-`InputDecoder::has_uncommitted_escape()` is `true`, and to commit the byte with
-`InputDecoder::commit_escape()` once the wait has elapsed. The committed Escape
-key is then returned by `InputDecoder::next()`. Around 50 ms, the default of
-Vim's `ttimeoutlen`, is the usual choice.
-
-For a full example of an event loop driven with `poll`, and how to handle keyboard, mouse, and resize events together, see the [demo.rs](examples/demo.rs) example.
-
-The input file descriptor is opened as a fresh, independent description of the
-terminal device, so making it non-blocking does not affect the output file
-descriptor (which would otherwise share an open file description in typical
-interactive terminals, causing `write_all()` to fail with `EAGAIN` /
-`EWOULDBLOCK`).
+For a complete event loop that handles keyboard, mouse, and resize events
+(including how to disambiguate a lone `ESC` key), see the
+[demo.rs](examples/demo.rs) example.
