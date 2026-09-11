@@ -138,6 +138,15 @@
 //! }
 //! ```
 //!
+//! A lone `ESC` byte is ambiguous: a terminal sends the same byte whether the
+//! user pressed the Escape key or started a sequence such as `ESC [ A`. Waiting
+//! for more input reports Escape only when the next key arrives, and the two
+//! bytes then read as one Alt+key sequence. The fix is to poll with a short
+//! timeout while [`InputStream::has_uncommitted_escape()`] is `true`, and to
+//! commit the byte with [`InputStream::commit_escape()`] once the wait has elapsed. The
+//! committed Escape key is then returned by [`InputStream::next()`]. Around
+//! 50 ms, the default of Vim's `ttimeoutlen`, is the usual choice.
+//!
 //! For a full example of an event loop driven with `poll`, and how to handle keyboard, mouse, and resize events together, see the [demo.rs] example.
 //!
 //! [demo.rs]: https://github.com/sile/tuinix/blob/main/examples/demo.rs
