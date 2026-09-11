@@ -1,11 +1,11 @@
 use std::ops::{Add, AddAssign, Sub, SubAssign};
 
-/// The number of rows and columns of a [`TerminalFrame`](crate::TerminalFrame).
+/// The number of rows and columns of a [`Frame`](crate::Frame).
 ///
 /// This structure stores the number of rows (height) and columns (width) that define
 /// the size of a terminal display area.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct TerminalSize {
+pub struct Size {
     /// Number of rows (height) in the terminal.
     pub rows: usize,
 
@@ -13,7 +13,7 @@ pub struct TerminalSize {
     pub cols: usize,
 }
 
-impl TerminalSize {
+impl Size {
     /// A terminal size with zero rows and zero columns.
     pub const EMPTY: Self = Self { rows: 0, cols: 0 };
 
@@ -28,14 +28,14 @@ impl TerminalSize {
     }
 
     /// Returns `true` if the given position falls within the boundaries of this terminal size.
-    pub const fn contains(self, position: TerminalPosition) -> bool {
+    pub const fn contains(self, position: Position) -> bool {
         position.row < self.rows && position.col < self.cols
     }
 
     /// Converts this size into a region starting at the origin.
-    pub const fn to_region(self) -> TerminalRegion {
-        TerminalRegion {
-            position: TerminalPosition::ZERO,
+    pub const fn to_region(self) -> Region {
+        Region {
+            position: Position::ZERO,
             size: self,
         }
     }
@@ -43,7 +43,7 @@ impl TerminalSize {
 
 /// Position within a terminal.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct TerminalPosition {
+pub struct Position {
     /// Row coordinate (vertical position, 0-indexed from the top).
     pub row: usize,
 
@@ -51,7 +51,7 @@ pub struct TerminalPosition {
     pub col: usize,
 }
 
-impl TerminalPosition {
+impl Position {
     /// Origin position (0,0).
     pub const ZERO: Self = Self::row_col(0, 0);
 
@@ -73,7 +73,7 @@ impl TerminalPosition {
     }
 }
 
-impl Add for TerminalPosition {
+impl Add for Position {
     type Output = Self;
 
     fn add(self, other: Self) -> Self::Output {
@@ -84,13 +84,13 @@ impl Add for TerminalPosition {
     }
 }
 
-impl AddAssign for TerminalPosition {
+impl AddAssign for Position {
     fn add_assign(&mut self, other: Self) {
         *self = *self + other;
     }
 }
 
-impl Sub for TerminalPosition {
+impl Sub for Position {
     type Output = Self;
 
     fn sub(self, other: Self) -> Self::Output {
@@ -101,7 +101,7 @@ impl Sub for TerminalPosition {
     }
 }
 
-impl SubAssign for TerminalPosition {
+impl SubAssign for Position {
     fn sub_assign(&mut self, other: Self) {
         *self = *self - other;
     }
@@ -112,22 +112,22 @@ impl SubAssign for TerminalPosition {
 /// This structure represents a bounded area within a terminal, useful for
 /// creating sub-regions or windows within the terminal display.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct TerminalRegion {
+pub struct Region {
     /// The top-left position of the region.
-    pub position: TerminalPosition,
+    pub position: Position,
 
     /// The size (dimensions) of the region.
-    pub size: TerminalSize,
+    pub size: Size,
 }
 
-impl TerminalRegion {
+impl Region {
     /// Returns `true` if the region has zero area (either zero rows or zero columns).
     pub const fn is_empty(self) -> bool {
         self.size.is_empty()
     }
 
     /// Returns `true` if the given position falls within this region.
-    pub const fn contains(self, position: TerminalPosition) -> bool {
+    pub const fn contains(self, position: Position) -> bool {
         position.row >= self.position.row
             && position.col >= self.position.col
             && position.row < self.position.row + self.size.rows
@@ -135,29 +135,29 @@ impl TerminalRegion {
     }
 
     /// Returns the top-left position of the region.
-    pub const fn top_left(self) -> TerminalPosition {
+    pub const fn top_left(self) -> Position {
         self.position
     }
 
     /// Returns the top-right position of the region.
-    pub const fn top_right(self) -> TerminalPosition {
-        TerminalPosition::row_col(
+    pub const fn top_right(self) -> Position {
+        Position::row_col(
             self.position.row,
             self.position.col + self.size.cols.saturating_sub(1),
         )
     }
 
     /// Returns the bottom-left position of the region.
-    pub const fn bottom_left(self) -> TerminalPosition {
-        TerminalPosition::row_col(
+    pub const fn bottom_left(self) -> Position {
+        Position::row_col(
             self.position.row + self.size.rows.saturating_sub(1),
             self.position.col,
         )
     }
 
     /// Returns the bottom-right position of the region.
-    pub const fn bottom_right(self) -> TerminalPosition {
-        TerminalPosition::row_col(
+    pub const fn bottom_right(self) -> Position {
+        Position::row_col(
             self.position.row + self.size.rows.saturating_sub(1),
             self.position.col + self.size.cols.saturating_sub(1),
         )

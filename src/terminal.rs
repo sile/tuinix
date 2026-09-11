@@ -6,7 +6,7 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
-use crate::TerminalSize;
+use crate::Size;
 
 static TERMINAL_EXISTS: AtomicBool = AtomicBool::new(false);
 
@@ -24,7 +24,7 @@ static mut SIGWINCH_PIPE_FD: RawFd = -1;
 /// makes it a good target for implementing [`Read`] and [`Write`], so an
 /// application can read raw bytes from the terminal
 /// and write raw output bytes back to it, feeding those bytes in and out of an
-/// [`InputStream`](crate::InputStream) and a [`TerminalFrame`](crate::TerminalFrame).
+/// [`InputStream`](crate::InputStream) and a [`Frame`](crate::Frame).
 ///
 /// The input and signal file descriptors are non-blocking, so an application can
 /// drive them from an external event loop without affecting the output side.
@@ -46,7 +46,7 @@ pub struct TerminalDriver {
     output: BufWriter<Stdout>,
     signal: File,
     original_termios: libc::termios,
-    cached_size: TerminalSize,
+    cached_size: Size,
 }
 
 impl TerminalDriver {
@@ -99,7 +99,7 @@ impl TerminalDriver {
             output: BufWriter::new(stdout),
             signal: set_sigwinch_handler()?,
             original_termios,
-            cached_size: TerminalSize::default(),
+            cached_size: Size::default(),
         };
 
         // Seed the cached size with the current terminal dimensions.
@@ -204,7 +204,7 @@ impl TerminalDriver {
     ///
     /// Returns an error if the terminal size cannot be re-queried after a resize
     /// notification.
-    pub fn size(&mut self) -> io::Result<TerminalSize> {
+    pub fn size(&mut self) -> io::Result<Size> {
         let mut notified = false;
         loop {
             match self.signal.read(&mut [0u8]) {
@@ -220,11 +220,11 @@ impl TerminalDriver {
         Ok(self.cached_size)
     }
 
-    fn query_terminal_size(&self) -> io::Result<TerminalSize> {
+    fn query_terminal_size(&self) -> io::Result<Size> {
         let mut winsize = MaybeUninit::<libc::winsize>::zeroed();
         if unsafe { libc::ioctl(self.output_fd(), libc::TIOCGWINSZ, winsize.as_mut_ptr()) } == 0 {
             let winsize = unsafe { winsize.assume_init() };
-            return Ok(TerminalSize {
+            return Ok(Size {
                 rows: winsize.ws_row as usize,
                 cols: winsize.ws_col as usize,
             });

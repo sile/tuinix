@@ -1,4 +1,4 @@
-use crate::TerminalPosition;
+use crate::Position;
 
 /// User input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -67,7 +67,7 @@ pub struct MouseInput {
     pub event: MouseEvent,
 
     /// The position where the mouse event occurred.
-    pub position: TerminalPosition,
+    pub position: Position,
 
     /// Indicates whether the Ctrl modifier key was pressed during the event.
     pub ctrl: bool,
@@ -572,10 +572,7 @@ fn create_sgr_mouse_input(button: u16, x: u16, y: u16, is_release: bool) -> Opti
 
     Some(MouseInput {
         event,
-        position: TerminalPosition::row_col(
-            y.saturating_sub(1) as usize,
-            x.saturating_sub(1) as usize,
-        ),
+        position: Position::row_col(y.saturating_sub(1) as usize, x.saturating_sub(1) as usize),
         ctrl,
         alt,
         shift,
@@ -616,10 +613,7 @@ fn create_x10_mouse_input(button_byte: u8, x: u16, y: u16) -> MouseInput {
 
     MouseInput {
         event,
-        position: TerminalPosition::row_col(
-            y.saturating_sub(33) as usize,
-            x.saturating_sub(33) as usize,
-        ),
+        position: Position::row_col(y.saturating_sub(33) as usize, x.saturating_sub(33) as usize),
         ctrl,
         alt,
         shift,
@@ -1365,7 +1359,7 @@ mod tests {
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
                 event: MouseEvent::ScrollUp,
-                position: TerminalPosition::row_col(4, 9), // row: 5-1, col: 10-1
+                position: Position::row_col(4, 9), // row: 5-1, col: 10-1
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1379,7 +1373,7 @@ mod tests {
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
                 event: MouseEvent::ScrollDown,
-                position: TerminalPosition::row_col(4, 9),
+                position: Position::row_col(4, 9),
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1396,7 +1390,7 @@ mod tests {
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
                 event: MouseEvent::LeftPress,
-                position: TerminalPosition::row_col(4, 9), // row: 5-1, col: 10-1
+                position: Position::row_col(4, 9), // row: 5-1, col: 10-1
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1411,7 +1405,7 @@ mod tests {
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
                 event: MouseEvent::MiddlePress,
-                position: TerminalPosition::row_col(4, 9),
+                position: Position::row_col(4, 9),
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1425,7 +1419,7 @@ mod tests {
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
                 event: MouseEvent::RightPress,
-                position: TerminalPosition::row_col(4, 9),
+                position: Position::row_col(4, 9),
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1442,7 +1436,7 @@ mod tests {
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
                 event: MouseEvent::LeftRelease,
-                position: TerminalPosition::row_col(4, 9),
+                position: Position::row_col(4, 9),
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1456,7 +1450,7 @@ mod tests {
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
                 event: MouseEvent::MiddleRelease,
-                position: TerminalPosition::row_col(4, 9),
+                position: Position::row_col(4, 9),
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1470,7 +1464,7 @@ mod tests {
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
                 event: MouseEvent::RightRelease,
-                position: TerminalPosition::row_col(4, 9),
+                position: Position::row_col(4, 9),
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1487,7 +1481,7 @@ mod tests {
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
                 event: MouseEvent::LeftPress,
-                position: TerminalPosition::row_col(4, 9),
+                position: Position::row_col(4, 9),
                 ctrl: true,
                 alt: false,
                 shift: false,
@@ -1501,7 +1495,7 @@ mod tests {
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
                 event: MouseEvent::LeftPress,
-                position: TerminalPosition::row_col(4, 9),
+                position: Position::row_col(4, 9),
                 ctrl: false,
                 alt: true,
                 shift: false,
@@ -1515,7 +1509,7 @@ mod tests {
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
                 event: MouseEvent::LeftPress,
-                position: TerminalPosition::row_col(4, 9),
+                position: Position::row_col(4, 9),
                 ctrl: false,
                 alt: false,
                 shift: true,
@@ -1529,7 +1523,7 @@ mod tests {
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
                 event: MouseEvent::LeftPress,
-                position: TerminalPosition::row_col(4, 9),
+                position: Position::row_col(4, 9),
                 ctrl: true,
                 alt: true,
                 shift: true,
@@ -1545,7 +1539,7 @@ mod tests {
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
                 event: MouseEvent::Drag,
-                position: TerminalPosition::row_col(4, 9),
+                position: Position::row_col(4, 9),
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1559,7 +1553,7 @@ mod tests {
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
                 event: MouseEvent::Drag,
-                position: TerminalPosition::row_col(4, 9),
+                position: Position::row_col(4, 9),
                 ctrl: true,
                 alt: true,
                 shift: true,
@@ -1577,7 +1571,7 @@ mod tests {
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
                 event: MouseEvent::LeftPress,
-                position: TerminalPosition::row_col(5, 10),
+                position: Position::row_col(5, 10),
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1593,7 +1587,7 @@ mod tests {
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
                 event: MouseEvent::MiddlePress,
-                position: TerminalPosition::row_col(5, 10),
+                position: Position::row_col(5, 10),
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1608,7 +1602,7 @@ mod tests {
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
                 event: MouseEvent::RightPress,
-                position: TerminalPosition::row_col(5, 10),
+                position: Position::row_col(5, 10),
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1623,7 +1617,7 @@ mod tests {
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
                 event: MouseEvent::LeftRelease,
-                position: TerminalPosition::row_col(5, 10),
+                position: Position::row_col(5, 10),
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1640,7 +1634,7 @@ mod tests {
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
                 event: MouseEvent::LeftPress,
-                position: TerminalPosition::row_col(5, 10),
+                position: Position::row_col(5, 10),
                 ctrl: true,
                 alt: false,
                 shift: false,
@@ -1654,7 +1648,7 @@ mod tests {
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
                 event: MouseEvent::LeftPress,
-                position: TerminalPosition::row_col(5, 10),
+                position: Position::row_col(5, 10),
                 ctrl: false,
                 alt: true,
                 shift: false,
@@ -1668,7 +1662,7 @@ mod tests {
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
                 event: MouseEvent::LeftPress,
-                position: TerminalPosition::row_col(5, 10),
+                position: Position::row_col(5, 10),
                 ctrl: false,
                 alt: false,
                 shift: true,
@@ -1685,7 +1679,7 @@ mod tests {
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
                 event: MouseEvent::ScrollUp,
-                position: TerminalPosition::row_col(5, 10),
+                position: Position::row_col(5, 10),
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1699,7 +1693,7 @@ mod tests {
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
                 event: MouseEvent::ScrollDown,
-                position: TerminalPosition::row_col(5, 10),
+                position: Position::row_col(5, 10),
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1716,7 +1710,7 @@ mod tests {
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
                 event: MouseEvent::Drag,
-                position: TerminalPosition::row_col(5, 10),
+                position: Position::row_col(5, 10),
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1733,7 +1727,7 @@ mod tests {
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
                 event: MouseEvent::LeftPress,
-                position: TerminalPosition::row_col(0, 0),
+                position: Position::row_col(0, 0),
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1747,7 +1741,7 @@ mod tests {
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
                 event: MouseEvent::LeftPress,
-                position: TerminalPosition::row_col(199, 99), // row: 200-1, col: 100-1
+                position: Position::row_col(199, 99), // row: 200-1, col: 100-1
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1764,7 +1758,7 @@ mod tests {
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
                 event: MouseEvent::LeftPress,
-                position: TerminalPosition::row_col(0, 0), // saturating_sub(1) on 0 = 0
+                position: Position::row_col(0, 0), // saturating_sub(1) on 0 = 0
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1778,7 +1772,7 @@ mod tests {
             result.0,
             Some(TerminalInput::Mouse(MouseInput {
                 event: MouseEvent::LeftPress,
-                position: TerminalPosition::row_col(0, 0), // 33-33 = 0
+                position: Position::row_col(0, 0), // 33-33 = 0
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1796,7 +1790,7 @@ mod tests {
             buffer.next(),
             Some(TerminalInput::Mouse(MouseInput {
                 event: MouseEvent::LeftPress,
-                position: TerminalPosition::row_col(4, 9),
+                position: Position::row_col(4, 9),
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1809,7 +1803,7 @@ mod tests {
             buffer.next(),
             Some(TerminalInput::Mouse(MouseInput {
                 event: MouseEvent::LeftPress,
-                position: TerminalPosition::row_col(4, 9),
+                position: Position::row_col(4, 9),
                 ctrl: false,
                 alt: false,
                 shift: false,
@@ -1819,7 +1813,7 @@ mod tests {
             buffer.next(),
             Some(TerminalInput::Mouse(MouseInput {
                 event: MouseEvent::LeftRelease,
-                position: TerminalPosition::row_col(4, 9),
+                position: Position::row_col(4, 9),
                 ctrl: false,
                 alt: false,
                 shift: false,

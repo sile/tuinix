@@ -1,4 +1,4 @@
-//! Property-based tests for `TerminalFrame`, driven by noprop.
+//! Property-based tests for `Frame`, driven by noprop.
 //!
 //! The properties covered here use only the public API:
 //!
@@ -45,13 +45,13 @@ fn char_width(c: char) -> usize {
 }
 
 /// Builds a valid character for the tests.
-fn ch(value: char, width: usize) -> tuinix::TerminalChar {
-    tuinix::TerminalChar::new(value, width, tuinix::TerminalStyle::new()).expect("valid char")
+fn ch(value: char, width: usize) -> tuinix::Char {
+    tuinix::Char::new(value, width, tuinix::Style::new()).expect("valid char")
 }
 
 /// Pushes a string of text onto the frame, handling newlines and per-character
 /// widths. A zero-width character occupies no column, so it is dropped.
-fn push_text(frame: &mut tuinix::TerminalFrame, text: &str) {
+fn push_text(frame: &mut tuinix::Frame, text: &str) {
     for c in text.chars() {
         match c {
             '\n' => frame.push_newline(),
@@ -65,8 +65,8 @@ fn push_text(frame: &mut tuinix::TerminalFrame, text: &str) {
     }
 }
 
-fn sample_size(ctx: &mut noprop::TestCaseContext) -> tuinix::TerminalSize {
-    tuinix::TerminalSize::rows_cols(
+fn sample_size(ctx: &mut noprop::TestCaseContext) -> tuinix::Size {
+    tuinix::Size::rows_cols(
         noprop::sample_with_boundaries(ctx, &[0usize, 12], noprop::Ratio::one_nth(5), |ctx| {
             noprop::sample_usize_in(ctx, 0..=12)
         }),
@@ -98,7 +98,7 @@ fn sample_text(ctx: &mut noprop::TestCaseContext) -> String {
     text
 }
 
-/// A single write operation on a `TerminalFrame`: a styled character with an
+/// A single write operation on a `Frame`: a styled character with an
 /// explicit width, or a newline.
 #[derive(Debug, Clone, Copy)]
 enum Op {
@@ -128,7 +128,7 @@ struct CursorModel {
 }
 
 impl CursorModel {
-    fn apply(&mut self, op: Op, size: tuinix::TerminalSize) {
+    fn apply(&mut self, op: Op, size: tuinix::Size) {
         match op {
             Op::Newline => {
                 self.row += 1;
@@ -153,7 +153,7 @@ fn push_cursor_matches_model() -> noprop::TestResult {
     let observed_newline = Cell::new(false);
     let observed_clipped = Cell::new(false);
     let runner = run(256, |ctx| {
-        let size = tuinix::TerminalSize::rows_cols(
+        let size = tuinix::Size::rows_cols(
             noprop::sample_with_boundaries(ctx, &[0usize, 12], noprop::Ratio::one_nth(5), |ctx| {
                 noprop::sample_usize_in(ctx, 0..=12)
             }),
@@ -174,7 +174,7 @@ fn push_cursor_matches_model() -> noprop::TestResult {
             col: 0,
             clipped: false,
         };
-        let mut frame = tuinix::TerminalFrame::new(size);
+        let mut frame = tuinix::Frame::new(size);
         for &op in &ops {
             model.apply(op, size);
             match op {
@@ -186,7 +186,7 @@ fn push_cursor_matches_model() -> noprop::TestResult {
         }
         assert_eq!(
             frame.cursor(),
-            tuinix::TerminalPosition::row_col(model.row, model.col),
+            tuinix::Position::row_col(model.row, model.col),
             "cursor mismatch for {ops:?}"
         );
         if ops.iter().any(|op| matches!(op, Op::Char(_, w) if *w > 0)) {
@@ -229,31 +229,31 @@ fn draw_matches_model() -> noprop::TestResult {
         let structured = noprop::sample_bool(ctx);
         let (size, dest_text, src_text, position) = if structured {
             (
-                tuinix::TerminalSize::rows_cols(1, 4),
+                tuinix::Size::rows_cols(1, 4),
                 "\u{3042}".to_string(),
                 "x".to_string(),
-                tuinix::TerminalPosition::row_col(0, 1),
+                tuinix::Position::row_col(0, 1),
             )
         } else {
             (
                 sample_size(ctx),
                 sample_text(ctx),
                 sample_text(ctx),
-                tuinix::TerminalPosition::row_col(
+                tuinix::Position::row_col(
                     noprop::sample_usize_in(ctx, 0..=16),
                     noprop::sample_usize_in(ctx, 0..=16),
                 ),
             )
         };
 
-        let mut dest = tuinix::TerminalFrame::new(size);
+        let mut dest = tuinix::Frame::new(size);
         push_text(&mut dest, &dest_text);
-        let mut src = tuinix::TerminalFrame::new(size);
+        let mut src = tuinix::Frame::new(size);
         push_text(&mut src, &src_text);
 
         let mut expected: BTreeMap<_, _> = dest
             .chars()
-            .filter(|(_, c)| *c != tuinix::TerminalChar::BLANK)
+            .filter(|(_, c)| *c != tuinix::Char::BLANK)
             .collect();
         let mut removals = 0usize;
         let mut skipped = 0usize;
@@ -264,14 +264,14 @@ fn draw_matches_model() -> noprop::TestResult {
                 continue;
             }
             if let Some((&prev_pos, prev_c)) = expected.range(..target_pos).next_back() {
-                let end_pos = prev_pos + tuinix::TerminalPosition::col(prev_c.width());
+                let end_pos = prev_pos + tuinix::Position::col(prev_c.width());
                 if target_pos < end_pos {
                     expected.remove(&prev_pos);
                     removals += 1;
                 }
             }
             for i in 0..c.width() {
-                expected.remove(&(target_pos + tuinix::TerminalPosition::col(i)));
+                expected.remove(&(target_pos + tuinix::Position::col(i)));
             }
             expected.insert(target_pos, c);
         }
@@ -279,11 +279,11 @@ fn draw_matches_model() -> noprop::TestResult {
         dest.draw(position, &src);
         let actual: BTreeMap<_, _> = dest
             .chars()
-            .filter(|(_, c)| *c != tuinix::TerminalChar::BLANK)
+            .filter(|(_, c)| *c != tuinix::Char::BLANK)
             .collect();
         let expected: BTreeMap<_, _> = expected
             .into_iter()
-            .filter(|(_, c)| *c != tuinix::TerminalChar::BLANK)
+            .filter(|(_, c)| *c != tuinix::Char::BLANK)
             .collect();
         assert_eq!(actual, expected, "draw mismatch at {position:?}");
         if removals > 0 {
@@ -314,8 +314,8 @@ fn draw_matches_model() -> noprop::TestResult {
 /// width, the way a terminal does.
 #[derive(Debug)]
 struct ScreenModel {
-    cells: BTreeMap<tuinix::TerminalPosition, char>,
-    cursor: tuinix::TerminalPosition,
+    cells: BTreeMap<tuinix::Position, char>,
+    cursor: tuinix::Position,
     writes: usize,
 }
 
@@ -323,7 +323,7 @@ impl ScreenModel {
     fn new() -> Self {
         Self {
             cells: BTreeMap::new(),
-            cursor: tuinix::TerminalPosition::ZERO,
+            cursor: tuinix::Position::ZERO,
             writes: 0,
         }
     }
@@ -342,7 +342,7 @@ impl ScreenModel {
                 match remainder[end] {
                     b'H' => {
                         let (row, col) = params.split_once(';').expect("row;col");
-                        self.cursor = tuinix::TerminalPosition::row_col(
+                        self.cursor = tuinix::Position::row_col(
                             row.parse::<usize>().expect("row") - 1,
                             col.parse::<usize>().expect("col") - 1,
                         );
@@ -369,13 +369,12 @@ impl ScreenModel {
             // invalidates a wide character written to its left that spans into
             // the new character's first cell.
             if let Some((&pos, prev)) = self.cells.range(..self.cursor).next_back()
-                && self.cursor < pos + tuinix::TerminalPosition::col(char_width(*prev))
+                && self.cursor < pos + tuinix::Position::col(char_width(*prev))
             {
                 self.cells.remove(&pos);
             }
             for i in 0..width {
-                self.cells
-                    .remove(&(self.cursor + tuinix::TerminalPosition::col(i)));
+                self.cells.remove(&(self.cursor + tuinix::Position::col(i)));
             }
             self.cells.insert(self.cursor, c);
             self.cursor.col += width;
@@ -389,10 +388,7 @@ impl ScreenModel {
     /// After the terminal shrinks, cells the previous frame painted outside the
     /// new area stay in the model but are no longer visible, so only the cells
     /// inside the current size are compared.
-    fn visible_cells(
-        &self,
-        size: tuinix::TerminalSize,
-    ) -> BTreeMap<tuinix::TerminalPosition, char> {
+    fn visible_cells(&self, size: tuinix::Size) -> BTreeMap<tuinix::Position, char> {
         self.cells
             .iter()
             .filter(|(pos, _)| pos.row < size.rows && pos.col < size.cols)
@@ -402,7 +398,7 @@ impl ScreenModel {
 }
 
 /// The characters a frame paints, including the blanks of unwritten positions.
-fn rendered_cells(frame: &tuinix::TerminalFrame) -> BTreeMap<tuinix::TerminalPosition, char> {
+fn rendered_cells(frame: &tuinix::Frame) -> BTreeMap<tuinix::Position, char> {
     frame.chars().map(|(pos, c)| (pos, c.value())).collect()
 }
 
@@ -414,7 +410,7 @@ fn render_full_redraw_matches_model() -> noprop::TestResult {
     let observed_blank = Cell::new(false);
     let runner = run(256, |ctx| {
         let size = sample_size(ctx);
-        let mut frame = tuinix::TerminalFrame::new(size);
+        let mut frame = tuinix::Frame::new(size);
         push_text(&mut frame, &sample_text(ctx));
 
         let out = frame.render(None, None);
@@ -471,15 +467,15 @@ fn render_diff_matches_model() -> noprop::TestResult {
         } else {
             sample_size(ctx)
         };
-        let mut prev = tuinix::TerminalFrame::new(prev_size);
+        let mut prev = tuinix::Frame::new(prev_size);
         push_text(&mut prev, &sample_text(ctx));
 
-        let mut frame = tuinix::TerminalFrame::new(size);
+        let mut frame = tuinix::Frame::new(size);
         push_text(&mut frame, &sample_text(ctx));
 
         let cursor = if !size.is_empty() && noprop::sample_bool(ctx) {
             observed_cursor.set(true);
-            Some(tuinix::TerminalPosition::row_col(
+            Some(tuinix::Position::row_col(
                 noprop::sample_usize_in(ctx, 0..size.rows),
                 noprop::sample_usize_in(ctx, 0..size.cols),
             ))

@@ -3,7 +3,7 @@
 //! This demo drives a [`TerminalDriver`](tuinix::TerminalDriver) from a
 //! `libc::poll` event loop, feeding raw bytes into an
 //! [`InputStream`](tuinix::InputStream) and drawing frames with
-//! [`TerminalFrame::render`](tuinix::TerminalFrame::render). It shows:
+//! [`Frame::render`](tuinix::Frame::render). It shows:
 //!
 //! * entering and leaving raw mode (via [`TerminalDriver`](tuinix::TerminalDriver)),
 //! * reading raw terminal bytes and turning them into
@@ -17,12 +17,10 @@
 
 use std::io::{Read, Write};
 
-const TITLE_STYLE: tuinix::TerminalStyle = tuinix::TerminalStyle::new().bold();
-const INFO_STYLE: tuinix::TerminalStyle = tuinix::TerminalStyle::new().underline();
-const BODY_STYLE: tuinix::TerminalStyle = tuinix::TerminalStyle::new();
-const MOUSE_STYLE: tuinix::TerminalStyle = tuinix::TerminalStyle::new()
-    .bold()
-    .fg_color(tuinix::TerminalColor::GREEN);
+const TITLE_STYLE: tuinix::Style = tuinix::Style::new().bold();
+const INFO_STYLE: tuinix::Style = tuinix::Style::new().underline();
+const BODY_STYLE: tuinix::Style = tuinix::Style::new();
+const MOUSE_STYLE: tuinix::Style = tuinix::Style::new().bold().fg_color(tuinix::Color::GREEN);
 
 /// How long to wait for the rest of an escape sequence before a lone `ESC` byte
 /// is treated as the Escape key.
@@ -42,15 +40,15 @@ const MAX_BUFFERED_BYTES: usize = 4096;
 
 // NOTE: This is an ASCII-oriented demo helper: every character is assigned a width of 1.
 // Non-ASCII characters (for example CJK or emoji) would need the caller to supply their
-// actual width, because TerminalFrame does not compute character widths itself.
-fn write_text(frame: &mut tuinix::TerminalFrame, text: &str, style: tuinix::TerminalStyle) {
+// actual width, because Frame does not compute character widths itself.
+fn write_text(frame: &mut tuinix::Frame, text: &str, style: tuinix::Style) {
     for c in text.chars() {
         match c {
             '\n' => frame.push_newline(),
             '\t' => frame.push_tab(8),
             c if c.is_control() => {}
             c => {
-                frame.push_char(tuinix::TerminalChar::new(c, 1, style).expect("valid char"));
+                frame.push_char(tuinix::Char::new(c, 1, style).expect("valid char"));
             }
         }
     }
@@ -69,7 +67,7 @@ fn would_block_as_none<T>(result: std::io::Result<T>) -> std::io::Result<Option<
     }
 }
 
-fn draw_header(frame: &mut tuinix::TerminalFrame) {
+fn draw_header(frame: &mut tuinix::Frame) {
     write_text(frame, "tuinix Demo\n", TITLE_STYLE);
     write_text(frame, "\nInstructions:\n", INFO_STYLE);
     write_text(
@@ -92,8 +90,8 @@ fn draw_header(frame: &mut tuinix::TerminalFrame) {
 
 fn handle_resize(
     driver: &mut tuinix::TerminalDriver,
-    prev_frame: &mut Option<tuinix::TerminalFrame>,
-    cursor: Option<tuinix::TerminalPosition>,
+    prev_frame: &mut Option<tuinix::Frame>,
+    cursor: Option<tuinix::Position>,
 ) -> std::io::Result<()> {
     let new_size = driver.size()?;
     // Only redraw if the dimensions actually changed. If the previously rendered
@@ -101,7 +99,7 @@ fn handle_resize(
     if prev_frame.as_ref().is_some_and(|f| f.size() == new_size) {
         return Ok(());
     }
-    let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(new_size);
+    let mut frame: tuinix::Frame = tuinix::Frame::new(new_size);
     draw_header(&mut frame);
     write_text(
         &mut frame,
@@ -123,13 +121,13 @@ fn handle_resize(
 /// keep running.
 fn handle_event(
     driver: &mut tuinix::TerminalDriver,
-    prev_frame: &mut Option<tuinix::TerminalFrame>,
-    cursor: Option<tuinix::TerminalPosition>,
+    prev_frame: &mut Option<tuinix::Frame>,
+    cursor: Option<tuinix::Position>,
     event: tuinix::TerminalInput,
 ) -> std::io::Result<bool> {
     // The frame is built at the terminal's current dimensions, so a resize is
     // picked up on whichever event is handled first afterwards.
-    let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(driver.size()?);
+    let mut frame: tuinix::Frame = tuinix::Frame::new(driver.size()?);
     draw_header(&mut frame);
 
     match event {
@@ -220,7 +218,7 @@ fn main() -> std::io::Result<()> {
     driver.enable_mouse_input()?;
 
     // Build an initial frame at the terminal's current dimensions.
-    let mut frame: tuinix::TerminalFrame = tuinix::TerminalFrame::new(driver.size()?);
+    let mut frame: tuinix::Frame = tuinix::Frame::new(driver.size()?);
     draw_header(&mut frame);
     write_text(&mut frame, "\nLast event: None\n", INFO_STYLE);
 

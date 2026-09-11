@@ -2,9 +2,9 @@
 //!
 //! The properties covered here use only the public API:
 //!
-//! - `TerminalPosition::add` and `sub` follow the documented component-wise
+//! - `Position::add` and `sub` follow the documented component-wise
 //!   semantics (plain addition, saturating subtraction).
-//! - The `take` / `drop` / `expand` operations of `TerminalRegion` match an
+//! - The `take` / `drop` / `expand` operations of `Region` match an
 //!   independent `(position, size)` model, and `contains` agrees with a
 //!   cell-set model on random probe points.
 
@@ -47,11 +47,11 @@ const REGION_OPS: [RegionOp; 12] = [
 ];
 
 /// An independent `(position, size)` model of region arithmetic, written
-/// without the `TerminalRegion` method chain under test.
+/// without the `Region` method chain under test.
 #[derive(Debug, Clone, Copy)]
 struct RegionModel {
-    position: tuinix::TerminalPosition,
-    size: tuinix::TerminalSize,
+    position: tuinix::Position,
+    size: tuinix::Size,
 }
 
 impl RegionModel {
@@ -116,18 +116,18 @@ impl RegionModel {
         Self { position, size }
     }
 
-    fn cells(self) -> BTreeSet<tuinix::TerminalPosition> {
+    fn cells(self) -> BTreeSet<tuinix::Position> {
         let mut cells = BTreeSet::new();
         for row in self.position.row..self.position.row + self.size.rows {
             for col in self.position.col..self.position.col + self.size.cols {
-                cells.insert(tuinix::TerminalPosition::row_col(row, col));
+                cells.insert(tuinix::Position::row_col(row, col));
             }
         }
         cells
     }
 }
 
-fn apply_op(region: tuinix::TerminalRegion, op: RegionOp, n: usize) -> tuinix::TerminalRegion {
+fn apply_op(region: tuinix::Region, op: RegionOp, n: usize) -> tuinix::Region {
     match op {
         RegionOp::TakeTop => region.take_top(n),
         RegionOp::TakeBottom => region.take_bottom(n),
@@ -150,7 +150,7 @@ fn sample_amount(ctx: &mut noprop::TestCaseContext) -> usize {
     })
 }
 
-/// The `take` / `drop` / `expand` operations of `TerminalRegion` must agree
+/// The `take` / `drop` / `expand` operations of `Region` must agree
 /// with the `(position, size)` model after every step, and `contains` must
 /// agree with the cell-set model on a random probe.
 #[test]
@@ -160,15 +160,15 @@ fn region_operations_match_model() -> noprop::TestResult {
     let observed_zero = Cell::new(false);
     let observed_max = Cell::new(false);
     let runner = run(256, |ctx| {
-        let position = tuinix::TerminalPosition::row_col(
+        let position = tuinix::Position::row_col(
             noprop::sample_usize_in(ctx, 0..=10),
             noprop::sample_usize_in(ctx, 0..=10),
         );
-        let size = tuinix::TerminalSize::rows_cols(
+        let size = tuinix::Size::rows_cols(
             noprop::sample_usize_in(ctx, 0..=10),
             noprop::sample_usize_in(ctx, 0..=10),
         );
-        let mut region = tuinix::TerminalRegion { position, size };
+        let mut region = tuinix::Region { position, size };
         let mut model = RegionModel { position, size };
         let steps =
             noprop::sample_with_boundaries(ctx, &[1usize, 32], noprop::Ratio::one_nth(5), |ctx| {
@@ -184,7 +184,7 @@ fn region_operations_match_model() -> noprop::TestResult {
                 (model.position, model.size),
                 "{op:?}({n}) mismatch"
             );
-            let probe = tuinix::TerminalPosition::row_col(
+            let probe = tuinix::Position::row_col(
                 noprop::sample_usize_in(ctx, 0..=20),
                 noprop::sample_usize_in(ctx, 0..=20),
             );
@@ -219,7 +219,7 @@ fn region_operations_match_model() -> noprop::TestResult {
 }
 
 /// Samples a position with a bias toward the boundaries of the range.
-fn sample_position(ctx: &mut noprop::TestCaseContext) -> tuinix::TerminalPosition {
+fn sample_position(ctx: &mut noprop::TestCaseContext) -> tuinix::Position {
     let row =
         noprop::sample_with_boundaries(ctx, &[0usize, 1000], noprop::Ratio::one_nth(5), |ctx| {
             noprop::sample_usize_in(ctx, 0..=1000)
@@ -228,10 +228,10 @@ fn sample_position(ctx: &mut noprop::TestCaseContext) -> tuinix::TerminalPositio
         noprop::sample_with_boundaries(ctx, &[0usize, 1000], noprop::Ratio::one_nth(5), |ctx| {
             noprop::sample_usize_in(ctx, 0..=1000)
         });
-    tuinix::TerminalPosition::row_col(row, col)
+    tuinix::Position::row_col(row, col)
 }
 
-/// `TerminalPosition::add` adds component-wise and `sub` saturates
+/// `Position::add` adds component-wise and `sub` saturates
 /// component-wise, as documented.
 #[test]
 fn position_add_sub_match_definitions() -> noprop::TestResult {
