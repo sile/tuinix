@@ -24,7 +24,7 @@ static mut SIGWINCH_PIPE_FD: RawFd = -1;
 /// makes it a good target for implementing [`Read`] and [`Write`], so an
 /// application can read raw bytes from the terminal
 /// and write raw output bytes back to it, feeding those bytes in and out of an
-/// [`InputStream`](crate::InputStream) and a [`Frame`](crate::Frame).
+/// [`InputDecoder`](crate::InputDecoder) and a [`Frame`](crate::Frame).
 ///
 /// The input and signal file descriptors are non-blocking, so an application can
 /// drive them from an external event loop without affecting the output side.
@@ -166,8 +166,8 @@ impl TerminalDriver {
     /// Enables mouse input reporting in the terminal.
     ///
     /// Mouse events will be reported as raw bytes on the input stream, which the
-    /// application feeds into [`InputStream::feed()`](crate::InputStream::feed)
-    /// so they parse as [`TerminalInput::Mouse`](crate::TerminalInput::Mouse) values.
+    /// application feeds into [`InputDecoder::feed()`](crate::InputDecoder::feed)
+    /// so they parse as [`Input::Mouse`](crate::Input::Mouse) values.
     pub fn enable_mouse_input(&mut self) -> io::Result<()> {
         // Enable mouse reporting in SGR mode (more reliable than X10/X11 mode)
         write!(self.output, "\x1b[?1000h")?; // Enable basic mouse reporting

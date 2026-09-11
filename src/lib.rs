@@ -15,8 +15,8 @@
 //! The library separates the *I/O* of a terminal from the *pure data* that an
 //! application works with.
 //!
-//! - [`InputStream`] is a pure input parser. It accumulates raw bytes and yields
-//!   parsed [`TerminalInput`] values, but it never performs I/O itself.
+//! - [`InputDecoder`] is a pure input parser. It accumulates raw bytes and yields
+//!   parsed [`Input`] values, but it never performs I/O itself.
 //! - [`Frame`] is a pure frame buffer. It renders itself into a byte
 //!   buffer, comparing against a previous frame to redraw only what changed, and
 //!   it never performs I/O itself.
@@ -27,8 +27,8 @@
 //!   bytes back to it.
 //!
 //! The application is responsible for driving the loop: read raw bytes from the
-//! driver, feed them into [`InputStream::feed()`], pull parsed
-//! [`TerminalInput`] values out with [`InputStream::next()`], build a
+//! driver, feed them into [`InputDecoder::feed()`], pull parsed
+//! [`Input`] values out with [`InputDecoder::next()`], build a
 //! [`Frame`], render it into a byte buffer with
 //! [`Frame::render()`], and write that buffer to the driver.
 //!
@@ -44,7 +44,7 @@
 //!     // Initialize terminal driver and query its size
 //!     let mut driver = tuinix::TerminalDriver::new()?;
 //!     let mut size = driver.size()?;
-//!     let mut input = tuinix::InputStream::new();
+//!     let mut input = tuinix::InputDecoder::new();
 //!     let cursor = None;
 //!     let mut prev = None;
 //!
@@ -125,7 +125,7 @@
 //!             while let Some(n @ 1..) = would_block_as_none(driver.read(&mut raw))? {
 //!                 input.feed(&raw[..n]);
 //!                 while let Some(event) = input.next() {
-//!                     let tuinix::TerminalInput::Key(key_input) = event else {
+//!                     let tuinix::Input::Key(key_input) = event else {
 //!                         continue;  // Skip mouse events
 //!                     };
 //!
@@ -148,9 +148,9 @@
 //! user pressed the Escape key or started a sequence such as `ESC [ A`. Waiting
 //! for more input reports Escape only when the next key arrives, and the two
 //! bytes then read as one Alt+key sequence. The fix is to poll with a short
-//! timeout while [`InputStream::has_uncommitted_escape()`] is `true`, and to
-//! commit the byte with [`InputStream::commit_escape()`] once the wait has elapsed. The
-//! committed Escape key is then returned by [`InputStream::next()`]. Around
+//! timeout while [`InputDecoder::has_uncommitted_escape()`] is `true`, and to
+//! commit the byte with [`InputDecoder::commit_escape()`] once the wait has elapsed. The
+//! committed Escape key is then returned by [`InputDecoder::next()`]. Around
 //! 50 ms, the default of Vim's `ttimeoutlen`, is the usual choice.
 //!
 //! For a full example of an event loop driven with `poll`, and how to handle keyboard, mouse, and resize events together, see the [demo.rs] example.
@@ -167,7 +167,7 @@ mod terminal;
 
 pub use frame::{Char, Frame};
 pub use geometry::{Position, Region, Size};
-pub use input::{InputStream, KeyCode, KeyInput, MouseEvent, MouseInput, TerminalInput};
+pub use input::{Input, InputDecoder, KeyCode, KeyInput, MouseInput, MouseInputKind};
 pub use style::{Color, Style};
 pub use terminal::TerminalDriver;
 
