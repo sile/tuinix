@@ -397,6 +397,18 @@ fn parse_simple_csi_key(bytes: &[u8]) -> (Option<Input>, usize) {
 }
 
 fn parse_complex_csi_key(bytes: &[u8]) -> (Option<Input>, usize) {
+    // Handle sequences like ESC [ 1 A (an arrow with an explicit row count).
+    //
+    // ANSI defines `CSI A` as `CSI 1 A`, so a digit before the final byte is a
+    // valid row count, not an unknown prefix. The count is discarded: `KeyCode`
+    // cannot represent how far to move, and this keeps `ESC [ <digit> A` the
+    // same shape as `ESC [ A` and `ESC [ 1 ; 5 A` (the modifier is what a key
+    // event can carry; the count is not). Consuming the whole sequence here is
+    // what stops a complete input from being held forever as "incomplete".
+    if bytes.len() >= 4 && bytes[2].is_ascii_digit() && matches!(bytes[3], b'A'..=b'D') {
+        return parse_numbered_arrow_key(bytes);
+    }
+
     // Handle sequences like ESC [ 1 ; 5 A (modified arrow keys)
     if bytes.len() >= 6 && bytes[2] == b'1' && bytes[3] == b';' && matches!(bytes[5], b'A'..=b'D') {
         return parse_modified_arrow_key(bytes);
@@ -417,6 +429,18 @@ fn parse_complex_csi_key(bytes: &[u8]) -> (Option<Input>, usize) {
     } else {
         (None, 3)
     }
+}
+
+fn parse_numbered_arrow_key(bytes: &[u8]) -> (Option<Input>, usize) {
+    let code = match bytes[3] {
+        b'A' => KeyCode::Up,
+        b'B' => KeyCode::Down,
+        b'C' => KeyCode::Right,
+        b'D' => KeyCode::Left,
+        _ => return (None, 4),
+    };
+
+    (Some(create_key_input(false, false, code)), 4)
 }
 
 fn parse_modified_arrow_key(bytes: &[u8]) -> (Option<Input>, usize) {
@@ -1125,6 +1149,37 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_numbered_arrow_keys() {
+        // ANSI makes `CSI A` and `CSI 1 A` the same input, and `CSI 5 A` is
+        // "up 5 rows". The count cannot be represented, so it is discarded and
+        // every digit-prefixed arrow maps to the arrow direction.
+        for digit in b'1'..=b'6' {
+            for (suffix, code) in [
+                (b'A', KeyCode::Up),
+                (b'B', KeyCode::Down),
+                (b'C', KeyCode::Right),
+                (b'D', KeyCode::Left),
+            ] {
+                let bytes = [0x1b, b'[', digit, suffix];
+                let result = parse_input(&bytes);
+                assert_eq!(
+                    result.0,
+                    Some(Input::Key(KeyInput {
+                        ctrl: false,
+                        alt: false,
+                        code,
+                    })),
+                    "ESC [{}{}] should be a known arrow, not held or dropped",
+                    char::from(digit),
+                    char::from(suffix),
+                );
+                // The whole sequence is consumed, so nothing is left pending.
+                assert_eq!(result.1, bytes.len());
+            }
+        }
+    }
+
+    #[test]
     fn test_parse_empty_input() {
         let result = parse_input(&[]);
         assert_eq!(result.0, None);
@@ -1169,6 +1224,40 @@ mod tests {
             }))
         );
         assert!(!buffer.has_pending());
+    }
+
+    #[test]
+    fn test_input_decoder_consumes_numbered_arrow_without_leaving_bytes() {
+        // D1: a complete numbered arrow must consume its bytes so the buffer
+        // does not grow without bound.
+        let mut buffer = InputDecoder::new();
+        buffer.feed(b"\x1b[5A");
+        assert_eq!(
+            buffer.next(),
+            Some(Input::Key(KeyInput {
+                ctrl: false,
+                alt: false,
+                code: KeyCode::Up,
+            }))
+        );
+        assert_eq!(buffer.buffered_bytes(), 0);
+        assert!(!buffer.has_pending());
+    }
+
+    #[test]
+    fn test_input_decoder_numbered_arrow_matches_split_feed() {
+        // D2: feeding the sequence byte by byte yields the same input and the
+        // same drained buffer as feeding it whole.
+        let mut whole = InputDecoder::new();
+        whole.feed(b"\x1b[3C");
+
+        let mut split = InputDecoder::new();
+        for byte in b"\x1b[3C" {
+            split.feed(&[*byte]);
+        }
+
+        assert_eq!(split.next(), whole.next());
+        assert_eq!(split.buffered_bytes(), whole.buffered_bytes());
     }
 
     #[test]
