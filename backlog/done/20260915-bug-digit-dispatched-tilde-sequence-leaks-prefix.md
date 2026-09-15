@@ -1,6 +1,6 @@
 # Bug: a digit-dispatched `~` sequence consumes only three bytes and leaks its tail
 
-- Status: open
+- Status: fixed
 
 ## Summary
 
