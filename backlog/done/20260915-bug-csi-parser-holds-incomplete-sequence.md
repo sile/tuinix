@@ -1,6 +1,6 @@
 # Bug: CSI parser holds an incomplete sequence forever
 
-- Status: open
+- Status: fixed
 
 ## Summary
 
