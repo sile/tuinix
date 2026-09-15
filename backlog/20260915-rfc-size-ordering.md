@@ -1,6 +1,6 @@
 # RFC: Stop deriving `Ord` for `Size`
 
-- Status: draft
+- Status: accepted
 
 ## Summary
 
@@ -101,8 +101,23 @@ writes that comparison. Neither needs an `Ord` on `Size`.
 **Keep `Ord` and document it as lexicographic.** Documenting the order does not
 make it useful, and it still leaves the area-comparison mistake available.
 
+**Give `Size` an `area()` helper.** An `area()` method would give the area
+comparison a home, but it would also turn "the area of a display region" into a
+property of `Size`, contradicting the argument for removing `Ord` in the first
+place: the caller is the one that knows which comparison it means, and a caller
+that wants an area writes `a.rows * a.cols < b.rows * b.cols`. The helper is
+also not something most applications need — a TUI more often asks whether a
+region fits inside another than which of two regions is larger. A helper added
+now cannot be taken away later, so it is better to leave it out and add it in a
+follow-up if a real need appears.
+
 ## Unresolved questions
 
-- Should `Size` offer a named area helper (for example an `area()` method) so
-  that the comparison this RFC asks callers to write has a home? If the helper
-  is wanted, it belongs in this proposal or in a follow-up.
+None. The question of an area helper was settled as part of accepting this
+proposal: no helper is added.
+
+## Future possibilities
+
+- An `area()` method on `Size`, if applications turn out to need area
+  comparisons often enough that writing the multiplication at each call site is
+  a burden.
