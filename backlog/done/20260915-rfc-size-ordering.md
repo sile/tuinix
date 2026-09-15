@@ -111,6 +111,13 @@ region fits inside another than which of two regions is larger. A helper added
 now cannot be taken away later, so it is better to leave it out and add it in a
 follow-up if a real need appears.
 
+## Outcome
+
+Implemented in [#31](https://github.com/sile/tuinix/pull/31) (merged as
+`b216395`). `Size` now derives `Debug, Default, Clone, Copy, PartialEq, Eq,
+Hash`; `PartialOrd` and `Ord` are gone, and `Position` is unchanged. Scope
+unchanged from the Decision section: no `area()` helper is added.
+
 ## Unresolved questions
 
 None. The question of an area helper was settled as part of accepting this
