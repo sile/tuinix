@@ -71,6 +71,12 @@ pub enum KeyCode {
     /// The Page Down key.
     PageDown,
 
+    /// A function key, `F(1)` through `F(12)`.
+    ///
+    /// Values outside `1..=12` have no producer in the parser; they exist only
+    /// because the range is not enforced by the type.
+    F(u8),
+
     /// A character key.
     Char(char),
 }
@@ -423,12 +429,11 @@ fn parse_complex_csi_key(bytes: &[u8]) -> (Option<Input>, usize) {
         return parse_special_key_with_modifier(bytes);
     }
 
-    // Any other ESC [ <digits> ~ sequence (for example ESC [ 15 ~). The
-    // parameter is not one tuinix maps to a key, but the sequence is still
-    // complete, so it must be consumed as a whole. Stopping at the third byte
-    // would leak the remaining bytes as ordinary characters.
+    // Handle ESC [ <num> ~ and ESC [ <num> ; <mod> ~ (function keys). The
+    // parameter is multi-digit, so it must be decoded from the whole run of
+    // bytes up to the terminator rather than from bytes[2].
     if let Some(end) = find_tilde_terminator(bytes) {
-        return (None, end + 1);
+        return parse_tilde_key(bytes, end);
     }
 
     // Need more bytes or unknown sequence
@@ -452,6 +457,68 @@ fn find_tilde_terminator(bytes: &[u8]) -> Option<usize> {
         }
     }
     None
+}
+
+/// Decode an `ESC [ ... ~` sequence whose parameter text runs from `bytes[2]` up
+/// to (but not including) the `~` at `end`. The parameter is either a single
+/// key number, or a key number and a modifier separated by `;`.
+///
+/// Unknown key numbers are consumed whole and produce no input: the sequence is
+/// complete, so it must not be left to leak its tail as ordinary characters.
+fn parse_tilde_key(bytes: &[u8], end: usize) -> (Option<Input>, usize) {
+    let len = end + 1;
+    let params = match std::str::from_utf8(&bytes[2..end]) {
+        Ok(s) => s,
+        Err(_) => return (None, len),
+    };
+
+    let (number, modifier) = match params.split_once(';') {
+        Some((number, modifier)) => (number, Some(modifier)),
+        None => (params, None),
+    };
+
+    let number = match number.parse::<u8>() {
+        Ok(n) => n,
+        Err(_) => return (None, len),
+    };
+
+    let (ctrl, alt) = match modifier {
+        Some(modifier) => match modifier.parse::<u8>() {
+            Ok(modifier) => (modifier & 0x4 != 0, modifier & 0x2 != 0),
+            Err(_) => return (None, len),
+        },
+        None => (false, false),
+    };
+
+    let code = match function_key_code(number) {
+        Some(code) => code,
+        None => return (None, len),
+    };
+
+    (Some(create_key_input(ctrl, alt, code)), len)
+}
+
+/// Map an xterm-style `~` key number to the key it stands for.
+///
+/// The numbering is not an arithmetic sequence: `13` (F3 on some terminals, an
+/// extra Enter on others), `16`, and `22` do not map to any key here, so this is
+/// a table and not a formula.
+fn function_key_code(number: u8) -> Option<KeyCode> {
+    let code = match number {
+        11 => KeyCode::F(1),
+        12 => KeyCode::F(2),
+        14 => KeyCode::F(4),
+        15 => KeyCode::F(5),
+        17 => KeyCode::F(6),
+        18 => KeyCode::F(7),
+        19 => KeyCode::F(8),
+        20 => KeyCode::F(9),
+        21 => KeyCode::F(10),
+        23 => KeyCode::F(11),
+        24 => KeyCode::F(12),
+        _ => return None,
+    };
+    Some(code)
 }
 
 fn parse_numbered_arrow_key(bytes: &[u8]) -> (Option<Input>, usize) {
@@ -1203,14 +1270,76 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_function_keys_bare() {
+        // The xterm `~` numbering is not an arithmetic sequence, so the table is
+        // checked explicitly rather than derived.
+        for (number, n) in [
+            ("11", 1),
+            ("12", 2),
+            ("14", 4),
+            ("15", 5),
+            ("17", 6),
+            ("18", 7),
+            ("19", 8),
+            ("20", 9),
+            ("21", 10),
+            ("23", 11),
+            ("24", 12),
+        ] {
+            let seq = format!("\x1b[{number}~");
+            let result = parse_input(seq.as_bytes());
+            assert_eq!(
+                result.0,
+                Some(Input::Key(KeyInput {
+                    ctrl: false,
+                    alt: false,
+                    code: KeyCode::F(n),
+                })),
+                "ESC [{number}~ should be F({n})"
+            );
+            assert_eq!(result.1, seq.len());
+        }
+    }
+
+    #[test]
+    fn test_parse_function_keys_with_modifier() {
+        // The modified form shares the sequence shape and the modifier bits with
+        // the modified arrows and `~` keys.
+        // tuinix decodes the modifier byte with the same bits as the modified
+        // arrows and `~` keys: bit 0x2 is Alt, bit 0x4 is Ctrl.
+        let cases: &[(&[u8], bool, bool, u8)] = &[
+            (b"\x1b[15;2~", false, true, 5),  // Shift+F5 (0x2)
+            (b"\x1b[15;5~", true, false, 5),  // Ctrl+F5 (0x4)
+            (b"\x1b[15;7~", true, true, 5),   // Ctrl+Alt+F5 (0x6)
+            (b"\x1b[11;2~", false, true, 1),  // Shift+F1
+            (b"\x1b[24;5~", true, false, 12), // Ctrl+F12
+        ];
+
+        for &(seq, ctrl, alt, n) in cases {
+            let result = parse_input(seq);
+            assert_eq!(
+                result.0,
+                Some(Input::Key(KeyInput {
+                    ctrl,
+                    alt,
+                    code: KeyCode::F(n),
+                })),
+                "{seq:?} should be F({n}) with ctrl={ctrl}, alt={alt}"
+            );
+            assert_eq!(result.1, seq.len());
+        }
+    }
+
+    #[test]
     fn test_parse_unknown_tilde_sequences_consume_everything() {
-        // A two-digit `~` sequence whose parameter tuinix does not map to a key
-        // is still a complete sequence. It must be discarded as a whole; "~" and
-        // the extra digit must not leak out as ordinary characters.
+        // A `~` sequence whose parameter tuinix does not map to a key is still a
+        // complete sequence. It must be discarded as a whole; "~" and the extra
+        // digits must not leak out as ordinary characters.
         for seq in [
-            &b"\x1b[15~"[..], // F5
+            &b"\x1b[13~"[..], // F3 on some terminals, extra Enter on others
+            &b"\x1b[16~"[..],
             &b"\x1b[22~"[..],
-            &b"\x1b[13~"[..],
+            &b"\x1b[25~"[..],
         ] {
             let result = parse_input(seq);
             assert_eq!(result.0, None, "{seq:?} should not produce an input");
@@ -1222,10 +1351,11 @@ mod tests {
         }
 
         // A modifier makes the sequence longer but does not change the rule.
-        let seq = b"\x1b[15;2~";
-        let result = parse_input(seq);
-        assert_eq!(result.0, None);
-        assert_eq!(result.1, seq.len());
+        for seq in [&b"\x1b[22;2~"[..], &b"\x1b[13;2~"[..]] {
+            let result = parse_input(seq);
+            assert_eq!(result.0, None);
+            assert_eq!(result.1, seq.len());
+        }
     }
 
     #[test]
@@ -1315,7 +1445,7 @@ mod tests {
         // buffer does not grow without bound and the tail does not surface as
         // character input.
         let mut buffer = InputDecoder::new();
-        buffer.feed(b"\x1b[15~");
+        buffer.feed(b"\x1b[22~");
         assert_eq!(buffer.next(), None);
         assert_eq!(buffer.buffered_bytes(), 0);
         assert!(!buffer.has_pending());
@@ -1326,15 +1456,46 @@ mod tests {
         // D2: feeding the sequence byte by byte yields the same drained buffer
         // as feeding it whole.
         let mut whole = InputDecoder::new();
-        whole.feed(b"\x1b[15~");
+        whole.feed(b"\x1b[22~");
 
         let mut split = InputDecoder::new();
-        for byte in b"\x1b[15~" {
+        for byte in b"\x1b[22~" {
             split.feed(&[*byte]);
         }
 
         assert_eq!(split.next(), whole.next());
         assert_eq!(split.buffered_bytes(), whole.buffered_bytes());
+    }
+
+    #[test]
+    fn test_input_decoder_consumes_function_key_without_leaving_bytes() {
+        // D1: a complete function key sequence must consume its (variable
+        // length) bytes so the buffer does not grow without bound.
+        for seq in [&b"\x1b[11~"[..], &b"\x1b[15~"[..], &b"\x1b[15;2~"[..]] {
+            let mut buffer = InputDecoder::new();
+            buffer.feed(seq);
+            assert!(matches!(buffer.next(), Some(Input::Key(_))), "{seq:?}");
+            assert_eq!(buffer.buffered_bytes(), 0, "{seq:?}");
+            assert!(!buffer.has_pending(), "{seq:?}");
+        }
+    }
+
+    #[test]
+    fn test_input_decoder_function_key_matches_split_feed() {
+        // D2: feeding the sequence byte by byte yields the same input and the
+        // same drained buffer as feeding it whole.
+        for seq in [&b"\x1b[11~"[..], &b"\x1b[15~"[..], &b"\x1b[15;2~"[..]] {
+            let mut whole = InputDecoder::new();
+            whole.feed(seq);
+
+            let mut split = InputDecoder::new();
+            for byte in seq {
+                split.feed(&[*byte]);
+            }
+
+            assert_eq!(split.next(), whole.next(), "{seq:?}");
+            assert_eq!(split.buffered_bytes(), whole.buffered_bytes(), "{seq:?}");
+        }
     }
 
     #[test]
@@ -2238,6 +2399,49 @@ mod tests {
                 let mut v = Vec::new();
                 v.extend_from_slice(c.to_string().as_bytes());
                 Some(v)
+            }
+            KeyCode::F(n) if !ctrl && !alt => {
+                let n = match n {
+                    1 => 11,
+                    2 => 12,
+                    4 => 14,
+                    5 => 15,
+                    6 => 17,
+                    7 => 18,
+                    8 => 19,
+                    9 => 20,
+                    10 => 21,
+                    11 => 23,
+                    12 => 24,
+                    _ => return None,
+                };
+                let mut v = Vec::new();
+                v.extend_from_slice(n.to_string().as_bytes());
+                v.push(b'~');
+                Some(esc(&v))
+            }
+            KeyCode::F(n) => {
+                let n = match n {
+                    1 => 11,
+                    2 => 12,
+                    4 => 14,
+                    5 => 15,
+                    6 => 17,
+                    7 => 18,
+                    8 => 19,
+                    9 => 20,
+                    10 => 21,
+                    11 => 23,
+                    12 => 24,
+                    _ => return None,
+                };
+                let m = 1 + if alt { 2 } else { 0 } + if ctrl { 4 } else { 0 };
+                let mut v = Vec::new();
+                v.extend_from_slice(n.to_string().as_bytes());
+                v.push(b';');
+                v.push(b'0' + m);
+                v.push(b'~');
+                Some(esc(&v))
             }
             KeyCode::Escape
             | KeyCode::Enter
