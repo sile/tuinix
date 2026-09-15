@@ -197,7 +197,7 @@ fn push_cursor_matches_model() -> noprop::TestResult {
             }
         }
         assert_eq!(
-            frame.next_push_position(),
+            frame.next_position(),
             tuinix::Position {
                 row: model.row,
                 col: model.col
