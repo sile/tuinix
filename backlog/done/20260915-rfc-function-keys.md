@@ -178,9 +178,9 @@ The three questions left open in the draft were settled before implementation:
 
 ## Unresolved questions
 
-None. The remaining choices (SS3, unknown-key surfacing, wider `~`-family
-coverage) are recorded under "Future possibilities" as follow-ups rather than
-left open here.
+None at the time of settling. The remaining choices (SS3, unknown-key
+surfacing, wider `~`-family coverage) are recorded under "Future
+possibilities" as follow-ups rather than left open here.
 
 ## Future possibilities
 
@@ -192,6 +192,9 @@ left open here.
 
 ## Outcome
 
-Implemented: `KeyCode::F(u8)` was added and the `~`-consuming path in
-`parse_complex_csi_key` now decodes `ESC [ <num> ~` and `ESC [ <num> ; <mod> ~`
-for the numbers in the table above, in both bare and modified forms.
+Accepted and implemented in PR #29: `KeyCode::F(u8)` was added and the
+`~`-consuming path in `parse_complex_csi_key` now decodes `ESC [ <num> ~` and
+`ESC [ <num> ; <mod> ~` for the numbers in the table above, in both bare and
+modified forms. The settled scope is unchanged from the Decision section:
+`F(u8)` rather than 12 variants, modifiers included, SS3 F-keys left to a
+follow-up.
