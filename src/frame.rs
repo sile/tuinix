@@ -145,6 +145,20 @@ impl Frame {
     /// edge of the current row, or there was no row left beneath the position. Clipped
     /// characters are not stored, but the position still advances by the character's width,
     /// so a caller that wants to wrap the line does so itself.
+    ///
+    /// The `false` result folds those two causes together, and the write position advances
+    /// the same way for both, so the reason cannot be recovered afterwards. A caller that
+    /// needs to tell them apart decides before pushing, from the position and size:
+    ///
+    /// ```
+    /// # let mut frame = tuinix::Frame::new(tuinix::Size { rows: 2, cols: 4 });
+    /// # let ch = tuinix::Char::new('a', 1, tuinix::Style::new()).expect("valid char");
+    /// let pos = frame.next_push_position();
+    /// let size = frame.size();
+    /// if pos.row < size.rows && pos.col + ch.width() <= size.cols {
+    ///     frame.push_char(ch);
+    /// }
+    /// ```
     pub fn push_char(&mut self, ch: Char) -> bool {
         if self.tail.row < self.size.rows && self.tail.col + ch.width <= self.size.cols {
             self.data.insert(self.tail, ch);
