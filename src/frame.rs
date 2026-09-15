@@ -9,6 +9,12 @@ use crate::{Position, Size, Style};
 /// is always `1` or more. A character wider than one column spans several adjacent
 /// columns; the frame stores it only at its starting column.
 ///
+/// The width is declared by the caller and is the only source of that information: tuinix
+/// does not measure how a character will actually be drawn, so the declared width is
+/// trusted as-is and determines the layout. Deciding what width a character has is
+/// therefore the caller's responsibility, as is keeping that decision consistent for a
+/// given character.
+///
 /// Zero-width (combining) characters are not supported, and neither are control
 /// characters; [`Char::new()`] rejects both.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,6 +47,11 @@ impl Char {
     /// control character, or `width` is `0`. Control characters are written with the
     /// dedicated methods ([`Frame::push_newline()`], [`Frame::push_tab()`]),
     /// and a zero-width character would occupy no column.
+    ///
+    /// Any `width` of `1` or more is accepted as given. tuinix does not measure how wide a
+    /// character will actually be drawn, so the declared `width` is what the frame lays out
+    /// with; supplying a width that does not match the character is a caller error that
+    /// tuinix cannot detect.
     pub const fn new(value: char, width: usize, style: Style) -> Option<Self> {
         if value.is_control() || width == 0 {
             None
@@ -59,6 +70,9 @@ impl Char {
     }
 
     /// The number of terminal columns this character occupies.
+    ///
+    /// This is the width declared at [`Char::new()`], not a value measured from the
+    /// character.
     pub const fn width(self) -> usize {
         self.width
     }
