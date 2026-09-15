@@ -24,10 +24,12 @@ Concretely, `parse_csi_sequence` ends with:
 _ => (None, 3), // Unknown CSI sequence
 ```
 
-and the same shape appears in `parse_ss3_sequence`, `parse_simple_csi_key`,
-`parse_numbered_arrow_key`, `parse_modified_arrow_key`, and at the tail of
-`parse_complex_csi_key`. Each of these consumes a fixed number of bytes and
-returns no input. `InputDecoder::next()` then loops:
+and the same shape appears in `parse_ss3_sequence` and `parse_simple_csi_key`,
+and (as `(None, end + 1)`) in `parse_sgr_mouse_sequence`. Each of these consumes
+a fixed number of bytes and returns no input. `parse_complex_csi_key` reaches
+the same result by scanning for the terminator instead of trusting a fixed
+length, but the outcome is identical: bytes consumed, nothing returned.
+`InputDecoder::next()` then loops:
 
 ```rust
 if input.is_none() && consumed > 0 {
@@ -44,10 +46,23 @@ This matters to an application in two situations.
 **Debugging.** A terminal sends an escape sequence the decoder does not know
 (a key on a keyboard it was not written for, a terminal that encodes a key
 differently than xterm does). The application appears to ignore the key
-entirely, with no way to log what arrived. This has already bitten tuinix
-itself: `ESC[15~` used to be discarded three bytes at a time and leak its tail
-as characters, and the only symptom a caller could see was unexplained
-`Char` events.
+entirely, with no way to log what arrived.
+
+Two shipped bugs had exactly this symptom. `ESC[15~` (F5 on an xterm-style
+terminal) was discarded three bytes at a time and leaked its tail as
+characters, so the caller saw unexplained `Char` events
+(`done/20260915-bug-digit-dispatched-tilde-sequence-leaks-prefix.md`). `ESC[2J`
+(clear screen) fell into a path that held the bytes as if the sequence were
+still incomplete, so the buffer grew on every clear
+(`done/20260915-bug-csi-parser-holds-incomplete-sequence.md`).
+
+Both are fixed and both sequences now do the right thing, but the trap they
+sprang out of is unchanged: input the decoder gives up on is either consumed
+silently or held as pending, and the caller cannot tell which from the return
+value. A decoder that reported the discard would have made the first bug
+visible on its first occurrence instead of leaving a caller to infer it from
+stray characters, and would have shown the second as a discard that never came
+back rather than as a buffer that kept growing.
 
 **Protocol errors.** An application that understands a private sequence pair
 (send a query, expect a reply) cannot tell "no reply yet" from "a reply arrived
@@ -95,12 +110,26 @@ can now be a discard. Every site that returns `(None, n)` with `n > 0` becomes
 "consumed but no input" loop disappears, because consumption always yields
 something.
 
-Sites that must be distinguished from discards:
+The sites that return a discard today:
 
-- `(None, 0)` means "need more bytes" and stays `None`.
-- `parse_sgr_mouse_sequence` returns `(None, 0)` while an SGR report is
-  unterminated and `(None, end + 1)` for a malformed one; only the second is a
-discard.
+- `parse_csi_sequence` — an unknown byte after `ESC [`. It reports 3 bytes
+  consumed regardless of how long the sequence actually is, so the payload is
+  the 3 bytes it claims.
+- `parse_ss3_sequence` — an SS3 key outside `A B C D H F`.
+- `parse_simple_csi_key` — a final byte outside `A B C D H F Z`.
+- `parse_sgr_mouse_sequence` — an `ESC [ <` report that is terminated but does
+  not parse as a button/coordinate triple; it reports `end + 1`.
+- `parse_complex_csi_key` — a terminated parameter run whose terminator no
+  branch claims (the `ESC [ 2 J` path); it reports `terminator + 1`.
+
+The distinction those sites have to keep:
+
+- `(None, 0)` means "need more bytes" and stays `None` everywhere.
+- `parse_sgr_mouse_sequence` reports `(None, 0)` while the report is
+  unterminated; only the malformed-but-terminated case is a discard.
+- `parse_complex_csi_key` reports `(None, 0)` when the parameter run reaches the
+  end of the buffer, because it might still grow into a known sequence; a
+  discovered terminator is what makes it settle.
 - The lone-`ESC` path is deliberately not a discard: `ESC` alone is held and
   then committed as the Escape key by `commit_escape()`.
 
@@ -130,9 +159,10 @@ length itself.
 **Do nothing.** The strongest argument for the status quo is that the bytes are
 already consumed, so this is pure observability, and observability that no
 current caller has asked for. Against it: the decoder cannot be debugged from
-its public API, and tuinix has already shipped two bugs whose only symptom was
-indeciphable output from silently discarded input. "Defensible" is not the same
-as "diagnosable".
+its public API, and tuinix has already shipped two bugs in this exact corner
+whose symptoms were indecipherable (stray characters from a leaked tail) and
+invisible (a buffer that grew on every clear screen). "Defensible" is not the
+same as "diagnosable".
 
 **Keep `Input` and report discards out of band** (for example a counter or a
 `take_unrecognized(&mut self) -> Option<Vec<u8>>` accessor, mirroring
@@ -155,23 +185,28 @@ for every caller rather than adding a variant to a type they already match on,
 and `None`-as-pending is the documented contract worth keeping.
 
 **Expose raw bytes as `Char` events** (re-emit the dropped bytes as characters
-so nothing is lost). This is exactly the bug fixed in
-`20260915-bug-digit-dispatched-tilde-sequence-leaks-prefix.md`: re-reading a
-known sequence's tail as characters is worse than dropping it, because it
-invents input that the user did not produce.
+so nothing is lost). This is the behavior that
+`done/20260915-bug-digit-dispatched-tilde-sequence-leaks-prefix.md` had to be
+fixed to stop: re-reading a known sequence's tail as characters is worse than
+dropping it, because it invents input that the user did not produce.
 
 ## Unresolved questions
 
 - Should the variant carry the whole run of discarded bytes, or the sequence
   type plus its parameters (`Csi`/`Ss3`/`Utf8` and the payload)? The bytes are
   what a caller can log; a classification is what a caller could dispatch on.
+- Related: a payload built from "the bytes the parser reported as consumed" is
+  only as long as that number, and two sites report a fixed 3 bytes for a
+  sequence that may be longer (`parse_csi_sequence`, `parse_ss3_sequence`).
+  Either those sites learn to scan for the real end, or the payload for them is
+  documented as truncated.
 - Is `Unrecognized` the right name? Alternatives: `Undecodable`, `Discarded`,
   `Unknown`. The name should describe what the decoder did (it discarded the
   bytes) rather than what the bytes supposedly are, since the decoder is the
   party that gave up.
 - Should the length be capped by the decoder (for example the first 16 bytes
   with a count), or is passing the bytes through and documenting "cap it
-yourself" enough?
+  yourself" enough?
 - `Input`, `KeyInput`, and `KeyCode` all derive `Ord` today. If a variant
   carrying `Vec<u8>` is added, that derive needs a story; dropping `Ord` from
   `Input` is a separate, smaller decision that could ride along or be settled
@@ -186,6 +221,8 @@ yourself" enough?
 - A decoder that classifies rather than only reports could later expose the
   *reason* (`UnknownCsi`, `UnknownSs3`, `Malformed`, `InvalidUtf8`), which turns
   the variant into a debugging tool rather than a byte dump.
-- If discard reporting proves useful, the analogous question for the *input*
-  side arises: whether `InputDecoder` should also report bytes the application
-  itself discarded with `discard_buffered_bytes()`.
+- The two discards a caller can observe have different owners, and the docs
+  should keep them apart: an `Unrecognized` event is the decoder giving up on
+  bytes, while `discard_buffered_bytes()` is the application throwing them away
+  to bound the buffer. That operation's own ergonomics are the subject of
+  `20260915-rfc-trim-buffered-bytes.md`.
