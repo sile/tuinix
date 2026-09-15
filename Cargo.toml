@@ -11,6 +11,7 @@ repository = "https://github.com/sile/tuinix"
 readme = "README.md"
 keywords = ["terminal", "tui", "unix"]
 categories = ["command-line-interface", "command-line-utilities"]
+exclude = ["backlog/"]
 
 [dependencies]
 libc = "0.2.172"
