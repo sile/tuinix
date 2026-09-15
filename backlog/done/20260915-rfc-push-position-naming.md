@@ -132,6 +132,13 @@ that the getter no longer echoes an operation. This does not help: `push_char`
 is the name the rest of the API and the doc use, and the getter would still
 contain the `next_` prefix that is the actual problem.
 
+## Outcome
+
+Implemented in [#32](https://github.com/sile/tuinix/pull/32) (merged as
+`aea7916`). `Frame::next_push_position()` is now `Frame::next_position()`; the
+signature and behavior are unchanged, and the internal field `tail` keeps its
+name. Scope unchanged from the Decision section.
+
 ## Unresolved questions
 
 None. The internal field `tail` keeps its name; see the reference-level
