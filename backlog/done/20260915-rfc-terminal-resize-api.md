@@ -72,9 +72,9 @@ let size = driver.size();
 ```
 
 Note that `handle_resize_signal` returns no size and does not report whether
-the size
-actually changed. If a caller needs "did it change", it compares `size()`
-before and after — a notification can arrive without the size differing.
+the size actually changed. If a caller needs "did it change", it compares
+`size()` before and after — a notification can arrive without the size
+differing.
 
 ## Reference-level explanation
 
@@ -84,8 +84,8 @@ impl TerminalDriver {
     ///
     /// Performs no IO and does not detect resizes. The value is refreshed only
     /// by [`Self::handle_resize_signal`], so a caller that never watches the
-    /// signal
-    /// descriptor observes the size the terminal had at construction time.
+    /// signal descriptor observes the size the terminal had at construction
+    /// time.
     pub fn size(&self) -> Size;
 
     /// Consumes a pending resize notification, if any.
@@ -95,8 +95,9 @@ impl TerminalDriver {
     /// a subsequent [`Self::size`] returns the new value. If nothing was
     /// pending, does nothing and returns `Ok(())`.
     ///
-    /// Intended to be called when the descriptor from [`Self::signal_fd`]
-    /// becomes readable. Calling it when nothing is pending is harmless.
+    /// Intended to be called when the descriptor from
+    /// [`Self::resize_signal_fd`] becomes readable. Calling it when nothing is
+    /// pending is harmless.
     ///
     /// # Errors
     ///
@@ -141,12 +142,12 @@ Key points:
   two operations where there was one. Removal of
   `size(&mut self) -> io::Result<Size>` breaks every caller.
 - **Silent staleness.** `size()` still returns `Size`, so a caller that never
-  calls `take_resize` keeps compiling and gets a value that never changes.
-  The old `size()` would have refreshed on each call. The migration has to be
-  clear about this.
+  calls `handle_resize_signal` keeps compiling and gets a value that never
+  changes. The old `size()` would have refreshed on each call. The migration
+  has to be clear about this.
 - **Two methods where one sufficed.** For a caller with no event loop and no
   interest in resizes, the old single `size()` was simpler than remembering to
-  call `take_resize`.
+  call `handle_resize_signal`.
 
 ## Rationale and alternatives
 
@@ -165,8 +166,7 @@ Key points:
   kind for the ordinary case and to reason about re-registration ("should I
   keep watching the descriptor?"), when the intended policy is to leave read
   interest registered and call `handle_resize_signal` whenever it fires.
-  Normalizing
-  the empty case to `Ok(())` keeps that policy simple.
+  Normalizing the empty case to `Ok(())` keeps that policy simple.
 - **Alternative name: `size_if_notified`.** An earlier draft kept a single
   `&mut` method that returned the size only when notified. Rejected: it still
   couples reading the size to draining notifications, and a conditional getter
@@ -175,23 +175,19 @@ Key points:
   fd readiness, and this method does ioctl work, not polling; the name would
   collide with the vocabulary used to describe the event-loop integration.
 - **Alternative name: `take_resize`.** An earlier draft named the handler
-  after the value it consumes. Rejected: the method handles a signal that
-  arrives on a descriptor, not a stored value, and `take_resize` shares no
-  token with `resize_signal_fd`. `handle_resize_signal` names the event and
-  matches the fd accessor.
+  after the value it consumes. Rejected: the handler consumes what the
+  descriptor delivers — a resize signal — so naming it after that signal lets
+  it share the token `resize_signal` with `resize_signal_fd`. Reading the two
+  together ("watch the resize signal fd, then handle the resize signal") needs
+  no gloss. `take_resize` frames the method as consuming a stored value that
+  does not exist, and matches `resize_signal_fd` only on the bare word
+  `resize`.
 - **Alternative name: `take_resize_notification`.** Clearer than `take_resize`
   but longer, and still frames the method as consuming a value rather than
   handling a signal.
 - **Alternative: add `cached_size(&self) -> Size` and keep `size(&mut
   self)`.** Rejected as a non-breaking but worse endpoint: it leaves two size
   accessors with an unclear split and keeps the asymmetry with `Frame::size`.
-- **Why `handle_resize_signal` rather than `take_resize`?** The handler
-  consumes what the descriptor delivers — a resize signal — so naming it after
-  that signal lets it share the token `resize_signal` with `resize_signal_fd`.
-  Reading the two together ("watch the resize signal fd, then handle the
-  resize signal") needs no gloss. `take_resize` mixed the descriptor's
-  vocabulary with a value-consuming verb and matched the fd only on the bare
-  word `resize`.
 - **Alternative: keep `signal_fd` and add `handle_resize_signal`.** Rejected:
   it unifies the verbs but leaves the fd accessor under the generic
   `signal_fd`, so the pair still does not share a token. Renaming the accessor
@@ -200,6 +196,14 @@ Key points:
   into every size read and leaves `TerminalDriver::size` inconsistent with
   `Frame::size`. There is no way to read the size without consuming
   notifications, which is the actual complaint.
+
+## Outcome
+
+Implemented in [#30](https://github.com/sile/tuinix/pull/30) (merged as
+`388ed58`). `TerminalDriver` now exposes `size(&self) -> Size`,
+`handle_resize_signal(&mut self) -> io::Result<()>`, and
+`resize_signal_fd(&self) -> RawFd`; the old `size(&mut self) ->
+io::Result<Size>` is removed. Scope unchanged from the Decision section.
 
 ## Unresolved questions
 
