@@ -93,7 +93,8 @@ fn handle_resize(
     prev_frame: &mut Option<tuinix::Frame>,
     cursor: Option<tuinix::Position>,
 ) -> std::io::Result<()> {
-    let new_size = driver.size()?;
+    driver.handle_resize_signal()?;
+    let new_size = driver.size();
     // Only redraw if the dimensions actually changed. If the previously rendered
     // frame already has the same size, this was a spurious signal; nothing to do.
     if prev_frame.as_ref().is_some_and(|f| f.size() == new_size) {
@@ -127,7 +128,7 @@ fn handle_event(
 ) -> std::io::Result<bool> {
     // The frame is built at the terminal's current dimensions, so a resize is
     // picked up on whichever event is handled first afterwards.
-    let mut frame = tuinix::Frame::new(driver.size()?);
+    let mut frame = tuinix::Frame::new(driver.size());
     draw_header(&mut frame);
 
     match event {
@@ -218,7 +219,7 @@ fn main() -> std::io::Result<()> {
     driver.enable_mouse_reporting()?;
 
     // Build an initial frame at the terminal's current dimensions.
-    let mut frame = tuinix::Frame::new(driver.size()?);
+    let mut frame = tuinix::Frame::new(driver.size());
     draw_header(&mut frame);
     write_text(&mut frame, "\nLast event: None\n", INFO_STYLE);
 
@@ -232,7 +233,7 @@ fn main() -> std::io::Result<()> {
     // blocking on a read.
     let mut fds = [
         libc::pollfd {
-            fd: driver.signal_fd(),
+            fd: driver.resize_signal_fd(),
             events: libc::POLLIN,
             revents: 0,
         },

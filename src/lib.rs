@@ -43,7 +43,7 @@
 //! fn main() -> std::io::Result<()> {
 //!     // Initialize terminal driver and query its size
 //!     let mut driver = tuinix::TerminalDriver::new()?;
-//!     let mut size = driver.size()?;
+//!     let mut size = driver.size();
 //!     let mut input = tuinix::InputDecoder::new();
 //!     let cursor = None;
 //!     let mut prev = None;
@@ -88,7 +88,7 @@
 //!     // Both descriptors are non-blocking, so `poll` waits for readiness instead
 //!     // of blocking on a read.
 //!     let mut fds = [
-//!         libc::pollfd { fd: driver.signal_fd(), events: libc::POLLIN, revents: 0 },
+//!         libc::pollfd { fd: driver.resize_signal_fd(), events: libc::POLLIN, revents: 0 },
 //!         libc::pollfd { fd: driver.input_fd(), events: libc::POLLIN, revents: 0 },
 //!     ];
 //!     let mut raw = [0u8; 256];
@@ -107,7 +107,8 @@
 //!
 //!         // Handle a terminal resize.
 //!         if fds[0].revents & libc::POLLIN != 0 {
-//!             let new_size = driver.size()?;
+//!             driver.handle_resize_signal()?;
+//!             let new_size = driver.size();
 //!             if new_size != size {
 //!                 size = new_size;
 //!                 let mut frame = tuinix::Frame::new(size);

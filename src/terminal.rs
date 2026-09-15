@@ -18,7 +18,10 @@ static mut SIGWINCH_PIPE_FD: RawFd = -1;
 ///
 /// This type performs no high-level state keeping: it does not store the current
 /// frame or input buffer, but it caches the most recently observed terminal size
-/// so [`TerminalDriver::size()`] always reports a valid value. It owns the file
+/// so [`TerminalDriver::size()`] always reports a valid value. The cache is
+/// refreshed only by [`TerminalDriver::handle_resize_signal()`], which the application
+/// calls when the descriptor from [`TerminalDriver::resize_signal_fd()`] becomes
+/// readable. It owns the file
 /// descriptors for input and output and the saved terminal modes, and it is
 /// responsible for entering and leaving raw mode and the alternate screen. This
 /// makes it a good target for implementing [`Read`] and [`Write`], so an
@@ -56,8 +59,8 @@ impl TerminalDriver {
     /// and installs a SIGWINCH handler (taking over any handler the application
     /// had configured). The input and signal file descriptors are made
     /// non-blocking. The initial terminal size is cached and can be read with
-    /// [`TerminalDriver::size()`]; it is refreshed automatically whenever a resize
-    /// notification arrives.
+    /// [`TerminalDriver::size()`]; it is refreshed by
+    /// [`TerminalDriver::handle_resize_signal()`] whenever a resize notification arrives.
     ///
     /// # Errors
     ///
@@ -157,12 +160,14 @@ impl TerminalDriver {
         self.output.get_ref().as_raw_fd()
     }
 
-    /// Returns the file descriptor that receives terminal resize signal
-    /// notifications.
+    /// Returns the file descriptor that becomes readable when the terminal is
+    /// resized.
     ///
     /// The descriptor is non-blocking, so it can be monitored directly with an
-    /// external event loop.
-    pub fn signal_fd(&self) -> RawFd {
+    /// external event loop. When it becomes readable, call
+    /// [`TerminalDriver::handle_resize_signal()`] to consume the notification and refresh
+    /// the [cached size](TerminalDriver::size).
+    pub fn resize_signal_fd(&self) -> RawFd {
         self.signal.as_raw_fd()
     }
 
@@ -194,19 +199,37 @@ impl TerminalDriver {
         Ok(())
     }
 
-    /// Returns the current terminal size.
+    /// Returns the last observed terminal size.
     ///
-    /// The driver caches the most recently observed size. This method first drains
-    /// any pending resize notifications without blocking; if at least one was
-    /// received it re-queries the terminal and updates the cache, so the returned
-    /// value reflects the latest resize. If no notification is pending it returns
-    /// the cached size immediately.
+    /// This is a pure getter: it performs no I/O and does not detect resizes. The
+    /// value is refreshed only by [`TerminalDriver::handle_resize_signal()`], so a caller
+    /// that never watches [`TerminalDriver::resize_signal_fd()`] observes the size
+    /// the terminal had at construction time.
+    pub fn size(&self) -> Size {
+        self.cached_size
+    }
+
+    /// Consumes a pending resize notification, if any.
+    ///
+    /// This drains [`TerminalDriver::resize_signal_fd()`] without blocking. If at
+    /// least one notification was pending, it re-queries the terminal and updates
+    /// the cached size, so that a subsequent [`TerminalDriver::size()`] returns
+    /// the new value. If nothing was pending, it does nothing and returns
+    /// `Ok(())`.
+    ///
+    /// It is intended to be called when the resize signal descriptor becomes
+    /// readable. Calling it when nothing is pending is harmless, so an event loop
+    /// can leave read interest registered and call this whenever it fires.
+    ///
+    /// It does not report whether the size actually changed: a notification can
+    /// arrive without the dimensions differing. A caller that needs to know
+    /// compares [`TerminalDriver::size()`] before and after.
     ///
     /// # Errors
     ///
     /// Returns an error if the terminal size cannot be re-queried after a resize
     /// notification.
-    pub fn size(&mut self) -> io::Result<Size> {
+    pub fn handle_resize_signal(&mut self) -> io::Result<()> {
         let mut notified = false;
         loop {
             match self.signal.read(&mut [0u8]) {
@@ -219,7 +242,7 @@ impl TerminalDriver {
         if notified {
             self.cached_size = self.query_terminal_size()?;
         }
-        Ok(self.cached_size)
+        Ok(())
     }
 
     fn query_terminal_size(&self) -> io::Result<Size> {
@@ -415,7 +438,8 @@ fn set_sigwinch_handler() -> io::Result<File> {
     check_libc_result(unsafe { libc::pipe(pipefd.as_mut_ptr()) })?;
 
     // Both ends are owned by the driver for its whole lifetime, so they are marked
-    // close-on-exec. The read end must be non-blocking because `size()` drains it,
+    // close-on-exec. The read end must be non-blocking because `handle_resize_signal()`
+    // drains it,
     // and the write end must be non-blocking so the signal handler can never block
     // on a full pipe.
     let result = set_fd_cloexec(pipefd[0])
@@ -550,10 +574,10 @@ mod tests {
             return;
         }
 
-        let mut terminal = TerminalDriver::new().expect("ok");
+        let terminal = TerminalDriver::new().expect("ok");
 
         // The cached size is seeded with the actual terminal dimensions.
-        assert!(!terminal.size().expect("size").is_empty());
+        assert!(!terminal.size().is_empty());
 
         // Creating a second driver should fail while the first one exists
         assert!(TerminalDriver::new().is_err());
