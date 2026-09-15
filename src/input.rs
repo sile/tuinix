@@ -447,12 +447,37 @@ fn parse_complex_csi_key(bytes: &[u8]) -> (Option<Input>, usize) {
         return parse_tilde_key(bytes, end);
     }
 
-    // Need more bytes or unknown sequence
-    if bytes.len() < 6 {
-        (None, 0)
-    } else {
-        (None, 3)
+    // The parameter run (digits and semicolons from bytes[2]) ended in a byte
+    // that no branch above claims. That byte is the terminator of a complete
+    // sequence, so consume the whole thing: leaving it in the buffer would hold
+    // a complete input forever and, once more bytes arrived, spill its tail out
+    // as ordinary characters. `ESC [ 2 J` (clear screen) and `ESC [ 1 P` are
+    // the sequences this catches.
+    //
+    // Only a terminator is enough to settle the sequence. A parameter run that
+    // reaches the end of the buffer might still grow a `~` or an `A-D`, so that
+    // case stays incomplete.
+    if let Some(terminator) = find_parameter_terminator(bytes) {
+        return (None, terminator + 1);
     }
+
+    // The parameter run is still going and the buffer ends mid-sequence.
+    (None, 0)
+}
+
+/// Return the index of the byte that ends the parameter run of an
+/// `ESC [ <params> <terminator>` sequence, if the run is already terminated.
+///
+/// Parameters are digits and semicolons. The first other byte ends the run; a
+/// run that reaches the end of the buffer without such a byte is incomplete, so
+/// this returns `None` and the caller waits for more input.
+fn find_parameter_terminator(bytes: &[u8]) -> Option<usize> {
+    for (i, &b) in bytes.iter().enumerate().skip(2) {
+        if !(b.is_ascii_digit() || b == b';') {
+            return Some(i);
+        }
+    }
+    None
 }
 
 /// Return the index of the terminating `~` of an `ESC [ ... ~` sequence, if one
@@ -1370,6 +1395,29 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_unknown_terminator_sequences_consume_everything() {
+        // A CSI sequence whose parameter is a digit but whose terminator is not
+        // one tuinix maps to a key is still a complete sequence. `ESC [ 2 J` is
+        // "clear screen", not "the letter J": the terminator must not leak out
+        // as an ordinary character.
+        for seq in [
+            &b"\x1b[2J"[..],
+            &b"\x1b[1P"[..],
+            &b"\x1b[2M"[..],
+            &b"\x1b[3L"[..],
+            &b"\x1b[1;5X"[..],
+        ] {
+            let result = parse_input(seq);
+            assert_eq!(result.0, None, "{seq:?} should not produce an input");
+            assert_eq!(
+                result.1,
+                seq.len(),
+                "{seq:?} should be consumed whole, not truncated"
+            );
+        }
+    }
+
+    #[test]
     fn test_parse_empty_input() {
         let result = parse_input(&[]);
         assert_eq!(result.0, None);
@@ -1476,6 +1524,39 @@ mod tests {
 
         assert_eq!(split.next(), whole.next());
         assert_eq!(split.buffered_bytes(), whole.buffered_bytes());
+    }
+
+    #[test]
+    fn test_input_decoder_consumes_unknown_terminator_without_leaving_bytes() {
+        // D1: a complete CSI sequence with an unmapped terminator must drain its
+        // bytes. `ESC [ 2 J` is a complete sequence, so holding it is not an
+        // incomplete input: a decoder that keeps it grows without bound while
+        // the terminal keeps clearing the screen.
+        for seq in [&b"\x1b[2J"[..], &b"\x1b[1P"[..], &b"\x1b[1;5X"[..]] {
+            let mut buffer = InputDecoder::new();
+            buffer.feed(seq);
+            assert_eq!(buffer.next(), None, "{seq:?}");
+            assert_eq!(buffer.buffered_bytes(), 0, "{seq:?}");
+            assert!(!buffer.has_pending(), "{seq:?}");
+        }
+    }
+
+    #[test]
+    fn test_input_decoder_unknown_terminator_matches_split_feed() {
+        // D2: feeding the sequence byte by byte yields the same drained buffer
+        // as feeding it whole.
+        for seq in [&b"\x1b[2J"[..], &b"\x1b[1;5X"[..]] {
+            let mut whole = InputDecoder::new();
+            whole.feed(seq);
+
+            let mut split = InputDecoder::new();
+            for byte in seq {
+                split.feed(&[*byte]);
+            }
+
+            assert_eq!(split.next(), whole.next(), "{seq:?}");
+            assert_eq!(split.buffered_bytes(), whole.buffered_bytes(), "{seq:?}");
+        }
     }
 
     #[test]
