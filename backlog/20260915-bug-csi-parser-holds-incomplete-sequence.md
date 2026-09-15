@@ -4,10 +4,15 @@
 
 ## Summary
 
-An unknown CSI sequence that is shorter than six bytes is never consumed, so
-`InputDecoder::next()` keeps returning `None` while the bytes stay in the
-buffer. `ESC[1A` is the smallest reproduction: it is a complete, well-formed
-sequence that the decoder neither handles nor discards.
+A CSI sequence that starts with a digit but is shorter than six bytes is never
+consumed, so `InputDecoder::next()` keeps returning `None` while the bytes stay
+in the buffer. `ESC[1A` is the smallest reproduction: it is a complete,
+well-formed sequence that the decoder neither handles nor discards.
+
+The sequence is well-formed, not merely unrecognized: `CSI A` and `CSI 1 A`
+both mean "cursor up one line", and the decoder already handles the modified
+form `ESC[1;5A`. So the decoder is not declining an unknown sequence; it is
+failing to recognize a known one.
 
 ## Reproduction
 
@@ -23,11 +28,9 @@ next()  -> None
 `buffered_bytes()` stays at `4` and never shrinks. Feeding `\x1b[1;5A`
 (modified arrow, six bytes) succeeds, and `\x1b[X` (unknown terminator) is
 consumed as three bytes, so the failure is specific to the "starts with a
-digit, total length under six" shape.
-
-A parser-level test that splits the bytes differently shows the asymmetry: the
-same input split so the decoder sees `\x1b[` and then `A` produces a normal
-`Key`, while feeding all four bytes at once pins the buffer.
+digit, total length under six" shape. The same input split so the decoder sees
+`\x1b[` and then `A` produces a normal `Up` key, which is the behavior the
+whole sequence should have had.
 
 ## Observed behavior
 
@@ -50,8 +53,14 @@ same input split so the decoder sees `\x1b[` and then `A` produces a normal
 
 ## Expected behavior
 
-A sequence that is complete but unrecognized should be consumed (or reported
-as unconsumable), not held. `ESC[1A` should not pin the buffer indefinitely.
+`ESC[1A` should decode to `KeyCode::Up`, the same as `ESC[A` and `ESC[1;5A`.
+The emitted line count is discarded, matching how the decoder already treats
+the modified form. A complete sequence must never be held for more input, so
+`ESC[1A` should not pin the buffer indefinitely.
+
+The fix cannot simply drop the bytes: `CSI A` and `CSI 1 A` are equivalent, so
+treating `ESC[1A` as unrecognized would make the decoder inconsistent with its
+own handling of `ESC[A`.
 
 ## Impact
 
@@ -63,12 +72,18 @@ fed in a different split, so the decoder is the component at fault.
 
 ## Notes
 
-- The related asymmetry (a one-based arrow such as `ESC[1A` is unsupported
-  while `ESC[1;5A` is supported) is the same parser state machine, and the fix
-  should be shared rather than patched twice. A real terminal does not emit
-  `ESC[1A`, so the asymmetry is reported for the buffer-pinning it causes, not
-  as a missing key.
-- How to resolve the ambiguity (consume-and-drop versus a richer return type
-  that reports an undecodable item) is an API question; if the chosen fix
-  changes the public return type it should be argued in an RFC, and this bug
-  report kept as the reproduction.
+- `ESC[1A` and `ESC[1;5A` go through the same state machine
+  (`parse_complex_csi_key`); the one-byte-and-digit shape and the
+  digit-semicolon-digit shape should be handled together, not patched twice.
+- `next() -> None` is documented as the result of an *incomplete* sequence, and
+  a complete sequence is by definition not incomplete, so the observed behavior
+  contradicts the method's own contract rather than merely being inconvenient.
+- The number in a digit-prefixed arrow is a count for how far the cursor moves
+  (for example `CSI 5 A`); tuinix maps arrows to `KeyCode::{Up, Down, Left,
+  Right}` without a magnitude, so the count is discarded. Whether every digit
+  `1`..=`6` should map to an arrow, or only `1`, is a detail to settle with the
+  fix.
+- A richer return type that reports an undecodable item would be an API change;
+  this bug does not need one, because `KeyCode::Up` already exists. If a future
+  change wants to report discarded input, it should argue that in an RFC and
+  keep this report as the reproduction.
