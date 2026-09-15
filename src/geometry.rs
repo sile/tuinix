@@ -3,7 +3,7 @@
 /// This describes the extent of a [`Frame`](crate::Frame) or a
 /// [`Region`], and it is also how [`TerminalDriver::size()`](crate::TerminalDriver::size)
 /// reports the physical terminal size.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Size {
     /// Number of rows (height).
     pub rows: usize,
