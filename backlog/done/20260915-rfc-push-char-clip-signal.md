@@ -1,13 +1,18 @@
 # RFC: Give `Frame::push_char` a reason for clipping
 
-- Status: draft
+- Status: rejected
 
 ## Summary
 
 `Frame::push_char` returns `bool`, collapsing two distinct failure causes
-("past the right edge of the row" and "no row left") into `false`. Replace the
-`bool` with a result that names the cause, so a caller can distinguish an
-expected wrap from a genuine size mismatch.
+("past the right edge of the row" and "no row left") into `false`. This
+proposal was to replace the `bool` with a result that names the cause.
+
+Rejected: the information is already available to callers from the public
+position API at no real cost, so the breaking change is not worth it. The
+catch-up is documentation instead: `push_char`'s rustdoc now spells out that
+the two causes are indistinguishable after the fact and shows how to decide
+before pushing.
 
 ## Motivation
 
@@ -84,19 +89,37 @@ impl Frame {
   Rejected *as the primary fix* because it does not help callers that push
   character by character, and it is a larger API addition; it can be a
   follow-up (see "Future possibilities").
-- **Alternative: keep `bool`, document the two causes.** The rustdoc already
-  states both causes, so this is the do-nothing option. It leaves the boundary
-  check duplicated in every caller that needs to tell them apart, which is the
-  situation this proposal exists to remove.
+- **Chosen: keep `bool`, and document the two causes.**
+  - The position and size needed to predict a clip are already public
+    ([`next_push_position()`], [`size()`], [`Char::width()`]), and the check is
+    two expressions, so nothing is actually hidden from a caller today.
+  - Predicting *before* pushing is strictly more useful than inspecting the
+    return value: a caller that only cares about "the frame ran out of rows"
+    writes `if pos.row >= frame.size().rows { ... }` and never looks at the
+    result at all, whereas a `Result` return makes every such caller handle a
+    value it does not need.
+  - `push_char` folds the two causes together, but it is a normal, expected
+    outcome for a text-oriented caller (the row simply ended) rather than an
+    error, so a `Result` frames the common case as exceptional.
+  - Paying a breaking change here would impose a cost on both kinds of caller
+    (the ones that want the cause and the ones that are happy predicting it)
+    to save the former a two-line check.
+- **Alternative: add a predicate such as `can_push_char(ch) -> bool`.** It
+  would keep `push_char` unchanged while removing the duplicated check, but it
+  only shortens the same two expressions, so it does not earn a new public
+  method either.
 
 ## Unresolved questions
 
-- Should `push_newline` / `push_tab` also report *why* they moved or clipped,
-  or is `push_char` the only method where the cause matters to a caller?
-- Is `Clipped` the right name, or should it be a closed enum on the error path
-  named for the frame (`ClipCause`)?
+- None; settled as rejected. Implementation is the documentation catch-up
+  described in the Summary.
 
 ## Future possibilities
 
-- A row-atomic `try_push_row(&[Char])` (or `push_row`) could be added on top,
-  using the same `Clipped` classification.
+- A row-atomic `try_push_row(&[Char])` (or `push_row`) could still be added if a
+  recurring need appears; it would not depend on this proposal. If it ever
+  lands and needs to name a cause, the name would be reconsidered then.
+
+[`next_push_position()`]: ../src/frame.rs
+[`size()`]: ../src/frame.rs
+[`Char::width()`]: ../src/frame.rs
