@@ -423,12 +423,35 @@ fn parse_complex_csi_key(bytes: &[u8]) -> (Option<Input>, usize) {
         return parse_special_key_with_modifier(bytes);
     }
 
+    // Any other ESC [ <digits> ~ sequence (for example ESC [ 15 ~). The
+    // parameter is not one tuinix maps to a key, but the sequence is still
+    // complete, so it must be consumed as a whole. Stopping at the third byte
+    // would leak the remaining bytes as ordinary characters.
+    if let Some(end) = find_tilde_terminator(bytes) {
+        return (None, end + 1);
+    }
+
     // Need more bytes or unknown sequence
     if bytes.len() < 6 {
         (None, 0)
     } else {
         (None, 3)
     }
+}
+
+/// Return the index of the terminating `~` of an `ESC [ ... ~` sequence, if one
+/// is present. The parameters are digits and semicolons; any other byte means
+/// this is not a `~`-terminated sequence, so give up rather than wait for a
+/// terminator that can never arrive.
+fn find_tilde_terminator(bytes: &[u8]) -> Option<usize> {
+    for (i, &b) in bytes.iter().enumerate().skip(3) {
+        match b {
+            b'~' => return Some(i),
+            b if b.is_ascii_digit() || b == b';' => continue,
+            _ => return None,
+        }
+    }
+    None
 }
 
 fn parse_numbered_arrow_key(bytes: &[u8]) -> (Option<Input>, usize) {
@@ -1180,6 +1203,32 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_unknown_tilde_sequences_consume_everything() {
+        // A two-digit `~` sequence whose parameter tuinix does not map to a key
+        // is still a complete sequence. It must be discarded as a whole; "~" and
+        // the extra digit must not leak out as ordinary characters.
+        for seq in [
+            &b"\x1b[15~"[..], // F5
+            &b"\x1b[22~"[..],
+            &b"\x1b[13~"[..],
+        ] {
+            let result = parse_input(seq);
+            assert_eq!(result.0, None, "{seq:?} should not produce an input");
+            assert_eq!(
+                result.1,
+                seq.len(),
+                "{seq:?} should be consumed whole, not truncated"
+            );
+        }
+
+        // A modifier makes the sequence longer but does not change the rule.
+        let seq = b"\x1b[15;2~";
+        let result = parse_input(seq);
+        assert_eq!(result.0, None);
+        assert_eq!(result.1, seq.len());
+    }
+
+    #[test]
     fn test_parse_empty_input() {
         let result = parse_input(&[]);
         assert_eq!(result.0, None);
@@ -1253,6 +1302,34 @@ mod tests {
 
         let mut split = InputDecoder::new();
         for byte in b"\x1b[3C" {
+            split.feed(&[*byte]);
+        }
+
+        assert_eq!(split.next(), whole.next());
+        assert_eq!(split.buffered_bytes(), whole.buffered_bytes());
+    }
+
+    #[test]
+    fn test_input_decoder_consumes_unknown_tilde_without_leaking_bytes() {
+        // D1: a complete but unmapped `~` sequence must drain its bytes so the
+        // buffer does not grow without bound and the tail does not surface as
+        // character input.
+        let mut buffer = InputDecoder::new();
+        buffer.feed(b"\x1b[15~");
+        assert_eq!(buffer.next(), None);
+        assert_eq!(buffer.buffered_bytes(), 0);
+        assert!(!buffer.has_pending());
+    }
+
+    #[test]
+    fn test_input_decoder_unknown_tilde_matches_split_feed() {
+        // D2: feeding the sequence byte by byte yields the same drained buffer
+        // as feeding it whole.
+        let mut whole = InputDecoder::new();
+        whole.feed(b"\x1b[15~");
+
+        let mut split = InputDecoder::new();
+        for byte in b"\x1b[15~" {
             split.feed(&[*byte]);
         }
 
