@@ -145,8 +145,8 @@ pub enum MouseInputKind {
 ///
 /// It does not bound how many bytes it holds. An application that can
 /// receive unparsable input (for example a large paste) should watch
-/// [`buffered_bytes()`](Self::buffered_bytes) and drop the excess with
-/// [`discard_buffered_bytes()`](Self::discard_buffered_bytes).
+/// [`InputDecoder::buffered_bytes()`](Self::buffered_bytes) and drop the excess with
+/// [`InputDecoder::discard_buffered_bytes()`](Self::discard_buffered_bytes).
 #[derive(Debug, Default)]
 pub struct InputDecoder {
     buf: Vec<u8>,
@@ -213,8 +213,13 @@ impl InputDecoder {
     /// [`next()`](Self::next).
     ///
     /// The count includes an incomplete sequence that is being held for more
-    /// bytes. Use it to bound how much memory a decoder can take: when the count
-    /// grows past what the application wants to keep, drop the excess with
+    /// bytes. It does not include the lone `ESC` byte that
+    /// [`commit_escape()`](Self::commit_escape) has committed, which is held as a
+    /// flag rather than as a byte and is reported by
+    /// [`has_uncommitted_escape()`](Self::has_uncommitted_escape) until
+    /// [`next()`](Self::next) yields it. Use the count to bound how much memory a
+    /// decoder can take: when the count grows past what the application wants to
+    /// keep, drop the excess with
     /// [`discard_buffered_bytes()`](Self::discard_buffered_bytes).
     pub fn buffered_bytes(&self) -> usize {
         self.buf.len()
@@ -243,6 +248,12 @@ impl InputDecoder {
 
     /// Returns `true` when the decoder holds a lone `ESC` byte that
     /// [`commit_escape()`](Self::commit_escape) would turn into the Escape key.
+    ///
+    /// This reports the lone `ESC` byte while it is still pending; after
+    /// [`commit_escape()`](Self::commit_escape) it returns `false` even though
+    /// the committed Escape key has not been yielded yet. The committed byte is
+    /// held outside the buffer, so [`buffered_bytes()`](Self::buffered_bytes)
+    /// does not count it either.
     ///
     /// A lone `ESC` is ambiguous: the terminal sends the same byte whether the
     /// user pressed the Escape key or started a sequence such as `ESC [ A`.
