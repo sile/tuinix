@@ -330,6 +330,38 @@ impl InputDecoder {
     }
 }
 
+/// A control sequence being decoded, together with where its parameters start.
+///
+/// The two-byte `ESC X` form and the one-byte C1 form are the same sequence
+/// written two ways. The parsers for CSI, OSC, DCS, and APC only care about the
+/// parameters, so they are written against this type and never have to know
+/// which form arrived. Holding the whole slice rather than just the parameters
+/// is what lets a settled sequence be reported as [`Input::Unrecognized`] with
+/// the bytes exactly as they arrived.
+struct ControlSequence<'a> {
+    /// The input as it arrived, introducer and all.
+    bytes: &'a [u8],
+    /// The index of the first parameter byte.
+    start: usize,
+}
+
+impl<'a> ControlSequence<'a> {
+    /// The sequence as it arrived. This is what [`Input::Unrecognized`] reports.
+    fn bytes(&self) -> &'a [u8] {
+        self.bytes
+    }
+
+    /// The parameters and everything after them, without the introducer.
+    fn rest(&self) -> &'a [u8] {
+        &self.bytes[self.start..]
+    }
+
+    /// The parameter byte at `offset`, or `None` past the end of the input.
+    fn get(&self, offset: usize) -> Option<u8> {
+        self.bytes.get(self.start + offset).copied()
+    }
+}
+
 fn parse_input(bytes: &[u8]) -> (Option<Input>, usize) {
     if bytes.is_empty() {
         return (None, 0);
@@ -342,6 +374,8 @@ fn parse_input(bytes: &[u8]) -> (Option<Input>, usize) {
         0x1b => parse_escape_sequence(bytes),
         // Backspace
         0x7f => (Some(create_key_input(false, false, KeyCode::Backspace)), 1),
+        // C1 control, which is an ESC-prefixed sequence written as one byte
+        b if (0x80..0xa0).contains(&b) => parse_c1_sequence(bytes),
         // UTF-8 characters
         b if b >= 0x80 => parse_utf8_char(bytes),
         // Unknown byte
@@ -396,7 +430,7 @@ fn parse_escape_sequence(bytes: &[u8]) -> (Option<Input>, usize) {
     }
 
     match bytes[1] {
-        b'[' => parse_csi_sequence(bytes),
+        b'[' => parse_sequence(&ControlSequence { bytes, start: 2 }),
         b'O' => parse_ss3_sequence(bytes),
         // OSC, DCS, and APC: a control string with an opaque body. These are
         // matched before the Alt branch below, which would otherwise read the
@@ -408,7 +442,9 @@ fn parse_escape_sequence(bytes: &[u8]) -> (Option<Input>, usize) {
         // that wants Alt+`]` can still read the report back as such, the same
         // way as for any other sequence reported in [`Input::Unrecognized`].
         // `ESC P` and `ESC _` are settled the same way.
-        b']' | b'P' | b'_' => parse_control_string(bytes),
+        b']' | b'P' | b'_' => {
+            parse_control_string(&ControlSequence { bytes, start: 2 }, bytes[1] == b']')
+        }
         // Alt + character (ESC followed by a regular character)
         b if b < 0x80 && b != 0x1b && b != 0x5b && b != 0x4f => parse_alt_char(bytes),
         // Standalone ESC or unknown sequence
@@ -416,7 +452,61 @@ fn parse_escape_sequence(bytes: &[u8]) -> (Option<Input>, usize) {
     }
 }
 
-/// Decode the control string introduced at `bytes[0..2]`.
+/// Decode a CSI sequence whose introducer has already been identified.
+///
+/// This is the `ESC [` / `0x9b` family. The introducer is not part of the
+/// decision below: the two forms differ only in where the parameters start,
+/// which [`ControlSequence`] already records.
+fn parse_sequence(seq: &ControlSequence<'_>) -> (Option<Input>, usize) {
+    match seq.get(0) {
+        Some(b'<') => parse_sgr_mouse_sequence(seq),
+        Some(b'M') => parse_x10_mouse_sequence(seq),
+        Some(b'A'..=b'D' | b'H' | b'F' | b'Z') => parse_simple_csi_key(seq),
+        Some(b'1'..=b'6') => parse_complex_csi_key(seq),
+        // A CSI sequence with no parameter byte of its own is incomplete, not a
+        // settled sequence: `ESC [` and `0x9b` both wait for what follows.
+        None => (None, 0),
+        // Any other parameter byte ends a CSI sequence whose length is not
+        // fixed: the terminator is whatever byte ends the parameter run, and
+        // reporting a constant here would leave the tail in the buffer to spill
+        // out as characters. A parameter run that reaches the end of the buffer
+        // might still grow into a sequence a branch above claims, so only a
+        // settled run is consumed.
+        Some(_) => match find_parameter_terminator(seq) {
+            Some(terminator) => unrecognized(seq.bytes(), terminator + 1),
+            None => (None, 0),
+        },
+    }
+}
+
+/// Decode a sequence whose introducer is a single C1 byte.
+///
+/// The C1 range (`0x80..=0x9f`) is the ESC-prefixed introducers written as one
+/// byte: `0x9b` is `CSI`, `0x9d` is `OSC`, `0x90` is `DCS`, and `0x9f` is `APC`.
+/// A terminal that speaks 8-bit controls sends these instead of the equivalent
+/// `ESC [`, `ESC ]`, `ESC P`, and `ESC _`, so an application that only knows the
+/// two-byte forms would read `0x9b A` as an undecodable byte followed by `A`
+/// rather than as Cursor Up.
+///
+/// Only the four introducers above are translated. The rest of the range is
+/// settled as a single byte of [`Input::Unrecognized`], which is what the
+/// generic undecodable path would do with it anyway.
+///
+/// A consequence is that `0x9b` is a CSI introducer and not `Alt+[`. The two
+/// are the same byte with nothing to tell them apart, so the choice is forced;
+/// a caller that wanted `Alt+[` can read the report back as such, the same way
+/// as for `ESC ]` above.
+fn parse_c1_sequence(bytes: &[u8]) -> (Option<Input>, usize) {
+    let seq = ControlSequence { bytes, start: 1 };
+    match bytes[0] {
+        0x9b => parse_sequence(&seq),
+        0x9d => parse_control_string(&seq, true),
+        0x90 | 0x9f => parse_control_string(&seq, false),
+        _ => unrecognized(bytes, 1),
+    }
+}
+
+/// Decode an OSC, DCS, or APC control string.
 ///
 /// The body is not interpreted; it is settled whole as [`Input::Unrecognized`],
 /// which keeps it from reaching the application as the keys it was never typed
@@ -424,11 +514,12 @@ fn parse_escape_sequence(bytes: &[u8]) -> (Option<Input>, usize) {
 /// much: `ESC _ G ... ESC \\` from the kitty graphics protocol is one image, and
 /// the application sees it either as one value or as tens of thousands of key
 /// events.
-fn parse_control_string(bytes: &[u8]) -> (Option<Input>, usize) {
-    let allow_bel = bytes[1] == b']';
-
-    match find_control_string_end(bytes, allow_bel) {
-        Some(len) => unrecognized(bytes, len),
+///
+/// `allow_bel` says the introducer was OSC, the only one of the three whose
+/// body may end at `BEL` instead of `ST`.
+fn parse_control_string(seq: &ControlSequence<'_>, allow_bel: bool) -> (Option<Input>, usize) {
+    match find_control_string_end(seq, allow_bel) {
+        Some(len) => unrecognized(seq.bytes(), len),
         None => (None, 0),
     }
 }
@@ -448,30 +539,6 @@ fn parse_alt_char(bytes: &[u8]) -> (Option<Input>, usize) {
     };
 
     (Some(create_key_input(ctrl, true, code)), 2)
-}
-
-fn parse_csi_sequence(bytes: &[u8]) -> (Option<Input>, usize) {
-    // Need at least 3 bytes for basic CSI sequences (ESC [ X)
-    if bytes.len() < 3 {
-        return (None, 0);
-    }
-
-    match bytes[2] {
-        b'<' => parse_sgr_mouse_sequence(bytes),
-        b'M' => parse_x10_mouse_sequence(bytes),
-        b'A'..=b'D' | b'H' | b'F' | b'Z' => parse_simple_csi_key(bytes),
-        b'1'..=b'6' => parse_complex_csi_key(bytes),
-        // Unknown CSI sequence. Its length is not fixed: the terminator is
-        // whatever byte ends the parameter run, and reporting a constant here
-        // would leave the tail in the buffer to spill out as characters (as
-        // `ESC [ 9 ~` did). A parameter run that reaches the end of the buffer
-        // might still grow into a sequence a branch above claims, so only a
-        // settled run is consumed.
-        _ => match find_parameter_terminator(bytes) {
-            Some(terminator) => unrecognized(bytes, terminator + 1),
-            None => (None, 0),
-        },
-    }
 }
 
 fn parse_ss3_sequence(bytes: &[u8]) -> (Option<Input>, usize) {
@@ -495,22 +562,23 @@ fn parse_ss3_sequence(bytes: &[u8]) -> (Option<Input>, usize) {
     (Some(create_key_input(false, false, code)), 3)
 }
 
-fn parse_simple_csi_key(bytes: &[u8]) -> (Option<Input>, usize) {
-    let code = match bytes[2] {
-        b'A' => KeyCode::Up,
-        b'B' => KeyCode::Down,
-        b'C' => KeyCode::Right,
-        b'D' => KeyCode::Left,
-        b'H' => KeyCode::Home,
-        b'F' => KeyCode::End,
-        b'Z' => KeyCode::BackTab,
-        _ => return unrecognized(bytes, 3),
+fn parse_simple_csi_key(seq: &ControlSequence<'_>) -> (Option<Input>, usize) {
+    let len = seq.start + 1;
+    let code = match seq.get(0) {
+        Some(b'A') => KeyCode::Up,
+        Some(b'B') => KeyCode::Down,
+        Some(b'C') => KeyCode::Right,
+        Some(b'D') => KeyCode::Left,
+        Some(b'H') => KeyCode::Home,
+        Some(b'F') => KeyCode::End,
+        Some(b'Z') => KeyCode::BackTab,
+        _ => return unrecognized(seq.bytes(), len),
     };
 
-    (Some(create_key_input(false, false, code)), 3)
+    (Some(create_key_input(false, false, code)), len)
 }
 
-fn parse_complex_csi_key(bytes: &[u8]) -> (Option<Input>, usize) {
+fn parse_complex_csi_key(seq: &ControlSequence<'_>) -> (Option<Input>, usize) {
     // Handle sequences like ESC [ 1 A (an arrow with an explicit row count).
     //
     // ANSI defines `CSI A` as `CSI 1 A`, so a digit before the final byte is a
@@ -519,43 +587,49 @@ fn parse_complex_csi_key(bytes: &[u8]) -> (Option<Input>, usize) {
     // same shape as `ESC [ A` and `ESC [ 1 ; 5 A` (the modifier is what a key
     // event can carry; the count is not). Consuming the whole sequence here is
     // what stops a complete input from being held forever as "incomplete".
-    if bytes.len() >= 4 && bytes[2].is_ascii_digit() && matches!(bytes[3], b'A'..=b'D') {
-        return parse_numbered_arrow_key(bytes);
+    let params = seq.rest();
+
+    if params.len() >= 2 && params[0].is_ascii_digit() && matches!(params[1], b'A'..=b'D') {
+        return parse_numbered_arrow_key(seq);
     }
 
     // Handle sequences like ESC [ 1 ; 5 A (modified arrow keys)
-    if bytes.len() >= 6 && bytes[2] == b'1' && bytes[3] == b';' && matches!(bytes[5], b'A'..=b'D') {
-        return parse_modified_arrow_key(bytes);
+    if params.len() >= 4
+        && params[0] == b'1'
+        && params[1] == b';'
+        && matches!(params[3], b'A'..=b'D')
+    {
+        return parse_modified_arrow_key(seq);
     }
 
     // Handle sequences like ESC [ 3 ~ (Delete) or ESC [ 3 ; 5 ~ (Ctrl+Delete)
-    if bytes.len() >= 4 && bytes[3] == b'~' {
-        return parse_special_key_simple(bytes);
+    if params.len() >= 2 && params[1] == b'~' {
+        return parse_special_key_simple(seq);
     }
 
-    if bytes.len() >= 6 && bytes[3] == b';' && bytes[5] == b'~' {
-        return parse_special_key_with_modifier(bytes);
+    if params.len() >= 4 && params[1] == b';' && params[3] == b'~' {
+        return parse_special_key_with_modifier(seq);
     }
 
     // Handle ESC [ <num> ~ and ESC [ <num> ; <mod> ~ (function keys). The
     // parameter is multi-digit, so it must be decoded from the whole run of
-    // bytes up to the terminator rather than from bytes[2].
-    if let Some(end) = find_tilde_terminator(bytes) {
-        return parse_tilde_key(bytes, end);
+    // bytes up to the terminator rather than from the first parameter byte.
+    if let Some(end) = find_tilde_terminator(seq) {
+        return parse_tilde_key(seq, end);
     }
 
-    // The parameter run (digits and semicolons from bytes[2]) ended in a byte
-    // that no branch above claims. That byte is the terminator of a complete
-    // sequence, so consume the whole thing: leaving it in the buffer would hold
-    // a complete input forever and, once more bytes arrived, spill its tail out
-    // as ordinary characters. `ESC [ 2 J` (clear screen) and `ESC [ 1 P` are
-    // the sequences this catches.
+    // The parameter run ended in a byte that no branch above claims. That byte
+    // is the terminator of a complete sequence, so consume the whole thing:
+    // leaving it in the buffer would hold a complete input forever and, once
+    // more bytes arrived, spill its tail out as ordinary characters.
+    // `ESC [ 2 J` (clear screen) and `ESC [ 1 P` are the sequences this
+    // catches.
     //
     // Only a terminator is enough to settle the sequence. A parameter run that
     // reaches the end of the buffer might still grow a `~` or an `A-D`, so that
     // case stays incomplete.
-    if let Some(terminator) = find_parameter_terminator(bytes) {
-        return unrecognized(bytes, terminator + 1);
+    if let Some(terminator) = find_parameter_terminator(seq) {
+        return unrecognized(seq.bytes(), terminator + 1);
     }
 
     // The parameter run is still going and the buffer ends mid-sequence.
@@ -568,23 +642,23 @@ fn parse_complex_csi_key(bytes: &[u8]) -> (Option<Input>, usize) {
 /// Parameters are digits and semicolons. The first other byte ends the run; a
 /// run that reaches the end of the buffer without such a byte is incomplete, so
 /// this returns `None` and the caller waits for more input.
-fn find_parameter_terminator(bytes: &[u8]) -> Option<usize> {
-    for (i, &b) in bytes.iter().enumerate().skip(2) {
+fn find_parameter_terminator(seq: &ControlSequence<'_>) -> Option<usize> {
+    for (i, &b) in seq.rest().iter().enumerate() {
         if !(b.is_ascii_digit() || b == b';') {
-            return Some(i);
+            return Some(seq.start + i);
         }
     }
     None
 }
 
-/// Return how many bytes the control string starting at `bytes[1]` occupies,
-/// including both the introducer and the terminator, if the terminator has
-/// arrived.
+/// Return how many bytes the control string occupies, introducer and all, if its
+/// terminator has arrived.
 ///
-/// `bytes[0]` is the `ESC` of the introducer and `bytes[1]` is the introducer
-/// character (`]`, `P`, or `_`). A control string body is opaque: it may contain
-/// `ESC` and, for OSC, almost any byte but `BEL`, so the only thing the decoder
-/// can look for is the terminator.
+/// The introducer is already recorded in `seq`: it is `ESC ]`, `ESC P`, or
+/// `ESC _` in the two-byte form, or `0x9d`, `0x90`, or `0x9f` in the one-byte
+/// form. A control string body is opaque: it may contain `ESC` and, for OSC,
+/// almost any byte but `BEL`, so the only thing the decoder can look for is the
+/// terminator.
 ///
 /// - OSC (`ESC ]`) ends at `BEL` (0x07) or at `ST` (`ESC \\`).
 /// - DCS (`ESC P`) and APC (`ESC _`) end at `ST` (`ESC \\`).
@@ -592,8 +666,9 @@ fn find_parameter_terminator(bytes: &[u8]) -> Option<usize> {
 /// Whichever comes first wins: xterm sends OSC terminated by `BEL`, but `ST` is
 /// equally valid and is the only terminator the other two use. `None` means the
 /// body is still arriving, so the caller waits for more input.
-fn find_control_string_end(bytes: &[u8], allow_bel: bool) -> Option<usize> {
-    let mut i = 2;
+fn find_control_string_end(seq: &ControlSequence<'_>, allow_bel: bool) -> Option<usize> {
+    let bytes = seq.bytes();
+    let mut i = seq.start;
     while i < bytes.len() {
         match bytes[i] {
             0x07 if allow_bel => return Some(i + 1),
@@ -608,10 +683,10 @@ fn find_control_string_end(bytes: &[u8], allow_bel: bool) -> Option<usize> {
 /// is present. The parameters are digits and semicolons; any other byte means
 /// this is not a `~`-terminated sequence, so give up rather than wait for a
 /// terminator that can never arrive.
-fn find_tilde_terminator(bytes: &[u8]) -> Option<usize> {
-    for (i, &b) in bytes.iter().enumerate().skip(3) {
+fn find_tilde_terminator(seq: &ControlSequence<'_>) -> Option<usize> {
+    for (i, &b) in seq.rest().iter().enumerate() {
         match b {
-            b'~' => return Some(i),
+            b'~' => return Some(seq.start + i),
             b if b.is_ascii_digit() || b == b';' => continue,
             _ => return None,
         }
@@ -626,9 +701,10 @@ fn find_tilde_terminator(bytes: &[u8]) -> Option<usize> {
 /// A key number that maps to no key, or a parameter run that is not a pair of
 /// numbers, is reported as [`Input::Unrecognized`]: the sequence is complete,
 /// so it must not be left to leak its tail as ordinary characters.
-fn parse_tilde_key(bytes: &[u8], end: usize) -> (Option<Input>, usize) {
+fn parse_tilde_key(seq: &ControlSequence<'_>, end: usize) -> (Option<Input>, usize) {
+    let bytes = seq.bytes();
     let len = end + 1;
-    let params = match std::str::from_utf8(&bytes[2..end]) {
+    let params = match std::str::from_utf8(&bytes[seq.start..end]) {
         Ok(s) => s,
         Err(_) => return unrecognized(bytes, len),
     };
@@ -682,103 +758,109 @@ fn function_key_code(number: u8) -> Option<KeyCode> {
     Some(code)
 }
 
-fn parse_numbered_arrow_key(bytes: &[u8]) -> (Option<Input>, usize) {
-    let code = match bytes[3] {
-        b'A' => KeyCode::Up,
-        b'B' => KeyCode::Down,
-        b'C' => KeyCode::Right,
-        b'D' => KeyCode::Left,
-        // Unreachable: the caller only routes here when `bytes[3]` is one of
-        // the four arrow bytes. Report the sequence instead of dropping it, so
-        // a future change to the dispatch cannot silently leak the tail.
-        _ => return unrecognized(bytes, 4),
+fn parse_numbered_arrow_key(seq: &ControlSequence<'_>) -> (Option<Input>, usize) {
+    let len = seq.start + 2;
+    let code = match seq.get(1) {
+        Some(b'A') => KeyCode::Up,
+        Some(b'B') => KeyCode::Down,
+        Some(b'C') => KeyCode::Right,
+        Some(b'D') => KeyCode::Left,
+        // Unreachable: the caller only routes here when the parameter byte is
+        // one of the four arrow bytes. Report the sequence instead of dropping
+        // it, so a future change to the dispatch cannot silently leak the tail.
+        _ => return unrecognized(seq.bytes(), len),
     };
 
-    (Some(create_key_input(false, false, code)), 4)
+    (Some(create_key_input(false, false, code)), len)
 }
 
-fn parse_modified_arrow_key(bytes: &[u8]) -> (Option<Input>, usize) {
-    if !bytes[4].is_ascii_digit() {
-        // The whole six bytes are present, so the sequence is settled: it just
-        // does not name a key.
-        return unrecognized(bytes, 6);
-    }
-
-    let modifier = bytes[4] - b'0';
+fn parse_modified_arrow_key(seq: &ControlSequence<'_>) -> (Option<Input>, usize) {
+    let len = seq.start + 4;
+    let modifier = match seq.get(2) {
+        Some(b) if b.is_ascii_digit() => b - b'0',
+        // The whole sequence is present, so it is settled: it just does not
+        // name a key.
+        _ => return unrecognized(seq.bytes(), len),
+    };
     let alt = modifier & 0x2 != 0;
     let ctrl = modifier & 0x4 != 0;
 
-    let code = match bytes[5] {
-        b'A' => KeyCode::Up,
-        b'B' => KeyCode::Down,
-        b'C' => KeyCode::Right,
-        b'D' => KeyCode::Left,
+    let code = match seq.get(3) {
+        Some(b'A') => KeyCode::Up,
+        Some(b'B') => KeyCode::Down,
+        Some(b'C') => KeyCode::Right,
+        Some(b'D') => KeyCode::Left,
         // Unreachable, as in `parse_numbered_arrow_key`.
-        _ => return unrecognized(bytes, 6),
+        _ => return unrecognized(seq.bytes(), len),
     };
 
-    (Some(create_key_input(ctrl, alt, code)), 6)
+    (Some(create_key_input(ctrl, alt, code)), len)
 }
 
-fn parse_special_key_simple(bytes: &[u8]) -> (Option<Input>, usize) {
-    let code = match bytes[2] {
-        b'1' | b'7' => KeyCode::Home,
-        b'2' => KeyCode::Insert,
-        b'3' => KeyCode::Delete,
-        b'4' | b'8' => KeyCode::End,
-        b'5' => KeyCode::PageUp,
-        b'6' => KeyCode::PageDown,
+fn parse_special_key_simple(seq: &ControlSequence<'_>) -> (Option<Input>, usize) {
+    let len = seq.start + 2;
+    let code = match seq.get(0) {
+        Some(b'1' | b'7') => KeyCode::Home,
+        Some(b'2') => KeyCode::Insert,
+        Some(b'3') => KeyCode::Delete,
+        Some(b'4' | b'8') => KeyCode::End,
+        Some(b'5') => KeyCode::PageUp,
+        Some(b'6') => KeyCode::PageDown,
         // A digit that names no key, or a byte outside `1..=6` that the
-        // dispatch let through. Either way four bytes is the whole sequence.
-        _ => return unrecognized(bytes, 4),
+        // dispatch let through. Either way the sequence is only these bytes.
+        _ => return unrecognized(seq.bytes(), len),
     };
 
-    (Some(create_key_input(false, false, code)), 4)
+    (Some(create_key_input(false, false, code)), len)
 }
 
-fn parse_special_key_with_modifier(bytes: &[u8]) -> (Option<Input>, usize) {
-    let code = match bytes[2] {
-        b'1' | b'7' => KeyCode::Home,
-        b'2' => KeyCode::Insert,
-        b'3' => KeyCode::Delete,
-        b'4' | b'8' => KeyCode::End,
-        b'5' => KeyCode::PageUp,
-        b'6' => KeyCode::PageDown,
-        _ => return unrecognized(bytes, 6),
+fn parse_special_key_with_modifier(seq: &ControlSequence<'_>) -> (Option<Input>, usize) {
+    let len = seq.start + 4;
+    let code = match seq.get(0) {
+        Some(b'1' | b'7') => KeyCode::Home,
+        Some(b'2') => KeyCode::Insert,
+        Some(b'3') => KeyCode::Delete,
+        Some(b'4' | b'8') => KeyCode::End,
+        Some(b'5') => KeyCode::PageUp,
+        Some(b'6') => KeyCode::PageDown,
+        _ => return unrecognized(seq.bytes(), len),
     };
 
-    if !bytes[4].is_ascii_digit() {
-        // Six bytes are present, so the sequence is settled; the modifier is
-        // simply not one this parser understands.
-        return unrecognized(bytes, 6);
-    }
-
-    let modifier = bytes[4] - b'0';
+    let modifier = match seq.get(2) {
+        Some(b) if b.is_ascii_digit() => b - b'0',
+        // The sequence is settled; the modifier is simply not one this parser
+        // understands.
+        _ => return unrecognized(seq.bytes(), len),
+    };
     let alt = modifier & 0x2 != 0;
     let ctrl = modifier & 0x4 != 0;
 
-    (Some(create_key_input(ctrl, alt, code)), 6)
+    (Some(create_key_input(ctrl, alt, code)), len)
 }
 
-fn parse_sgr_mouse_sequence(bytes: &[u8]) -> (Option<Input>, usize) {
+fn parse_sgr_mouse_sequence(seq: &ControlSequence<'_>) -> (Option<Input>, usize) {
+    let bytes = seq.bytes();
+    // The parameters follow the marker byte that selected this parser.
+    let params_start = seq.start + 1;
+
     // Find the end of the sequence (M or m)
     let mut end_pos = None;
-    for (i, &b) in bytes.iter().enumerate().skip(3) {
+    for (i, &b) in bytes.iter().enumerate().skip(params_start) {
         if b == b'M' || b == b'm' {
             end_pos = Some(i);
             break;
         }
         if !(b.is_ascii_digit() || b == b';') {
             // The parameters are digits and semicolons, so this byte cannot be
-            // part of a sequence no matter what arrives later. The three-byte
-            // marker `ESC [ <` is certainly part of no input, so settle it
-            // rather than waiting forever for a terminator that can never come.
+            // part of a sequence no matter what arrives later. The marker is
+            // certainly part of no input, so settle it rather than waiting
+            // forever for a terminator that can never come.
             //
             // Only the marker is consumed. The bytes after it are left in the
             // buffer: the parameters read so far are ordinary characters if
             // this was never an SGR report at all, and the caller should see
             // them as such.
-            return (some_unrecognized(bytes, 3), 3);
+            return (some_unrecognized(bytes, params_start), params_start);
         }
     }
 
@@ -788,7 +870,7 @@ fn parse_sgr_mouse_sequence(bytes: &[u8]) -> (Option<Input>, usize) {
     };
 
     // Parse the parameters
-    let params_str = match std::str::from_utf8(&bytes[3..end]) {
+    let params_str = match std::str::from_utf8(&bytes[params_start..end]) {
         Ok(s) => s,
         // The terminator settled the sequence, so it is reported as a whole
         // even though its parameters cannot be read.
@@ -816,17 +898,19 @@ fn parse_sgr_mouse_sequence(bytes: &[u8]) -> (Option<Input>, usize) {
     }
 }
 
-fn parse_x10_mouse_sequence(bytes: &[u8]) -> (Option<Input>, usize) {
-    if bytes.len() < 6 {
+fn parse_x10_mouse_sequence(seq: &ControlSequence<'_>) -> (Option<Input>, usize) {
+    // `M` plus the three payload bytes behind it.
+    let len = seq.start + 4;
+    if seq.bytes().len() < len {
         return (None, 0);
     }
 
-    let button_byte = bytes[3];
-    let x = bytes[4] as u16;
-    let y = bytes[5] as u16;
+    let button_byte = seq.get(1).expect("checked by the length test above");
+    let x = seq.get(2).expect("checked by the length test above") as u16;
+    let y = seq.get(3).expect("checked by the length test above") as u16;
 
     let mouse_input = create_x10_mouse_input(button_byte, x, y);
-    (Some(Input::Mouse(mouse_input)), 6)
+    (Some(Input::Mouse(mouse_input)), len)
 }
 
 fn parse_utf8_char(bytes: &[u8]) -> (Option<Input>, usize) {
@@ -1679,6 +1763,85 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_c1_introducers_are_their_escape_sequence() {
+        // A terminal that sends 8-bit controls writes the introducer as a single
+        // byte. `0x9b A` is Cursor Up, the same input as `ESC [ A`.
+        // The input is one byte shorter, so the value matches and each form
+        // consumes exactly its own length.
+        for (c1, esc) in [
+            (&b"\x9bA"[..], &b"\x1b[A"[..]),
+            (&b"\x9b1;5A"[..], &b"\x1b[1;5A"[..]),
+            (&b"\x9b3~"[..], &b"\x1b[3~"[..]),
+            (&b"\x9b11~"[..], &b"\x1b[11~"[..]),
+            (&b"\x9b<0;5;5M"[..], &b"\x1b[<0;5;5M"[..]),
+        ] {
+            let c1_result = parse_input(c1);
+            let esc_result = parse_input(esc);
+            assert_eq!(
+                c1_result.0, esc_result.0,
+                "{c1:?} should decode the same as {esc:?}"
+            );
+            assert_eq!(c1_result.1, c1.len(), "{c1:?} should be consumed whole");
+            assert_eq!(esc_result.1, esc.len(), "{esc:?} should be consumed whole");
+        }
+
+        // Control strings: `0x9d` is OSC, `0x90` is DCS, `0x9f` is APC. `ST`
+        // has an 8-bit spelling (`0x9c`) in this form, but the body is opaque
+        // and is not scanned for C1 bytes, so the terminator is still `ESC \\`.
+        // The report carries the bytes that arrived, so the two forms settle
+        // different payloads: only the length and the fact that the body is one
+        // value are shared.
+        for (c1, esc) in [
+            (&b"\x9d0;hi\x07"[..], &b"\x1b]0;hi\x07"[..]),
+            (&b"\x9d0;hi\x1b\\"[..], &b"\x1b]0;hi\x1b\\"[..]),
+            (&b"\x900$r0m\x1b\\"[..], &b"\x1bP0$r0m\x1b\\"[..]),
+            (&b"\x9fGa=T\x1b\\"[..], &b"\x1b_Ga=T\x1b\\"[..]),
+        ] {
+            let c1_result = parse_input(c1);
+            let esc_result = parse_input(esc);
+            assert_eq!(
+                c1_result.0,
+                Some(Input::Unrecognized { bytes: c1.to_vec() }),
+                "{c1:?} should settle as one report of the bytes that arrived"
+            );
+            assert_eq!(
+                esc_result.0,
+                Some(Input::Unrecognized {
+                    bytes: esc.to_vec()
+                }),
+                "{esc:?} should settle as one report of the bytes that arrived"
+            );
+            assert_eq!(c1_result.1, c1.len(), "{c1:?} should be consumed whole");
+            assert_eq!(esc_result.1, esc.len(), "{esc:?} should be consumed whole");
+        }
+    }
+
+    #[test]
+    fn test_parse_lone_c1_byte_waits() {
+        // The introducer alone is incomplete, not an event.
+        for c1 in [0x9b, 0x9d, 0x90, 0x9f] {
+            let result = parse_input(&[c1]);
+            assert_eq!(result.0, None, "{c1:#x} alone is incomplete");
+            assert_eq!(result.1, 0, "{c1:#x} alone must consume nothing");
+        }
+    }
+
+    #[test]
+    fn test_parse_untranslated_c1_bytes_are_settled_one_at_a_time() {
+        // The rest of the C1 range is not an introducer, so it is settled as a
+        // single byte and does not swallow what follows it.
+        for c1 in [0x80, 0x9c, 0x9e, 0x9a] {
+            let result = parse_input(&[c1, b'A']);
+            assert_eq!(
+                result.0,
+                Some(Input::Unrecognized { bytes: vec![c1] }),
+                "{c1:#x} should be reported alone"
+            );
+            assert_eq!(result.1, 1, "{c1:#x} should consume one byte");
+        }
+    }
+
+    #[test]
     fn test_parse_empty_input() {
         let result = parse_input(&[]);
         assert_eq!(result.0, None);
@@ -1948,6 +2111,63 @@ mod tests {
             Some(create_key_input(false, false, KeyCode::Char('x')))
         );
         assert_eq!(buffer.buffered_bytes(), 0);
+    }
+
+    #[test]
+    fn test_input_decoder_consumes_c1_sequence_without_leaving_bytes() {
+        // D1: one 8-bit CSI yields one key event and leaves nothing behind, so
+        // the byte after it is not read as part of the sequence.
+        let mut buffer = InputDecoder::new();
+        buffer.feed(b"\x9bA");
+        assert_eq!(
+            buffer.next(),
+            Some(create_key_input(false, false, KeyCode::Up))
+        );
+        assert_eq!(buffer.next(), None);
+        assert_eq!(buffer.buffered_bytes(), 0);
+
+        // A long 8-bit APC body becomes one value, not a flood of characters.
+        let mut body = vec![0x9f];
+        body.extend_from_slice(&[b'G'; 4096]);
+        body.extend_from_slice(b"\x1b\\");
+
+        let mut buffer = InputDecoder::new();
+        buffer.feed(&body);
+        assert_eq!(
+            buffer.next(),
+            Some(Input::Unrecognized { bytes: body }),
+            "the body should be reported whole"
+        );
+        assert_eq!(buffer.next(), None);
+        assert_eq!(buffer.buffered_bytes(), 0);
+    }
+
+    #[test]
+    fn test_input_decoder_c1_sequence_matches_split_feed() {
+        // D2: feeding a C1 sequence byte by byte yields the same input and the
+        // same drained buffer as feeding it whole. The rebuilt `ESC`-prefixed
+        // form is one byte longer than the input, so a mistake in mapping the
+        // consumed count back would show up here as a lost or doubled byte.
+        for seq in [
+            &b"\x9bA"[..],
+            &b"\x9b1;5A"[..],
+            &b"\x9b11~"[..],
+            &b"\x9b<0;5;5M"[..],
+            &b"\x9d0;hi\x07"[..],
+            &b"\x9fGa=T;f=100\x1b\\"[..],
+            &b"\x9d0;hi"[..],
+        ] {
+            let mut whole = InputDecoder::new();
+            whole.feed(seq);
+
+            let mut split = InputDecoder::new();
+            for byte in seq {
+                split.feed(&[*byte]);
+            }
+
+            assert_eq!(split.next(), whole.next(), "{seq:?}");
+            assert_eq!(split.buffered_bytes(), whole.buffered_bytes(), "{seq:?}");
+        }
     }
 
     #[test]
