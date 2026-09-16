@@ -170,6 +170,15 @@ purpose is to shed memory under load, and it overlaps with the separate proposal
 to report input the decoder itself discards. Keeping trimming in place, losing
 the bytes, is the cheaper operation for the caller that wants a bound.
 
+## Outcome
+
+Implemented in [#34](https://github.com/sile/tuinix/pull/34) (merged as
+`3ce54ca`). `InputDecoder::discard_buffered_bytes(len)` is now
+`trim_buffered_bytes(max_len)`, returning the number of bytes discarded;
+`buffered_bytes()` stays as the query. `examples/demo.rs` now calls
+`trim_buffered_bytes(MAX_BUFFERED_BYTES)` unconditionally, without reading the
+length or subtracting. Scope unchanged from the Decision section.
+
 ## Unresolved questions
 
 None.
