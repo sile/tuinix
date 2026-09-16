@@ -1,13 +1,18 @@
 # RFC: Report input the decoder chose to discard
 
-- Status: draft
+- Status: accepted
 
 ## Summary
 
-Give `InputDecoder` a way to tell the caller that it consumed bytes it could not
-decode, instead of swallowing them. The bytes are already consumed today (the
-buffer advances, so nothing grows without bound); what is missing is any signal
-that it happened, which makes a mis-decode indistinguishable from silence.
+Add an `Input::Unrecognized { bytes: Vec<u8> }` variant that carries the bytes
+`InputDecoder` consumed but could not decode, instead of swallowing them. The
+bytes are already consumed today (the buffer advances, so nothing grows without
+bound); what is missing is any signal that it happened, which makes a mis-decode
+indistinguishable from silence.
+
+Two smaller decisions ride along, because the variant's payload depends on them:
+the two parser sites that report a fixed 3 bytes for a sequence that may be
+longer learn to report its real end, and `Input` stops deriving `Ord`.
 
 ## Motivation
 
@@ -26,10 +31,10 @@ _ => (None, 3), // Unknown CSI sequence
 
 and the same shape appears in `parse_ss3_sequence` and `parse_simple_csi_key`,
 and (as `(None, end + 1)`) in `parse_sgr_mouse_sequence`. Each of these consumes
-a fixed number of bytes and returns no input. `parse_complex_csi_key` reaches
-the same result by scanning for the terminator instead of trusting a fixed
-length, but the outcome is identical: bytes consumed, nothing returned.
-`InputDecoder::next()` then loops:
+bytes and returns no input. `parse_complex_csi_key` reaches the same result by
+scanning for the terminator instead of trusting a fixed length, but the outcome
+is identical: bytes consumed, nothing returned. `InputDecoder::next()` then
+loops:
 
 ```rust
 if input.is_none() && consumed > 0 {
@@ -57,10 +62,13 @@ still incomplete, so the buffer grew on every clear
 (`done/20260915-bug-csi-parser-holds-incomplete-sequence.md`).
 
 Both are fixed and both sequences now do the right thing, but the trap they
-sprang out of is unchanged: input the decoder gives up on is either consumed
-silently or held as pending, and the caller cannot tell which from the return
-value. A decoder that reported the discard would have made the first bug
-visible on its first occurrence instead of leaving a caller to infer it from
+sprang out of is mostly unchanged: input the decoder gives up on is either
+consumed silently or held as pending, and the caller cannot tell which from the
+return value. (The one exception is `parse_csi_sequence`'s fixed 3-byte report,
+which this RFC also fixes: as written it consumes 3 bytes of a sequence that may
+be longer, so the tail leaks as characters, the same defect as the F5 bug.) A
+decoder that reported the discard would have made the first bug visible on its
+first occurrence instead of leaving a caller to infer it from
 stray characters, and would have shown the second as a discard that never came
 back rather than as a buffer that kept growing.
 
@@ -77,7 +85,9 @@ let mut decoder = tuinix::InputDecoder::new();
 decoder.feed(&bytes);
 while let Some(input) = decoder.next() {
     if let tuinix::Input::Unrecognized { bytes } = input {
-        eprintln!("undecodable input: {:?}", bytes);
+        // The decoder does not bound the payload; cap it where you log it.
+        let shown = &bytes[..bytes.len().min(16)];
+        eprintln!("undecodable input ({} bytes): {:?}", bytes.len(), shown);
         continue;
     }
     handle(input);
@@ -101,8 +111,12 @@ pub enum Input {
 ```
 
 The variants are ordered `Key`, `Mouse`, `Unrecognized`, which is not a
-meaningful order; the type derives `Ord` today, and that derive is already
-questionable for `Key`/`Mouse` (see the note below).
+meaningful order. `Input` derives `Ord` today; with a `Vec<u8>` payload that
+derive would keep compiling (comparing byte vectors lexicographically) but would
+be more misleading than before, so this RFC drops `Ord` and `PartialOrd` from
+`Input` and leaves `KeyInput`/`KeyCode` alone. This mirrors
+`done/20260915-rfc-size-ordering.md`, which removed the same derive from `Size`
+for the same reason.
 
 The parser's `(Option<Input>, usize)` pairs change meaning: a returned `Some`
 can now be a discard. Every site that returns `(None, n)` with `n > 0` becomes
@@ -112,10 +126,15 @@ something.
 
 The sites that return a discard today:
 
-- `parse_csi_sequence` — an unknown byte after `ESC [`. It reports 3 bytes
-  consumed regardless of how long the sequence actually is, so the payload is
-  the 3 bytes it claims.
-- `parse_ss3_sequence` — an SS3 key outside `A B C D H F`.
+- `parse_csi_sequence` — an unknown byte after `ESC [`. This site currently
+  reports a fixed 3 bytes regardless of how long the sequence actually is,
+  which is both a truncated payload and a leak: `ESC [ 9 ~` reports 3 bytes, so
+  `~` is left in the buffer and comes out as `Char('~')` on the next call. It
+  changes to scan for the terminator with `find_parameter_terminator` (the
+  helper `parse_complex_csi_key` already uses) and report `terminator + 1`.
+- `parse_ss3_sequence` — an SS3 key outside `A B C D H F`. SS3 has no parameter
+  run after `bytes[2]`, so a fixed 3 bytes is the real end here and this site
+  keeps reporting 3.
 - `parse_simple_csi_key` — a final byte outside `A B C D H F Z`.
 - `parse_sgr_mouse_sequence` — an `ESC [ <` report that is terminated but does
   not parse as a button/coordinate triple; it reports `end + 1`.
@@ -152,7 +171,11 @@ application state now has an arm that represents no user action.
 Discarded bytes are also attacker- or noise-controlled in the `Read`-driven
 case (an application reading another program's ANSI output). Carrying them
 verbatim makes it easy for a caller to log unbounded data unless it caps the
-length itself.
+length itself. The decoder does not cap it: how much of a discard is worth
+keeping is a trade-off the caller can see and the decoder cannot, the same
+reasoning that kept a buffer bound out of `InputDecoder` in
+`done/20260915-rfc-trim-buffered-bytes.md`. The Guide-level example shows the
+caller capping what it logs.
 
 ## Rationale and alternatives
 
@@ -192,25 +215,24 @@ dropping it, because it invents input that the user did not produce.
 
 ## Unresolved questions
 
-- Should the variant carry the whole run of discarded bytes, or the sequence
-  type plus its parameters (`Csi`/`Ss3`/`Utf8` and the payload)? The bytes are
-  what a caller can log; a classification is what a caller could dispatch on.
-- Related: a payload built from "the bytes the parser reported as consumed" is
-  only as long as that number, and two sites report a fixed 3 bytes for a
-  sequence that may be longer (`parse_csi_sequence`, `parse_ss3_sequence`).
-  Either those sites learn to scan for the real end, or the payload for them is
-  documented as truncated.
-- Is `Unrecognized` the right name? Alternatives: `Undecodable`, `Discarded`,
-  `Unknown`. The name should describe what the decoder did (it discarded the
-  bytes) rather than what the bytes supposedly are, since the decoder is the
-  party that gave up.
-- Should the length be capped by the decoder (for example the first 16 bytes
-  with a count), or is passing the bytes through and documenting "cap it
-  yourself" enough?
-- `Input`, `KeyInput`, and `KeyCode` all derive `Ord` today. If a variant
-  carrying `Vec<u8>` is added, that derive needs a story; dropping `Ord` from
-  `Input` is a separate, smaller decision that could ride along or be settled
-  independently.
+None. The five points this RFC had open are settled:
+
+- **Payload: raw bytes, not a classification.** A classification would have to
+  re-encode the interpretation the decoder just gave up on. Bytes can gain a
+  classification later; a classification cannot recover bytes it dropped.
+- **The two fixed-3-byte sites.** `parse_csi_sequence` learns to scan for the
+  terminator, so its payload is the real sequence and `ESC [ 9 ~` stops leaking
+  `~` as a character. `parse_ss3_sequence` reports 3 bytes because that is the
+  real end of an SS3 sequence.
+- **Name: `Unrecognized`.** `Discarded` would blur the line this RFC draws
+  against `trim_buffered_bytes` (the decoder giving up vs. the application
+  throwing bytes away), `Unknown` is an adjective with no noun, and
+  `Undecodable` would invent vocabulary the crate does not otherwise use.
+- **No decoder-side length cap.** Bounding the payload is a caller-visible
+  trade-off, so the caller bounds it; the Guide-level example shows how.
+- **Drop `Ord`/`PartialOrd` from `Input`.** Deriving them over a `Vec<u8>`
+  payload compiles but is meaningless, and `Size` already set the precedent.
+  `KeyInput` and `KeyCode` keep their derives.
 
 ## Future possibilities
 
@@ -224,5 +246,5 @@ dropping it, because it invents input that the user did not produce.
 - The two discards a caller can observe have different owners, and the docs
   should keep them apart: an `Unrecognized` event is the decoder giving up on
   bytes, while `trim_buffered_bytes()` is the application throwing them away
-  to bound the buffer. That operation's own ergonomics are the subject of
-  `20260915-rfc-trim-buffered-bytes.md`.
+  to bound the buffer. That operation's own ergonomics were settled in
+  `done/20260915-rfc-trim-buffered-bytes.md`.
