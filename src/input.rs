@@ -15,7 +15,16 @@ pub enum Input {
     /// holding it back, so these bytes are gone from the buffer; they are
     /// reported here so a mis-decode does not look like silence. The payload
     /// is the raw sequence, because that is what a caller can log and what
-    /// cannot be recovered once it is dropped.
+    /// cannot be recovered once it is dropped. It is also the way back from a
+    /// decode the caller disagrees with: the bytes are handed over unmodified,
+    /// and they are exactly what arrived, introducer and all. A caller that
+    /// would have read those bytes differently can do so itself, without
+    /// having to ask the decoder for a second opinion.
+    ///
+    /// That matters where a byte sequence has more than one reading and only
+    /// the decoder gets to pick. `ESC ]` is one: the standard assigns it to a
+    /// control string, so an application that wanted `Alt+]` finds those bytes
+    /// here instead. `ESC P` and `ESC _` are the same shape.
     ///
     /// Nothing bounds the length of the payload, so cap what you keep; see
     /// the crate documentation for the shape of such a loop. Dropping bytes
@@ -389,10 +398,38 @@ fn parse_escape_sequence(bytes: &[u8]) -> (Option<Input>, usize) {
     match bytes[1] {
         b'[' => parse_csi_sequence(bytes),
         b'O' => parse_ss3_sequence(bytes),
+        // OSC, DCS, and APC: a control string with an opaque body. These are
+        // matched before the Alt branch below, which would otherwise read the
+        // introducer as Alt+character and spill the body out as keystrokes.
+        //
+        // This makes `ESC ]` an OSC introducer rather than Alt+`]`. The two are
+        // the same bytes and are told apart only by what follows, so the choice
+        // is forced; OSC is what the standard assigns to the sequence. A caller
+        // that wants Alt+`]` can still read the report back as such, the same
+        // way as for any other sequence reported in [`Input::Unrecognized`].
+        // `ESC P` and `ESC _` are settled the same way.
+        b']' | b'P' | b'_' => parse_control_string(bytes),
         // Alt + character (ESC followed by a regular character)
         b if b < 0x80 && b != 0x1b && b != 0x5b && b != 0x4f => parse_alt_char(bytes),
         // Standalone ESC or unknown sequence
         _ => (Some(create_key_input(false, false, KeyCode::Escape)), 1),
+    }
+}
+
+/// Decode the control string introduced at `bytes[0..2]`.
+///
+/// The body is not interpreted; it is settled whole as [`Input::Unrecognized`],
+/// which keeps it from reaching the application as the keys it was never typed
+/// as. Reporting the introducer and waiting would be worse than reporting too
+/// much: `ESC _ G ... ESC \\` from the kitty graphics protocol is one image, and
+/// the application sees it either as one value or as tens of thousands of key
+/// events.
+fn parse_control_string(bytes: &[u8]) -> (Option<Input>, usize) {
+    let allow_bel = bytes[1] == b']';
+
+    match find_control_string_end(bytes, allow_bel) {
+        Some(len) => unrecognized(bytes, len),
+        None => (None, 0),
     }
 }
 
@@ -535,6 +572,33 @@ fn find_parameter_terminator(bytes: &[u8]) -> Option<usize> {
     for (i, &b) in bytes.iter().enumerate().skip(2) {
         if !(b.is_ascii_digit() || b == b';') {
             return Some(i);
+        }
+    }
+    None
+}
+
+/// Return how many bytes the control string starting at `bytes[1]` occupies,
+/// including both the introducer and the terminator, if the terminator has
+/// arrived.
+///
+/// `bytes[0]` is the `ESC` of the introducer and `bytes[1]` is the introducer
+/// character (`]`, `P`, or `_`). A control string body is opaque: it may contain
+/// `ESC` and, for OSC, almost any byte but `BEL`, so the only thing the decoder
+/// can look for is the terminator.
+///
+/// - OSC (`ESC ]`) ends at `BEL` (0x07) or at `ST` (`ESC \\`).
+/// - DCS (`ESC P`) and APC (`ESC _`) end at `ST` (`ESC \\`).
+///
+/// Whichever comes first wins: xterm sends OSC terminated by `BEL`, but `ST` is
+/// equally valid and is the only terminator the other two use. `None` means the
+/// body is still arriving, so the caller waits for more input.
+fn find_control_string_end(bytes: &[u8], allow_bel: bool) -> Option<usize> {
+    let mut i = 2;
+    while i < bytes.len() {
+        match bytes[i] {
+            0x07 if allow_bel => return Some(i + 1),
+            0x1b if bytes.get(i + 1) == Some(&b'\\') => return Some(i + 2),
+            _ => i += 1,
         }
     }
     None
@@ -1543,6 +1607,78 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_control_strings_consume_everything() {
+        // OSC, DCS, and APC have opaque bodies. The body must not reach the
+        // application as keystrokes, so the whole string is settled at once.
+        for seq in [
+            // OSC terminated by BEL (what xterm sends for a window title).
+            &b"\x1b]0;hi\x07"[..],
+            // OSC terminated by ST.
+            &b"\x1b]0;hi\x1b\\"[..],
+            // An OSC body may contain a lone ESC that is not a terminator.
+            &b"\x1b]11;?\x1b[0m\x07"[..],
+            // ... or an ESC that turns out not to be `ST`.
+            &b"\x1b]11;?\x1bZ\x07"[..],
+            // DCS terminated by ST.
+            &b"\x1bP1$r0m\x1b\\"[..],
+            // APC terminated by ST: the kitty graphics protocol.
+            &b"\x1b_Ga=T;f=100;s=1;v=1\x1b\\"[..],
+        ] {
+            let result = parse_input(seq);
+            assert_eq!(
+                result.0,
+                Some(Input::Unrecognized {
+                    bytes: seq.to_vec()
+                }),
+                "{seq:?} should be reported whole"
+            );
+            assert_eq!(
+                result.1,
+                seq.len(),
+                "{seq:?} should be consumed whole, not truncated"
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_unterminated_control_string_waits() {
+        // Nothing may be settled while the body is still arriving: reporting the
+        // introducer early would be wrong, and reporting a prefix as a body would
+        // lose the rest.
+        for seq in [
+            &b"\x1b]"[..],
+            &b"\x1b]0;hi"[..],
+            &b"\x1b]0;hi\x1b"[..],
+            &b"\x1bP1$r"[..],
+            &b"\x1b_Ga=T"[..],
+            &b"\x1b_Ga=T\x1b"[..],
+        ] {
+            let result = parse_input(seq);
+            assert_eq!(result.0, None, "{seq:?} is incomplete");
+            assert_eq!(result.1, 0, "{seq:?} must consume nothing");
+        }
+    }
+
+    #[test]
+    fn test_parse_alt_character_is_not_a_control_string() {
+        // The introducer characters are otherwise reachable as Alt+key. Matching
+        // them as control strings is only correct when a terminator follows; a
+        // lone `ESC ]` starts an OSC and must wait rather than being read as
+        // Alt+`]`.
+        let result = parse_input(b"\x1b]");
+        assert_eq!(result.0, None);
+        assert_eq!(result.1, 0);
+
+        // A character that cannot introduce a control string still reads as Alt.
+        let result = parse_input(b"\x1bX");
+        assert_eq!(
+            result.0,
+            Some(create_key_input(false, true, KeyCode::Char('X')))
+        );
+        assert_eq!(result.1, 2);
+    }
+
+    #[test]
     fn test_parse_empty_input() {
         let result = parse_input(&[]);
         assert_eq!(result.0, None);
@@ -1734,6 +1870,84 @@ mod tests {
             assert_eq!(split.next(), whole.next(), "{seq:?}");
             assert_eq!(split.buffered_bytes(), whole.buffered_bytes(), "{seq:?}");
         }
+    }
+
+    #[test]
+    fn test_input_decoder_consumes_control_string_without_leaking_bytes() {
+        // D1: a control string must drain in one call, however long its body is.
+        // The whole point of the fix is that a body of arbitrary length reaches
+        // the caller as one value instead of one key event per byte.
+        let mut seq = b"\x1b_".to_vec();
+        seq.push(b'G');
+        seq.extend(std::iter::repeat_n(b'A', 4096));
+        seq.extend_from_slice(b"\x1b\\");
+
+        let mut buffer = InputDecoder::new();
+        buffer.feed(&seq);
+        assert_eq!(
+            buffer.next(),
+            Some(Input::Unrecognized { bytes: seq.clone() })
+        );
+        assert_eq!(buffer.buffered_bytes(), 0);
+        assert!(!buffer.has_pending());
+
+        // The same holds for an OSC, whose terminator may be BEL.
+        for osc in [&b"\x1b]0;hi\x07"[..], &b"\x1b]0;hi\x1b\\"[..]] {
+            let mut buffer = InputDecoder::new();
+            buffer.feed(osc);
+            assert_eq!(
+                buffer.next(),
+                Some(Input::Unrecognized {
+                    bytes: osc.to_vec()
+                }),
+                "{osc:?}"
+            );
+            assert_eq!(buffer.buffered_bytes(), 0, "{osc:?}");
+        }
+    }
+
+    #[test]
+    fn test_input_decoder_control_string_matches_split_feed() {
+        // D2: feeding the sequence byte by byte yields the same input and the
+        // same drained buffer as feeding it whole, for both terminator forms.
+        for seq in [
+            &b"\x1b]0;hi\x07"[..],
+            &b"\x1b]0;hi\x1b\\"[..],
+            &b"\x1bP1$r0m\x1b\\"[..],
+            &b"\x1b_Ga=T;f=100\x1b\\"[..],
+        ] {
+            let mut whole = InputDecoder::new();
+            whole.feed(seq);
+
+            let mut split = InputDecoder::new();
+            for byte in seq {
+                split.feed(&[*byte]);
+            }
+
+            assert_eq!(split.next(), whole.next(), "{seq:?}");
+            assert_eq!(split.buffered_bytes(), whole.buffered_bytes(), "{seq:?}");
+        }
+    }
+
+    #[test]
+    fn test_input_decoder_yields_a_character_after_a_control_string() {
+        // The bytes after a terminator are ordinary input, so the decoder must
+        // not over-consume: an OSC followed by a key press yields the string and
+        // then the key.
+        let mut buffer = InputDecoder::new();
+        buffer.feed(b"\x1b]0;hi\x07x");
+
+        assert_eq!(
+            buffer.next(),
+            Some(Input::Unrecognized {
+                bytes: b"\x1b]0;hi\x07".to_vec()
+            })
+        );
+        assert_eq!(
+            buffer.next(),
+            Some(create_key_input(false, false, KeyCode::Char('x')))
+        );
+        assert_eq!(buffer.buffered_bytes(), 0);
     }
 
     #[test]
