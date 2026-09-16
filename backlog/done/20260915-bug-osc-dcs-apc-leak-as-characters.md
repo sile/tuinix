@@ -1,6 +1,6 @@
 # Bug: OSC, DCS, and APC bodies spill out as characters
 
-- Status: open
+- Status: fixed
 
 ## Summary
 
@@ -94,3 +94,22 @@ bytes at a time. The damage is to the event stream, not to memory.
   through the terminator and report it" covers both.
 - Bracketed paste (`ESC [ 200 ~` ... `ESC [ 201 ~`) is a different case with a
   different cure (recognizing the pair), and is not part of this bug.
+
+## Outcome
+
+Fixed in PR #36 (merge `3e70a38`).
+
+- A control string is now scanned to its terminator and settled as one
+  `Input::Unrecognized` covering the whole sequence. The scan accepts `BEL`
+  (0x07) or `ST` (`ESC \`), and accepts `BEL` only for OSC, since DCS and APC
+  have no other terminator.
+- An unterminated control string returns `(None, 0)`: it is genuinely
+  incomplete, so the bytes stay buffered and `None` keeps its meaning of "wait
+  for more input". A control string that a caller wants to abandon before its
+  terminator arrives is the case the bounded-incomplete-sequence RFC covers.
+- `Alt+]`, `Alt+P`, and `Alt+_` are no longer expressible, because the decoder
+  cannot tell them from an introducer. An application that wants them reads the
+  bytes back from `Input::Unrecognized`, whose documentation now states that
+  the payload is passed through unmodified.
+- The scan reads past an `ESC` that does not start `ST`, so a body may contain
+  escape bytes without ending the string early.
