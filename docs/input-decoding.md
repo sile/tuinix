@@ -157,9 +157,16 @@ key events.
 | -------- | ------- |
 | `ESC ] ... BEL` | `0x07` |
 | `ESC ] ... ESC \` | the two-byte string terminator |
+| `ESC ] ... 0x9c` | the one-byte string terminator |
 | `ESC P ... ESC \` | the two-byte string terminator |
+| `ESC P ... 0x9c` | the one-byte string terminator |
 | `ESC _ ... ESC \` | the two-byte string terminator |
+| `ESC _ ... 0x9c` | the one-byte string terminator |
 
+A string terminator has two spellings, `ESC \` and the single byte `0x9c`, and
+the six sequences above end at either of them; a terminal that opens a control
+string with a one-byte introducer usually closes it with the one-byte
+terminator. `BEL` ends an OSC alone, since the other two bodies may contain it.
 Whichever terminator comes first ends the string. Until one does, nothing is
 reported: the decoder waits for the end rather than guessing at a body length.
 
