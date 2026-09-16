@@ -234,6 +234,28 @@ None. The five points this RFC had open are settled:
   payload compiles but is meaningless, and `Size` already set the precedent.
   `KeyInput` and `KeyCode` keep their derives.
 
+## Outcome
+
+Implemented in PR #35 (merge `394771a`) with the scope intact.
+
+- `Input` gained `Unrecognized { bytes: Vec<u8> }` and lost `Copy`,
+  `PartialOrd`, and `Ord`; `KeyInput` and `KeyCode` kept their derives.
+- Every path that consumed bytes without producing an input now reports them:
+  an unknown byte, an unknown SS3 sequence, an unknown `~` number, invalid
+  UTF-8, an unparseable SGR mouse report, and an unknown CSI sequence.
+- `parse_csi_sequence` scans for the terminator instead of returning 3, so
+  `ESC [ 9 ~` is consumed whole rather than leaving its `~` behind.
+  `parse_ss3_sequence` still reports 3, which is the real length.
+- `InputDecoder::next()` lost its drain-and-retry loop: a non-zero consume
+  always carries an event, so one `parse_input` call settles it.
+
+One decision was made while implementing, on the SGR mouse prefix path. It used
+to consume every byte it had read when it hit a byte that cannot appear in an
+SGR report. Those bytes are now settled only for the `ESC [ <` marker, with the
+rest left in the buffer, because bytes after the marker may be ordinary input
+(`ESC [ < 1 2 a` is the marker, then `1`, `2`, and `a`). Consuming them with the
+prefix would have invented the same kind of loss this RFC is about.
+
 ## Future possibilities
 
 - The same channel gives an application a hook for **unknown-but-plausible**
