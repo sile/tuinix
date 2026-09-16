@@ -1,6 +1,6 @@
 # Bug: 8-bit CSI (`0x9B`) is not recognized as a control sequence
 
-- Status: open
+- Status: fixed
 
 ## Summary
 
@@ -75,6 +75,8 @@ the character `A`. The first option is the one to take: the C1 introducers
 spell sequences tuinix already decodes, and rejecting the table those bytes
 come from is not the same as being able to read it.
 
+It was taken. See the Outcome section.
+
 ## Impact
 
 Narrow. Modern terminals in UTF-8 mode send the two-byte `ESC [` form, so most
@@ -83,11 +85,37 @@ applications never see `0x9B`. It matters for a terminal or a byte stream in
 
 ## Notes
 
-- If this becomes C1-aware, the same terminator question as the OSC/DCS/APC
-  bug applies to `0x9D` and `0x90`, and the fix has to reach
-  `find_control_string_end` with a one-byte introducer in hand.
+- Making this C1-aware brought in the same terminator question as the
+  OSC/DCS/APC bug, for `0x9D` and `0x90`. The fix reaches
+  `find_control_string_end` with a one-byte introducer in hand; see the Outcome
+  section for how the introducer length is carried.
 - The minimum fix that preserves today's behavior is to keep reporting
   `Unrecognized` but settle the whole `0x80..=0x9F` range in one step instead
   of letting the UTF-8 branch decide. That removes the stray-byte-plus-keys
   split only for sequences whose full length is known, so it is the weaker of
   the two options above.
+
+## Outcome
+
+Fixed in PR #37 (merge `7d4e757`). The first of the two options was taken: the
+C1 introducers are read as the sequences they spell.
+
+- `0x9B` is CSI, `0x9D` is OSC, `0x90` is DCS, and `0x9F` is APC. Each one
+  reaches the same parser as its `ESC`-prefixed spelling and produces the same
+  events, so `0x9B 'A'` is Cursor Up rather than a stray byte followed by the
+  character `A`.
+- The rest of the C1 range (`0x80..=0x9F`) is unchanged: it settles as a
+  one-byte `Unrecognized`, which is what `0x9B` used to do.
+- The fix did not rebuild an `ESC`-prefixed buffer to feed the existing
+  parsers. The parsers now take a `ControlSequence` carrying the original bytes
+  plus the index where parameters begin, because the two spellings differ in
+  introducer length (two bytes for `ESC`-prefixed, one for C1). Reporting the
+  original slice is what keeps the `Unrecognized` payload the bytes that
+  arrived, as `#35` requires; a rebuilt buffer would have reported bytes the
+  caller never sent.
+- `Alt+[` is no longer expressible, for the same reason as `Alt+]` in the
+  OSC/DCS/APC fix. An application that wants it reads the bytes back from
+  `Input::Unrecognized`.
+- The `ControlSequence` change also fixed a length error in the X10 mouse
+  parser that the existing tests caught: `ESC [ M` plus three payload bytes is
+  six bytes, and the parser had been reporting five.
