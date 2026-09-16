@@ -17,10 +17,14 @@ pub enum Input {
     /// is the raw sequence, because that is what a caller can log and what
     /// cannot be recovered once it is dropped. It is also the way back from a
     /// decode the caller disagrees with: the bytes are handed over unmodified,
-    /// so a settled sequence can be read again under a different
-    /// interpretation. The bytes are exactly what arrived, introducer and all:
-    /// this variant's `ESC ]` report begins with `ESC ]`, so an application
-    /// that meant `Alt+]` can read it as such.
+    /// and they are exactly what arrived, introducer and all. A caller that
+    /// would have read those bytes differently can do so itself, without
+    /// having to ask the decoder for a second opinion.
+    ///
+    /// That matters where a byte sequence has more than one reading and only
+    /// the decoder gets to pick. `ESC ]` is one: the standard assigns it to a
+    /// control string, so an application that wanted `Alt+]` finds those bytes
+    /// here instead. `ESC P` and `ESC _` are the same shape.
     ///
     /// Nothing bounds the length of the payload, so cap what you keep; see
     /// the crate documentation for the shape of such a loop. Dropping bytes
@@ -400,9 +404,9 @@ fn parse_escape_sequence(bytes: &[u8]) -> (Option<Input>, usize) {
         //
         // This makes `ESC ]` an OSC introducer rather than Alt+`]`. The two are
         // the same bytes and are told apart only by what follows, so the choice
-        // is forced; OSC is what the standard assigns to the sequence, and the
-        // application that wants Alt+`]` instead reads it back out of
-        // [`Input::Unrecognized`], whose payload is these bytes unmodified.
+        // is forced; OSC is what the standard assigns to the sequence. A caller
+        // that wants Alt+`]` can still read the report back as such, the same
+        // way as for any other sequence reported in [`Input::Unrecognized`].
         // `ESC P` and `ESC _` are settled the same way.
         b']' | b'P' | b'_' => parse_control_string(bytes),
         // Alt + character (ESC followed by a regular character)
