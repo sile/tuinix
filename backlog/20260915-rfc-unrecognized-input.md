@@ -223,6 +223,6 @@ dropping it, because it invents input that the user did not produce.
   the variant into a debugging tool rather than a byte dump.
 - The two discards a caller can observe have different owners, and the docs
   should keep them apart: an `Unrecognized` event is the decoder giving up on
-  bytes, while `discard_buffered_bytes()` is the application throwing them away
+  bytes, while `trim_buffered_bytes()` is the application throwing them away
   to bound the buffer. That operation's own ergonomics are the subject of
   `20260915-rfc-trim-buffered-bytes.md`.
