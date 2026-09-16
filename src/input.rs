@@ -15,7 +15,10 @@ pub enum Input {
     /// holding it back, so these bytes are gone from the buffer; they are
     /// reported here so a mis-decode does not look like silence. The payload
     /// is the raw sequence, because that is what a caller can log and what
-    /// cannot be recovered once it is dropped.
+    /// cannot be recovered once it is dropped. It is also the way back from a
+    /// decode the caller disagrees with: the bytes are handed over unmodified,
+    /// so a settled sequence can be read again under a different
+    /// interpretation (see [`parse_escape_sequence`] for the `ESC ]` case).
     ///
     /// Nothing bounds the length of the payload, so cap what you keep; see
     /// the crate documentation for the shape of such a loop. Dropping bytes
@@ -395,9 +398,10 @@ fn parse_escape_sequence(bytes: &[u8]) -> (Option<Input>, usize) {
         //
         // This makes `ESC ]` an OSC introducer rather than Alt+`]`. The two are
         // the same bytes and are told apart only by what follows, so the choice
-        // is forced; OSC is what the standard assigns to the sequence, so Alt+`]`
-        // is the one that cannot be expressed. `ESC P` and `ESC _` are not
-        // reachable as Alt+P and Alt+_ for the same reason.
+        // is forced; OSC is what the standard assigns to the sequence, and the
+        // application that wants Alt+`]` instead reads it back out of
+        // [`Input::Unrecognized`], whose payload is these bytes unmodified.
+        // `ESC P` and `ESC _` are settled the same way.
         b']' | b'P' | b'_' => parse_control_string(bytes),
         // Alt + character (ESC followed by a regular character)
         b if b < 0x80 && b != 0x1b && b != 0x5b && b != 0x4f => parse_alt_char(bytes),
