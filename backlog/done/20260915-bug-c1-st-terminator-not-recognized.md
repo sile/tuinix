@@ -1,6 +1,6 @@
 # Bug: A C1 control string never ends because `ST` is only recognized in its two-byte form
 
-- Status: open
+- Status: fixed
 
 ## Summary
 
@@ -77,3 +77,14 @@ bytes are lost.
 The two forms of `ST` are the only gap. `0x9d`/`0x90`/`0x9f` introducers and
 both terminator spellings should be handled by one scanner; the body stays
 opaque and single-byte C1 bytes inside it are not reclassified.
+
+## Outcome
+
+Fixed in PR #38 (merge `ed036a6`). `find_control_string_end` now matches
+`0x9c` alongside `ESC \`, for OSC, DCS, and APC alike, and `BEL` remains valid
+for OSC alone. The scanner, the sequence of terminators it accepts, and the
+reference documentation in `docs/input-decoding.md` were updated together. Four
+tests were added: two at the parser level (one-byte `ST` ends a control string;
+`BEL` ends OSC but not DCS or APC) and two at the decoder level (the buffer
+empties in one call; feeding one byte at a time gives the same result). The
+scope of the fix is unchanged from what is described above.
