@@ -201,11 +201,11 @@ fn read_input(
     // decoder at a time.
     while let Some(n @ 1..) = would_block_as_none(driver.read(&mut raw))? {
         input.feed(&raw[..n]);
-        // Drop the oldest bytes if the decoder holds more than the demo wants to
-        // keep, so a flood of unparsable input cannot grow it without bound.
-        if input.buffered_bytes() > MAX_BUFFERED_BYTES {
-            input.discard_buffered_bytes(input.buffered_bytes() - MAX_BUFFERED_BYTES);
-        }
+        // Keep at most `MAX_BUFFERED_BYTES` bytes of unparsed input, so a flood of
+        // unparsable input cannot grow the decoder without bound. Dropping the
+        // oldest bytes can cut through an incomplete sequence; the demo accepts
+        // that to stay within its bound.
+        input.trim_buffered_bytes(MAX_BUFFERED_BYTES);
     }
     Ok(())
 }
