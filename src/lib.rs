@@ -10,6 +10,11 @@
 //! - Creating efficient terminal frames with differential updates
 //! - Non-blocking input and resize notifications for use with external event loops
 //!
+//! ## Where to look next
+//!
+//! - [`docs::input_decoding`] — the byte sequences [`InputDecoder`] recognizes,
+//!   and what it does with the bytes that decode to nothing.
+//!
 //! ## Architecture
 //!
 //! The library separates the *I/O* of a terminal from the *pure data* that an
@@ -165,6 +170,19 @@ mod geometry;
 mod input;
 mod style;
 mod terminal;
+
+/// Supplemental documentation for tuinix's design.
+///
+/// These pages go deeper than the item-level documentation: they gather the
+/// behavior of one area in one place, where rustdoc's per-item form makes it
+/// hard to see the whole.
+pub mod docs {
+    /// Reference for what [`InputDecoder`](crate::InputDecoder) recognizes:
+    /// the byte sequences that become an [`Input`](crate::Input), and what
+    /// happens to the bytes that become nothing.
+    #[doc = include_str!("../docs/input-decoding.md")]
+    pub mod input_decoding {}
+}
 
 pub use frame::{Char, Frame};
 pub use geometry::{Position, Region, Size};
