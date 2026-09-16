@@ -1,16 +1,18 @@
-# RFC: Bound an incomplete sequence without cutting through it
+# RFC: Drop the buffer trim instead of adding a recovery path
 
-- Status: draft
+- Status: accepted
 
 ## Summary
 
 `InputDecoder::trim_buffered_bytes(max_len)` bounds the buffer by discarding
-bytes from the front, so when the buffer is one long incomplete sequence it cuts
-that sequence in half. The application then sees a fragment of a byte stream the
-decoder had already partly interpreted, which is exactly the kind of
-half-reported input the crate spent several fixes removing. This RFC proposes a
-way to end an abandoned sequence at a known boundary instead of at an arbitrary
-byte offset.
+bytes from the front, so when the buffer holds one long incomplete sequence it
+cuts that sequence in half. Earlier drafts of this RFC tried to make that cut
+safer — abandon the sequence at a boundary the decoder understands, or resync
+after the junk. This RFC reaches the opposite conclusion: the decoder should not
+offer a way to shed buffered bytes at all. The input is either well formed, in
+which case nothing accumulates, or the source is broken, in which case there is
+nothing worth recovering and the application should fail rather than paper over
+it.
 
 ## Motivation
 
@@ -20,134 +22,166 @@ finish, and the fixes up to now removed the places where that was never true (a
 complete sequence held forever). What is left is honest incompleteness: a
 sequence whose terminator has not arrived.
 
-There is no bound on how long such a sequence can be. In practice the buffer
-grows only for a parameter run that never ends — `ESC [` followed by digits and
-semicolons — because any other byte settles the sequence. That is rare, but not
-impossible: a line of noise, a mis-sent control sequence, or a stream from a
-program that is not speaking the protocol can all open one. A caller that reads
-from a device it does not control needs an answer for it.
+There is no bound on how long such a sequence can be. A line of noise, a mis-sent
+control sequence, or a stream from a program that is not speaking the protocol
+can all open one, and nothing in the bytes that follow has to close it. A caller
+that reads from a device it does not control needs an answer for it.
 
-The answer today is `trim_buffered_bytes(MAX)`. It does bound the buffer, and it
-is the only thing that does, but the cut is a byte offset into a stream the
-decoder has already classified as "an escape sequence is in progress". The bytes
-after the cut are then decoded as ordinary input, so the application gets a
-fragment of a sequence as text — the same failure as the leaks this crate fixed,
-deliberately chosen. The doc admits this:
+The answer today is `trim_buffered_bytes(MAX)`, and it is worth asking what
+problem it actually solves.
 
-> The cut is byte-oriented while the parser is sequence-oriented, so it can land
-> in the middle of an incomplete sequence.
+The buffer only grows when the bytes fed so far are the prefix of one sequence
+that has not ended. Which sequences can do that is a short list:
 
-This RFC argues the application should not have to make that choice. It should
-be able to say "stop waiting for this sequence" and have the decoder discard to
-a point it understands, then resume decoding from there.
+- `ESC [` (or `0x9b`) followed by nothing but digits and semicolons, so the
+  parameter run never reaches a terminator.
+- A control-string body whose terminator never arrives (`ESC ]`, `ESC P`,
+  `ESC _`, or their C1 introducers).
+- A truncated UTF-8 lead byte or mouse report that never gets its continuation.
+
+Of these the control-string body is the realistic one, because a body is
+arbitrary length: an APC carrying an image, or an OSC report from a program that
+forgot to close it, can be megabytes. The parameter run needs a source that
+emits only digits and semicolons, which no working terminal does.
+
+So there are really two situations behind an oversized buffer, and they want
+different answers:
+
+1. **The decoder is wrong.** The sequence is well formed and terminated, but
+   tuinix fails to see the terminator and holds it forever. The fix is in the
+   decoder (the one-byte `ST` in a C1 control string is one such case), and no
+   amount of trimming helps because the bytes will keep arriving.
+2. **The source is wrong.** A program is emitting junk, or a sequence was cut
+   off and will never finish. There is no correct output to recover: no decoder
+   can tell where the next real sequence starts, because the bytes that would
+tell it apart are exactly the bytes that never came.
+
+`trim_buffered_bytes` addresses neither. It turns case 1 into a silent
+behavior: the application trims and the sequence is lost, so the missing
+guarantee stays missing. For case 2 it replaces "an unbounded buffer" with "a
+buffer of unknown correctness": the bytes left after the cut have lost their
+sequence context, so what the decoder reports afterward is not what arrived.
+
+The argument for dropping it is that a TUI does not need the robustness a server
+does. A server accepts input from attackers, so it must bound and recover. A TUI
+reads its own terminal, or the pty its child is attached to. If that stream is
+broken, the honest response is to stop, not to keep decoding a stream that no
+longer means anything. `buffered_bytes()` already gives the application the one
+fact it needs to make that call.
 
 ## Guide-level explanation
 
-An application that reads from a source it does not fully trust bounds the
-buffer by ending the sequence rather than by cutting the bytes:
+`InputDecoder` shrinks to two methods for this concern: `feed()` and `next()` as
+the way in, `buffered_bytes()` as the way to observe how much is held. There is
+no method to drop bytes, and `trim_buffered_bytes` is removed.
+
+An application that can receive a broken stream checks the bound itself and
+treats exceeding it as a fatal condition:
 
 ```rust
 loop {
-    if decoder.buffered_bytes() > MAX_BUFFERED_BYTES {
-        decoder.abandon_incomplete_input();
-    }
     // ... feed, drain, draw ...
+    if decoder.buffered_bytes() > MAX_BUFFERED_BYTES {
+        eprintln!("input does not look like terminal input; giving up");
+        std::process::exit(1);
+    }
 }
 ```
 
-After the call the decoder holds no bytes from the abandoned sequence, so the
-next bytes are decoded from a clean start. The application chooses *when* to
-give up (a size bound, a timeout, a user gesture); the decoder chooses *where*
-to stop, which is the part it knows and the caller does not.
+The application still owns the policy — what bound, what to do — which is where
+it belongs. What the decoder stops doing is offering a halfway measure that
+looks like a recovery and is not one.
 
 ## Reference-level explanation
 
-The decoder is the only layer that knows where a sequence begins. What this
-proposal needs from it is the answer to "if I stop waiting now, what is the
-largest prefix I can safely drop?" The natural reading is the bytes of the one
-incomplete sequence being held, which is: everything the current buffer holds
-that the parser has already committed to as one sequence.
+`InputDecoder::trim_buffered_bytes()` is deleted. Nothing takes its place: no
+`abandon_incomplete_input()`, no `reset()`, no bound inside the decoder.
 
-Two shapes are possible for the operation:
+`buffered_bytes()` stays, unchanged. It is an observation, not a policy — it
+reports how many bytes are held and takes no view on what should happen next.
+The value of the pair is that the application can see the condition and decide;
+the value of removing `trim` is that the decoder's answer to the condition is
+only "tell me the bytes", never "here is a way to keep going".
 
-- **Abandon and report.** The abandoned bytes are returned as
-  `Input::Unrecognized`, matching every other case where the decoder consumes
-  bytes it did not turn into a key. The caller can see what was given up on.
-- **Abandon and forget.** The bytes are dropped and no value is produced, which
-  is what `trim_buffered_bytes` does today.
+The invariant this leaves is the one the recent fixes were all reaching for: `
+next()` returns `None` only while a well-formed sequence is still arriving, and
+every well-formed sequence eventually settles. Under that invariant an oversized
+buffer is always a statement about the input, not about the decoder.
 
-The first is consistent with the rest of the `Input` surface and makes the
-failure visible; the second is simpler and matches the existing "trim" call.
-Either way the operation differs from `commit_escape()`: committing settles an
-*interpretation* (a lone `ESC` becomes Escape), while abandoning refuses one.
-They should stay separate methods.
-
-Nothing here proposes a bound inside the decoder. The decoder would still hold
-bytes indefinitely if the application never calls the new operation; the
-difference is that when the application does act, the result is a decoded-clean
-state rather than a bitten-off fragment.
+The distinction from `commit_escape()` is why this is a removal rather than a
+rename. `commit_escape()` settles an *interpretation* the application has
+reasoned about (a lone `ESC` was Escape, not the start of a sequence), which is
+a decision only the application can make and the decoder correctly leaves to it.
+Dropping bytes is not an interpretation; it is giving up on the stream, and the
+decoder has no privileged knowledge that makes its version of that better than
+the application's.
 
 ## Drawbacks
 
-- A second way to shed buffered bytes, next to `trim_buffered_bytes`. Keeping
-  both means a caller has to decide which to reach for, and the byte-offset trim
-  remains available to produce exactly the fragment this RFC objects to.
-- "Where the sequence begins" is only as good as the parser's own boundary. If
-the abandoned bytes are the prefix of a legitimate sequence that was merely
-slow, the decoder still discards a real sequence — the operation cannot tell
-"abandoned" from "slow", and only the caller's policy can.
-- Reporting the abandoned bytes as `Unrecognized` creates a large value for a
-  large sequence, which is a copy of the very bytes the caller wanted to get rid
-  of. "Abandon and forget" avoids that at the cost of silence.
+- An application that wants to keep reading through a broken stream has no
+  supported way to do it. That is deliberate, but it is a real loss of a choice
+  the old API allowed. The application can still build a fresh `InputDecoder`
+  and lose everything, but it cannot keep the bound.
+- `buffered_bytes()` becomes the only signal, so an application must poll it
+  somewhere in its loop. This is a small burden, and one an application that
+  cares about the bound is already paying today to decide when to trim.
+- Removing a public method is a breaking change. tuinix is pre-1.0 and the
+  project has decided breaking changes are acceptable when the API is wrong, so
+  this is noted rather than used as an argument against.
 
 ## Rationale and alternatives
 
-**Keep only `trim_buffered_bytes` and document the hazard better.** The smallest
-change, and it is rejected: the hazard is not a misunderstanding a doc can
-prevent. The method's argument is a byte count, and a byte count that lands
-inside a sequence is the operation working as designed. No wording makes the
-mid-sequence cut disappear from the API.
+**Abandon the sequence at a boundary the decoder knows**
+(`abandon_incomplete_input()`, the earlier draft of this RFC). Better than a
+byte offset — the decoder does know where the held sequence starts — but it
+still ships a method whose whole purpose is to keep a partially received stream
+going, and it silently discards a sequence that might merely have been slow. It
+also answers a question the application has to answer anyway: after calling it,
+when does the application decide the stream is broken for good? Every answer to
+that question is the same check on `buffered_bytes()` this RFC proposes doing
+directly.
 
-**Have the decoder hold a bound** (`with_max_buffered_bytes(n)`). Rejected in
-the trim RFC for the same reason it is rejected here: the bound is a policy with
-a user-visible trade-off (a real sequence can be cut), and a foundational layer
-must not hide that decision. This RFC keeps the decision with the caller and
-only makes the action the caller takes a better one.
+**Resynchronize after the junk** (the decoder, told to give up, consumes until
+it sees a byte that can start a sequence). Rejected: there is no correct choice
+of resynchronization point. `ESC` is wrong because a control-string body may
+contain it; a newline is wrong because a body may contain that too. Any choice
+is a guess about where the sender stopped being broken, and the decoder is not
+in a better position to guess than the application.
 
-**A resynchronization state** (the decoder, once told to give up, keeps
-consuming until it sees a byte that can start a sequence, e.g. `ESC`). This
-turns "abandon" into "abandon and resync", which handles the case where the
-junk does not end at a sequence boundary at all. It is worth considering, but it
-is a bigger change (the decoder gains a mode) and its correctness depends on
-what counts as a resynchronization point. Deferred to a follow-up unless the
-simple form proves insufficient.
+**Keep `trim_buffered_bytes` and document the hazard better.** Rejected for the
+reason the earlier draft gave: the hazard is not a misunderstanding a doc can
+prevent. The argument is a byte count, and a byte count that lands inside a
+sequence is the operation working as designed. But the deeper problem is that
+improving the docs leaves the method in place, and the method is the thing that
+suggests a broken stream is worth limping along with.
 
-**Cut at a sequence boundary while keeping the front-drop convention** (a
-boundary-aware version of the current method). This fixes the fragment and
-leaves the byte-count argument in place, which mostly preserves the awkward
-shape; it is a smaller step than this RFC and may be enough if the caller is
-happy to pass "how much to keep" in bytes.
+**Have the decoder hold a bound** (`with_max_buffered_bytes(n)`). Rejected, as
+it was in the trim RFC: a bound is a policy with a user-visible trade-off (a
+real sequence gets cut), and a foundational layer must not hide that decision.
+`buffered_bytes()` plus an application-side policy keeps the decision where it
+belongs.
+
+**Keep the method and only rename it or fix the docs.** Does not address the
+point; the method's existence is the problem.
 
 ## Unresolved questions
 
-- Abandon-and-report (`Input::Unrecognized`) or abandon-and-forget.
-- The method name. `abandon_incomplete_input` describes the effect;
-  `discard_pending_sequence` and `reset_pending_sequence` are alternatives.
-- The exact prefix that is dropped when the buffer holds more than the one
-  incomplete sequence (it normally holds only that, because anything settled is
-  consumed by `next()`; state that as the precondition or enforce it).
-- Whether `trim_buffered_bytes` should remain once this exists, or be narrowed
-  to a boundary-aware form.
+None. The scope is a removal: delete `trim_buffered_bytes`, keep
+`buffered_bytes()`, and close out the earlier trim RFC as superseded.
 
 ## Future possibilities
 
-- A resynchronization mode, if abandoning the held sequence alone does not
-  bound real streams.
-- A timeout helper around `commit_escape()` and this operation, so a caller does
-  not reimplement the policy for both.
-- Whether the demoted reason for `trim_buffered_bytes` — that it was motivated
-  by pastes that grow the buffer — should be corrected in that RFC's history.
+- If a real application turns out to need to keep reading through a broken
+  stream, that is new information and deserves its own RFC with the concrete
+  case attached. Nothing here forecloses it; the answer today is that no such
+  case is known.
+- The one stream that does accumulate legitimately — a control string that is
+  genuinely still arriving — is bounded by its terminator, not by a byte count,
+  provided the decoder recognizes the terminator. The fix for the one-byte `ST`
+  is filed separately, and is the reason to look at case 1 before adding escape
+  hatches for case 2.
+- Whether the trim RFC's original motivation should be corrected in its history.
   Investigation while writing this found that pastes do not grow the buffer: a
   paste is decoded character by character and the buffer stays small, and an
-  OSC/DCS/APC body is likewise consumed two bytes at a time. The buffer grows
-  only for an unterminated parameter run.
+  OSC/DCS/APC body is likewise consumed as it arrives. The buffer grows only for
+  an unterminated parameter run or an unterminated control string.
