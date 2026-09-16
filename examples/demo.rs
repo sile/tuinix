@@ -175,6 +175,13 @@ fn handle_event(
                 BODY_STYLE,
             );
         }
+        tuinix::Input::Unrecognized { bytes } => {
+            write_text(
+                &mut frame,
+                &format!("\nLast event: Undecodable input: {} byte(s)\n", bytes.len()),
+                BODY_STYLE,
+            );
+        }
     }
 
     let out = frame.render(prev_frame.as_ref(), cursor);
