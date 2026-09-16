@@ -1,6 +1,6 @@
 # RFC: Trim the decoder buffer to a caller-chosen length
 
-- Status: draft
+- Status: accepted
 
 ## Summary
 
@@ -172,16 +172,23 @@ the bytes, is the cheaper operation for the caller that wants a bound.
 
 ## Unresolved questions
 
-- Is `trim_buffered_bytes` the right name? Alternatives: `truncate_buffered_bytes`
-  (suggests the byte-oriented cut more strongly, and shares Rust's `truncate`
-  vocabulary for "shorten to a length"), `cap_buffered_bytes` (states the bound,
-  but `cap` reads as a stored limit, which this is not), `keep_buffered_bytes`
-  (the argument's meaning, but reads as a query).
-- Should the return value stay `usize`, or become `()`? Every caller today
-  ignores it; keeping it costs nothing and lets a caller log how much was shed.
-- `buffered_bytes()` and this method are used together in the demo; is the
-  query still wanted separately, or would a single method that reports the
-  buffer length before trimming cover the logging case?
+None.
+
+The name was settled as `trim_buffered_bytes`. It is the only candidate that does
+not fight the direction of the cut: `truncate_buffered_bytes` borrows
+`Vec::truncate`'s wording for "shorten to a length", but that wording carries
+"cut the end", while this cuts the front. `cap_buffered_bytes` reads as a stored
+limit rather than an operation, and `keep_buffered_bytes` describes the argument
+but not the action.
+
+The return value stays `usize`. No caller uses it today, but the count falls out
+of the `saturating_sub` anyway, and it is what a caller would want for logging
+how much input it shed.
+
+`buffered_bytes()` stays as the query. `trim_buffered_bytes` does not report the
+length it started from, so a caller that wants to notice an oversized buffer — or
+to trim only past some mark rather than on every read — needs it. The in-crate
+tests use it the same way.
 
 ## Future possibilities
 
