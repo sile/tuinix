@@ -6,8 +6,10 @@
 
 C1 control codes are not handled. A terminal that sends the 8-bit form of CSI
 as a single byte `0x9B` instead of the two-byte `ESC [` is not understood: the
-byte starts a UTF-8 character instead of a control sequence, so the parameter
-and terminator bytes that follow are reported as characters.
+byte is reported as a one-byte undecodable value, and the bytes that follow it
+are then read as ordinary input. A Cursor Up arrives as "one unknown byte"
+followed by the character `A`, and the two spellings of the same key do not
+produce the same event.
 
 ## Reproduction
 
@@ -18,13 +20,20 @@ input:  0x9B 'A'
 calls:  d.feed(&[0x9b, b'A']); while let Some(i) = d.next() { ... }
 
 observed events:
-  Input::Unrecognized { bytes: [0x9b, b'A'] }
+  Input::Unrecognized { bytes: [0x9b] }
+  Input::Key(KeyInput { code: KeyCode::Char('A'), .. })
 ```
 
-The two bytes are reported as undecodable rather than as Cursor Up. Because
-`0x9B` is treated as the lead byte of a UTF-8 character, the reported length
-depends on the bytes that follow: a valid-looking continuation sequence is
-folded into the character rather than stopping at the terminator.
+Measured, not inferred: `parse_input` on `[0x9b, b'A']` returns
+`(Some(Unrecognized { bytes: [0x9b] }), 1)`, and the decoder then yields the
+`A` on the following call. The introducer is settled on its own, one byte at a
+time, and the rest of the sequence is read as if it were typed.
+
+The reported length is one byte regardless of what follows, because `0x9B` is
+not a valid UTF-8 lead byte: the width table in `parse_utf8_char` falls through
+to `1`, `from_utf8` on that single byte fails, and the `unrecognized(bytes, 1)`
+arm is taken. Continuation bytes are not folded in. The damage is the opposite
+one -- the sequence is cut into a stray byte plus ordinary keystrokes.
 
 ## Observed behavior
 
@@ -38,10 +47,10 @@ b if b >= 0x80 => parse_utf8_char(bytes),
 ```
 
 so every byte at or above `0x80`, including the C1 range `0x80..=0x9F`, goes to
-`parse_utf8_char`. `0x9B` is not a valid UTF-8 lead byte, so the input is
-settled as `Input::Unrecognized`. Nothing in `src/` compares against `0x9b`,
-and C1 control codes in general (for example `0x9B`, `0x9D`, `0x90`) are not
-recognized.
+`parse_utf8_char`. `0x9B` is not a valid UTF-8 lead byte, so `parse_utf8_char`
+settles it as a one-byte `Input::Unrecognized` and reports one byte consumed.
+Nothing in `src/` compares against `0x9b`, and C1 control codes in general (for
+example `0x9B`, `0x9D`, `0x90`) are not recognized.
 
 This at least stays inside the documented contract on `InputDecoder::next`
 (the bytes are reported as a value, not dropped), which is why this is filed as
@@ -56,12 +65,15 @@ Two coherent options, to be chosen in the fix:
 - Treat `0x9B` as CSI, `0x9D` as OSC, and the other C1 introducers as their
   `ESC`-prefixed equivalents, so the existing parsers handle them. This is what
   the C1 set is for in ECMA-48.
-- Explicitly settle the whole C1 range as `Unrecognized` with the correct
-  length rather than letting it be decided by UTF-8 continuation rules, so at
-  least the boundaries are honest.
+- Keep the one-byte report, but make it deliberate: settle the whole C1 range
+  in one step instead of routing it through the UTF-8 branch, and document the
+  range as undecodable by choice. This is honest about the boundaries without
+  making the sequences readable.
 
-Either way `0x9B 'A'` should not be reported as a two-byte undecodable blob
-because of UTF-8 rules that do not apply to it.
+Either way `0x9B 'A'` should not arrive as a stray undecodable byte followed by
+the character `A`. The first option is the one to take: the C1 introducers
+spell sequences tuinix already decodes, and rejecting the table those bytes
+come from is not the same as being able to read it.
 
 ## Impact
 
@@ -72,10 +84,10 @@ applications never see `0x9B`. It matters for a terminal or a byte stream in
 ## Notes
 
 - If this becomes C1-aware, the same terminator question as the OSC/DCS/APC
-  bug applies to `0x9D` and `0x90`.
+  bug applies to `0x9D` and `0x90`, and the fix has to reach
+  `find_control_string_end` with a one-byte introducer in hand.
 - The minimum fix that preserves today's behavior is to keep reporting
-  `Unrecognized` but stop letting `parse_utf8_char` decide the length for bytes
-  in `0x80..=0x9F`.
-- Worth checking whether the UTF-8 path can currently consume a following
-  printable byte as a continuation and so hide two inputs in one report; that
-  is a separate question from C1, but the same reproduction would show it.
+  `Unrecognized` but settle the whole `0x80..=0x9F` range in one step instead
+  of letting the UTF-8 branch decide. That removes the stray-byte-plus-keys
+  split only for sequences whose full length is known, so it is the weaker of
+  the two options above.
