@@ -516,7 +516,8 @@ fn parse_c1_sequence(bytes: &[u8]) -> (Option<Input>, usize) {
 /// events.
 ///
 /// `allow_bel` says the introducer was OSC, the only one of the three whose
-/// body may end at `BEL` instead of `ST`.
+/// body may end at `BEL` instead of `ST`. Either spelling of `ST` (`ESC \\` or
+/// the single byte `0x9c`) ends a body.
 fn parse_control_string(seq: &ControlSequence<'_>, allow_bel: bool) -> (Option<Input>, usize) {
     match find_control_string_end(seq, allow_bel) {
         Some(len) => unrecognized(seq.bytes(), len),
@@ -660,18 +661,27 @@ fn find_parameter_terminator(seq: &ControlSequence<'_>) -> Option<usize> {
 /// almost any byte but `BEL`, so the only thing the decoder can look for is the
 /// terminator.
 ///
-/// - OSC (`ESC ]`) ends at `BEL` (0x07) or at `ST` (`ESC \\`).
-/// - DCS (`ESC P`) and APC (`ESC _`) end at `ST` (`ESC \\`).
+/// - OSC (`ESC ]`) ends at `BEL` (0x07) or at `ST`.
+/// - DCS (`ESC P`) and APC (`ESC _`) end at `ST`.
 ///
-/// Whichever comes first wins: xterm sends OSC terminated by `BEL`, but `ST` is
-/// equally valid and is the only terminator the other two use. `None` means the
-/// body is still arriving, so the caller waits for more input.
+/// `ST` is written either as `ESC \\` or as the single byte `0x9c`, and a
+/// terminal that opens a control string with a one-byte introducer is likely to
+/// close it with the one-byte terminator. Both spellings are accepted for all
+/// three sequences.
+///
+/// Whichever terminator comes first wins: xterm sends OSC terminated by `BEL`,
+/// but `ST` is equally valid and is the only terminator the other two use.
+/// `None` means the body is still arriving, so the caller waits for more input.
 fn find_control_string_end(seq: &ControlSequence<'_>, allow_bel: bool) -> Option<usize> {
     let bytes = seq.bytes();
     let mut i = seq.start;
     while i < bytes.len() {
         match bytes[i] {
             0x07 if allow_bel => return Some(i + 1),
+            // `ST` as one byte. It is a terminator of the open body, not a byte
+            // of the body, so it does not need to be quoted even though the
+            // body is otherwise opaque.
+            0x9c => return Some(i + 1),
             0x1b if bytes.get(i + 1) == Some(&b'\\') => return Some(i + 2),
             _ => i += 1,
         }
@@ -1725,6 +1735,48 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_control_strings_ending_at_one_byte_st() {
+        // `ST` is one byte (`0x9c`) as well as two (`ESC \\`). A terminal that
+        // opens a control string with a one-byte introducer tends to close it
+        // with the one-byte terminator, and that spelling has to end the body
+        // too: otherwise the sequence is a complete input that never settles.
+        for seq in [
+            // OSC terminated by the 8-bit ST.
+            &b"\x9d0;hi\x9c"[..],
+            // The same body can still be written with the two-byte terminator.
+            &b"\x9d0;hi\x1b\\"[..],
+            // DCS terminated by the 8-bit ST.
+            &b"\x901$r0m\x9c"[..],
+            // APC terminated by the 8-bit ST.
+            &b"\x9fGa=T;f=100\x9c"[..],
+        ] {
+            let result = parse_input(seq);
+            assert_eq!(
+                result.0,
+                Some(Input::Unrecognized {
+                    bytes: seq.to_vec()
+                }),
+                "{seq:?} should be reported whole"
+            );
+            assert_eq!(result.1, seq.len(), "{seq:?} should be consumed whole");
+        }
+    }
+
+    #[test]
+    fn test_parse_bel_ends_osc_but_not_dcs_or_apc() {
+        // `BEL` is a terminator for OSC alone. The other two bodies are opaque
+        // and may contain it, so they wait for `ST`.
+        let result = parse_input(b"\x9d0;hi\x07");
+        assert_eq!(result.1, 6, "OSC should end at BEL");
+
+        for seq in [&b"\x90body\x07"[..], &b"\x9fbody\x07"[..]] {
+            let result = parse_input(seq);
+            assert_eq!(result.0, None, "{seq:?} is not ended by BEL");
+            assert_eq!(result.1, 0, "{seq:?} must consume nothing");
+        }
+    }
+
+    #[test]
     fn test_parse_unterminated_control_string_waits() {
         // Nothing may be settled while the body is still arriving: reporting the
         // introducer early would be wrong, and reporting a prefix as a body would
@@ -1829,7 +1881,9 @@ mod tests {
     #[test]
     fn test_parse_untranslated_c1_bytes_are_settled_one_at_a_time() {
         // The rest of the C1 range is not an introducer, so it is settled as a
-        // single byte and does not swallow what follows it.
+        // single byte and does not swallow what follows it. `0x9c` is `ST`,
+        // which only ends a control string that is already open; on its own it
+        // is just an undecodable byte.
         for c1 in [0x80, 0x9c, 0x9e, 0x9a] {
             let result = parse_input(&[c1, b'A']);
             assert_eq!(
@@ -2078,6 +2132,49 @@ mod tests {
             &b"\x1b]0;hi\x1b\\"[..],
             &b"\x1bP1$r0m\x1b\\"[..],
             &b"\x1b_Ga=T;f=100\x1b\\"[..],
+        ] {
+            let mut whole = InputDecoder::new();
+            whole.feed(seq);
+
+            let mut split = InputDecoder::new();
+            for byte in seq {
+                split.feed(&[*byte]);
+            }
+
+            assert_eq!(split.next(), whole.next(), "{seq:?}");
+            assert_eq!(split.buffered_bytes(), whole.buffered_bytes(), "{seq:?}");
+        }
+    }
+
+    #[test]
+    fn test_input_decoder_consumes_c1_control_string_without_leaking_bytes() {
+        // D1: a C1 control string closed with the one-byte `ST` is a complete
+        // input. It has to drain in a single call; before this was fixed the
+        // decoder held all of it waiting for an `ESC \\` that never came.
+        let mut seq = vec![0x9f];
+        seq.push(b'G');
+        seq.extend(std::iter::repeat_n(b'A', 4096));
+        seq.push(0x9c);
+
+        let mut buffer = InputDecoder::new();
+        buffer.feed(&seq);
+        assert_eq!(
+            buffer.next(),
+            Some(Input::Unrecognized { bytes: seq.clone() })
+        );
+        assert_eq!(buffer.next(), None);
+        assert_eq!(buffer.buffered_bytes(), 0);
+        assert!(!buffer.has_pending());
+    }
+
+    #[test]
+    fn test_input_decoder_one_byte_st_matches_split_feed() {
+        // D2: feeding a `0x9c`-terminated control string byte by byte yields the
+        // same input and the same drained buffer as feeding it whole.
+        for seq in [
+            &b"\x9d0;hi\x9c"[..],
+            &b"\x901$r0m\x9c"[..],
+            &b"\x9fGa=T;f=100\x9c"[..],
         ] {
             let mut whole = InputDecoder::new();
             whole.feed(seq);
