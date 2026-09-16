@@ -18,7 +18,9 @@ pub enum Input {
     /// cannot be recovered once it is dropped. It is also the way back from a
     /// decode the caller disagrees with: the bytes are handed over unmodified,
     /// so a settled sequence can be read again under a different
-    /// interpretation (see [`parse_escape_sequence`] for the `ESC ]` case).
+    /// interpretation. The bytes are exactly what arrived, introducer and all:
+    /// this variant's `ESC ]` report begins with `ESC ]`, so an application
+    /// that meant `Alt+]` can read it as such.
     ///
     /// Nothing bounds the length of the payload, so cap what you keep; see
     /// the crate documentation for the shape of such a loop. Dropping bytes
