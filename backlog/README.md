@@ -126,10 +126,12 @@ so the item never sits in `done/` without saying what settled it. Run
 backlog/scripts/settle.sh backlog/20260915-rfc-push-char-clip-signal.md --pr 27 <outcome.md
 ```
 
-It fast-forwards `main`, sets `Status` from the item's kind (`fixed` for a bug,
-`accepted` for an RFC), appends the outcome, moves the file, commits, pushes,
-and deletes the merged branch. Run it on `main` with a clean working tree,
-right after the pull request is merged.
+It switches to `main`, fast-forwards it, sets `Status` from the item's kind
+(`fixed` for a bug, `accepted` for an RFC), appends the outcome, moves the
+file, commits, pushes, and deletes the merged branch. Run it from a clean
+working tree, right after the pull request is merged. Either branch will do:
+on `main` it just proceeds, and on the branch the pull request came from it
+switches to `main` first. Any other branch is a mistake and stops the script.
 
 Pass the prose of the outcome section on standard input instead of retyping it
 later: it is written at the moment of settling, when what actually landed is

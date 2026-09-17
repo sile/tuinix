@@ -20,9 +20,10 @@
 # settled is almost always a sign that it was written later, from the item's
 # own text, rather than at the moment it landed.
 #
-# The script fast-forwards main, moves the item into backlog/done/, sets its
-# Status, appends the ## Outcome section, commits, pushes, and deletes the
-# merged branch. Run it on main with a clean working tree.
+# The script moves the item into backlog/done/, sets its Status, appends the
+# ## Outcome section, commits, pushes, and deletes the merged branch. Run it
+# from a clean working tree, either on main or on the branch the pull request
+# came from; the script switches to main itself in the latter case.
 
 set -euo pipefail
 
@@ -83,18 +84,26 @@ settle() {
 
     [ -z "$(git status --porcelain)" ] || die "the working tree is not clean"
 
-    local branch merge sha head
-    branch="$(git rev-parse --abbrev-ref HEAD)"
-    [ "$branch" = main ] || die "run this on main, not on $branch"
-
-    git fetch --quiet origin main
-    git merge --quiet --ff-only origin/main
-
+    local merge sha head
     read -r merge head <<EOF
 $(gh pr view "$pr" --repo "$repo" --json mergeCommit,headRefName -q '"\(.mergeCommit.oid) \(.headRefName)"')
 EOF
     [ -n "$merge" ] && [ "$merge" != null ] || die "pull request #$pr has no merge commit"
     sha="$(git rev-parse --short "$merge")"
+
+    # Landing a change usually leaves the merged branch checked out, so switch
+    # to main rather than making the caller do it. Only where that branch is
+    # the one being settled: anywhere else the script is being run by mistake,
+    # and guessing which branch was meant would be worse than stopping.
+    local branch
+    branch="$(git rev-parse --abbrev-ref HEAD)"
+    if [ "$branch" != main ]; then
+        [ "$branch" = "$head" ] || die "run this on main or on $head, not on $branch"
+        git switch --quiet main
+    fi
+
+    git fetch --quiet origin main
+    git merge --quiet --ff-only origin/main
 
     local dest="backlog/done/$(basename "$item")"
     [ ! -e "$dest" ] || die "$dest already exists"
@@ -125,7 +134,7 @@ EOF
     git commit --quiet -m "Move the $slug to done/"
     git push --quiet origin main
 
-    if [ -n "$head" ] && [ "$head" != "$branch" ] && git rev-parse --verify --quiet "refs/heads/$head" >/dev/null; then
+    if [ -n "$head" ] && [ "$head" != main ] && git rev-parse --verify --quiet "refs/heads/$head" >/dev/null; then
         git branch -D "$head"
     fi
 
