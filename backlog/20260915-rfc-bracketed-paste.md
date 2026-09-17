@@ -1,6 +1,6 @@
 # RFC: Recognize bracketed paste as one input
 
-- Status: draft
+- Status: accepted
 
 ## Summary
 
@@ -46,7 +46,7 @@ An application reads a paste the way it reads any other input:
 ```rust
 for input in decoder {
     match input {
-        Input::Paste(text) => editor.insert_pasted(&text),
+        Input::Paste { bytes } => editor.insert_pasted(&bytes),
         Input::Key(key) => editor.handle_key(key),
         Input::Mouse(mouse) => editor.handle_mouse(mouse),
         Input::Unrecognized { .. } => {}
@@ -54,35 +54,44 @@ for input in decoder {
 }
 ```
 
-The body arrives once, as text, and the application decides whether to insert it
-verbatim, re-indent it, or reject it. Without the variant, the same paste is
-dozens of `Input::Key` events that the application would have to buffer and
-reassemble itself, guessing where the paste ended.
+The body arrives once as bytes, and the application decides whether to insert
+it verbatim, re-indent it, decode it as text, or reject it. Without the variant,
+the same paste is dozens of `Input::Key` events that the application would have
+to buffer and reassemble itself, guessing where the paste ended.
 
 ## Reference-level explanation
 
 The terminal sends `ESC [ 200 ~` before the text and `ESC [ 201 ~` after it. The
 decoder has to hold the bytes between them until the closing marker arrives, and
-then yield them as one value.
+then yield them as one value:
+
+```rust
+Input::Paste { bytes: Vec<u8> }
+```
+
+The variant sits alongside `Input::Unrecognized` and follows the same rule: it
+reports bytes the decoder saw but did not interpret, unmodified.
 
 This is the first input value that spans an arbitrary number of bytes, which
 raises questions the current `Input` type does not answer:
 
 - **Who owns the bounds?** The decoder holds the body until the terminator, so
-  a paste of unbounded size is an unbounded buffer. The existing knob is
-  `trim_buffered_bytes()`, which discards from the front and so would corrupt
-  a held paste rather than bound it. A cap inside the decoder would be the kind
-  of hidden trade-off tuinix avoids elsewhere.
+  a paste of unbounded size is an unbounded buffer. The answer is the same as
+  everywhere else in the decoder: the decoder holds no cap and no policy, and
+  the application watches [`buffered_bytes()`](crate::InputDecoder::buffered_bytes)
+  and reacts. A cap inside the decoder would be the kind of hidden trade-off
+  tuinix avoids elsewhere, and a paste is not a special case of it.
 - **Text or bytes?** The body is whatever the terminal put between the markers.
   It is usually UTF-8, but the decoder cannot know the application's encoding,
   and a paste can contain control bytes. `Vec<u8>` matches `Unrecognized` and
   leaves the interpretation to the caller; `String` is friendlier but has to do
   a lossy conversion that the decoder cannot justify.
 - **What if the closing marker never arrives?** A truncated paste leaves the
-  decoder holding bytes that will never be settled by more input. This is the
-  same permanent-hold shape as the CSI bugs already fixed, and it needs a
-  defined answer (a terminator scan, a size cap, or an explicit way for the
-  application to abandon the held bytes).
+  decoder holding bytes that will never be settled by more input. Nothing is
+  lost and nothing is held forever behind the application's back: the held
+  bytes are visible in `buffered_bytes()`, so the application can see the paste
+  is not completing and act. As with any other input the decoder is still
+  waiting on, the decoder does not decide when to give up.
 
 ## Drawbacks
 
@@ -91,10 +100,13 @@ raises questions the current `Input` type does not answer:
   `Unrecognized`, so this is an understood cost, but it is a second one.
 - A held body is memory the decoder controls, which is a new kind of state for
   `InputDecoder`. Today the decoder never accumulates more than one incomplete
-  sequence of a few bytes.
-- The nested-marker question is real: a paste can contain the introducer bytes
-  in its text, and terminals differ on whether they escape them. The decoder
-  needs a defined behavior either way.
+  sequence of a few bytes. The difference is that a paste is expected to be
+  large, so the held bytes are not just a sequence prefix but potentially the
+  bulk of what the application feeds.
+- A paste whose closing marker never arrives holds its body until more input
+  settles it. The decoder reports the growth through `buffered_bytes()` and
+  leaves the response to the application, but an application that does not
+  watch that count will simply accumulate.
 
 ## Rationale and alternatives
 
@@ -120,15 +132,33 @@ if the markers arrive, they are recognized; if they do not, nothing changes.
 Whether tuinix should also offer to enable bracketed paste on the terminal is a
 separate question (see below).
 
+**Why the body is bytes and not text.** The body is handed over as `Vec<u8>`,
+unmodified, matching `Input::Unrecognized`. The decoder cannot know the
+application's encoding, and a lossy `String` conversion would decide an
+interpretation the decoder has no basis for. An application that wants text
+converts it itself, which is where that decision belongs.
+
+**Why the body is one value and not a stream.** A chunked variant would make
+the application track "am I inside a paste" itself, which is part of what the
+markers exist to tell it. Chunks can be added later without removing the
+whole-paste variant, so starting with one value does not close that door.
+
+**Why the decoder holds no cap.** A paste whose closing marker never arrives
+is unbounded input, and the answer is the same as for any other input the
+decoder is still waiting on: the decoder holds no cap and takes no policy. The
+application watches `buffered_bytes()` and decides. Making a paste a special
+case would mean the decoder hides a trade-off the application can see for
+itself.
+
+**Why nested markers are not handled.** The body ends at the first `ESC [ 201 ~`.
+A terminal does not nest paste markers, so a body that contains the introducer
+bytes is something the terminal is responsible for quoting; the decoder does
+not guess. Documenting that is enough until a real terminal is found doing
+otherwise.
+
 ## Unresolved questions
 
-- Body type: `Vec<u8>` or `String`.
-- Whether the body is one value or a stream of chunks; this decides the memory
-  story and whether `trim_buffered_bytes()` has any role while a paste is held.
-- The bound on a held paste that is never closed, and what the application can
-  do about it.
-- Whether the decoder handles nested markers and escaped introducers, or
-  documents that the terminal guarantees they do not occur.
+None. The settled decisions are recorded in the rationale above.
 
 ## Future possibilities
 
