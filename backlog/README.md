@@ -35,12 +35,15 @@ backlog/
   done/
     YYYYMMDD-rfc-slug.md          # a settled RFC
     YYYYMMDD-bug-slug.md          # a settled bug report
+  scripts/
+    settle.sh                     # settle a landed item
 ```
 
-Only two directories exist: `backlog/` for open items and `backlog/done/` for
-settled ones. Item *kind* is carried by a filename prefix (`rfc-` and `bug-`
-today; `todo-` if such items are added later), not by a directory. Keeping the
-tree shallow is intentional: a file is always one or two levels deep.
+Nothing but items live directly under `backlog/` or `backlog/done/`: a file
+there is always an item. Item *kind* is carried by a filename prefix (`rfc-`
+and `bug-` today; `todo-` if such items are added later), not by a directory.
+Keeping the tree shallow is intentional: an item is always one or two levels
+deep, and support files live in their own directory rather than beside them.
 
 An item is an **RFC** when the question is *what the API should be* — the
 current behavior is defensible and the proposal argues for changing it. An item
@@ -115,7 +118,51 @@ Use `git mv` so history follows the file:
 git mv backlog/20260915-rfc-push-char-clip-signal.md backlog/done/
 ```
 
-Update the `Status` field in the same commit.
+Update the `Status` field and add the `## Outcome` section in the same commit,
+so the item never sits in `done/` without saying what settled it. Run
+`backlog/scripts/settle.sh`, which does all of it:
+
+```sh
+backlog/scripts/settle.sh backlog/20260915-rfc-push-char-clip-signal.md --pr 27 <outcome.md
+```
+
+It fast-forwards `main`, sets `Status` from the item's kind (`fixed` for a bug,
+`accepted` for an RFC), appends the outcome, moves the file, commits, pushes,
+and deletes the merged branch. Run it on `main` with a clean working tree,
+right after the pull request is merged.
+
+Pass the prose of the outcome section on standard input instead of retyping it
+later: it is written at the moment of settling, when what actually landed is
+still fresh, and it describes the change that happened rather than the one the
+item predicted. There is no `## Outcome` while an item is open, so this write
+is also the only edit the section ever gets.
+
+The prose is required, and the script stops if standard input is empty or is a
+terminal. An outcome with nothing to say about the change it settled usually
+means it is being reconstructed from the item's own text rather than recalled
+from the change.
+
+The section has a fixed shape — the pull request that settled the item, the
+prose, and a closing line — and the script writes the parts the item cannot
+know (the pull request number and the merge commit) around your prose:
+
+```markdown
+## Outcome
+
+Fixed in [#38](https://github.com/sile/tuinix/pull/38) (merged as `ed036a6`).
+
+The scanner now treats `0x9c` as a terminator.
+
+The scope is unchanged from what is described above.
+```
+
+That closing line is deliberate: an item describes the change it proposes, so
+the outcome states whether anything else moved with it. Write the reason when
+it did; leave the line alone when it did not.
+
+`## Outcome` goes at the end of the file, after every other section. Existing
+items vary in where they put it because the section was added by hand before
+this script existed; new items all end with it.
 
 ## Pull requests
 
