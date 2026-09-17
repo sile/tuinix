@@ -168,3 +168,11 @@ None. The settled decisions are recorded in the rationale above.
   terminal-mode API, so an application does not have to assume the terminal
   already does it.
 - Chunked delivery, if the whole-body design proves too memory-hungry.
+
+## Outcome
+
+Implemented in [#40](https://github.com/sile/tuinix/pull/40) (merged as `8e12bf7`).
+
+The decoder now recognizes `ESC[200~` ... `ESC[201~` as one `Input::Paste { bytes }`, handing over the pasted bytes exactly as received, with no decoding and no copying beyond the buffer the decoder must hold anyway. A paste that has not been closed yet keeps the decoder waiting, so `buffered_bytes()` reports the pending length and the app can react to it as it does for any other incomplete sequence. The open marker alone is still reported as `Unrecognized`, and a lone close marker is too, so no empty paste is ever invented.
+
+The scope is unchanged from what is described above.
