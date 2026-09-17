@@ -185,3 +185,17 @@ None. The scope is a removal: delete `trim_buffered_bytes`, keep
   paste is decoded character by character and the buffer stays small, and an
   OSC/DCS/APC body is likewise consumed as it arrives. The buffer grows only for
   an unterminated parameter run or an unterminated control string.
+
+## Outcome
+
+Implemented in [#39](https://github.com/sile/tuinix/pull/39) (merged as `1dadb60`).
+
+Implemented in [#39](https://github.com/sile/tuinix/pull/39). `trim_buffered_bytes`
+is gone from `InputDecoder`; what remains is `feed()`, `next()`, and
+`buffered_bytes()` as an observation. `examples/demo.rs` no longer trims — it
+prints a message and exits when the buffer exceeds its threshold, which is the
+pattern the Guide-level section shows. The trim RFC is now marked superseded, and
+`docs/input-decoding.md` describes an oversized buffer as a statement about the
+input rather than a condition to recover from.
+
+The scope is unchanged from what is described above.
