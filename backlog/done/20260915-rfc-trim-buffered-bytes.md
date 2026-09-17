@@ -179,6 +179,19 @@ Implemented in [#34](https://github.com/sile/tuinix/pull/34) (merged as
 `trim_buffered_bytes(MAX_BUFFERED_BYTES)` unconditionally, without reading the
 length or subtracting. Scope unchanged from the Decision section.
 
+## Superseded
+
+Superseded by
+[`20260915-rfc-bounded-incomplete-sequence.md`](20260915-rfc-bounded-incomplete-sequence.md),
+which removed `trim_buffered_bytes` rather than reshaping it. The argument here
+(the caller holds one quantity, the bound, and should not have to derive the
+excess) was right about the call-site arithmetic, but the follow-up RFC
+concluded that no byte-oriented cut belongs in the decoder at all: a cut through
+an incomplete sequence loses the sequence context of everything after it, and an
+application that owns the input source can answer the same question by watching
+`buffered_bytes()` and failing. The rename this RFC describes was implemented
+and then reverted, so its Decision section no longer describes the crate.
+
 ## Unresolved questions
 
 None.
