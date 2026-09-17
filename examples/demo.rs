@@ -208,11 +208,17 @@ fn read_input(
     // decoder at a time.
     while let Some(n @ 1..) = would_block_as_none(driver.read(&mut raw))? {
         input.feed(&raw[..n]);
-        // Keep at most `MAX_BUFFERED_BYTES` bytes of unparsed input, so a flood of
-        // unparsable input cannot grow the decoder without bound. Dropping the
-        // oldest bytes can cut through an incomplete sequence; the demo accepts
-        // that to stay within its bound.
-        input.trim_buffered_bytes(MAX_BUFFERED_BYTES);
+        // The decoder holds bytes only while a sequence is still arriving, so a
+        // buffer this large means the source is not speaking terminal input
+        // (a mis-sent control sequence, or a stream from a program that is not
+        // speaking the protocol). There is nothing to recover: the bytes that
+        // would tell us where the next real sequence starts are the ones that
+        // never came. Give up rather than decode a stream that no longer means
+        // anything.
+        if input.buffered_bytes() > MAX_BUFFERED_BYTES {
+            eprintln!("input does not look like terminal input; giving up");
+            std::process::exit(1);
+        }
     }
     Ok(())
 }

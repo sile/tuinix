@@ -27,11 +27,10 @@ pub enum Input {
     /// here instead. `ESC P` and `ESC _` are the same shape.
     ///
     /// Nothing bounds the length of the payload, so cap what you keep; see
-    /// the crate documentation for the shape of such a loop. Dropping bytes
-    /// from the start of the buffer yourself
-    /// ([`InputDecoder::trim_buffered_bytes()`]) is a different act: that is
-    /// the application discarding bytes it chose to give up on, while this
-    /// variant reports the decoder doing so.
+    /// the crate documentation for the shape of such a loop. This variant is
+    /// also the only way the decoder reports giving up on bytes: the decoder
+    /// never discards input it has not decoded, so nothing it holds is ever
+    /// silently lost.
     Unrecognized {
         /// The bytes of the sequence that could not be decoded.
         bytes: Vec<u8>,
@@ -171,10 +170,13 @@ pub enum MouseInputKind {
 /// `ESC` byte is held until it is completed by more bytes or committed as the
 /// Escape key with [`InputDecoder::commit_escape()`](Self::commit_escape).
 ///
-/// It does not bound how many bytes it holds. An application that can
-/// receive unparsable input (for example a large paste) should watch
-/// [`InputDecoder::buffered_bytes()`](Self::buffered_bytes) and trim the excess with
-/// [`InputDecoder::trim_buffered_bytes()`](Self::trim_buffered_bytes).
+/// It does not bound how many bytes it holds, and it does not offer a way to
+/// drop them: holding bytes is how it waits for the rest of a sequence, so
+/// discarding them would mean decoding a stream whose sequence boundaries are
+/// already lost. An application that reads from a source it does not control
+/// should watch [`InputDecoder::buffered_bytes()`](Self::buffered_bytes) and
+/// treat a buffer that keeps growing as a broken source rather than something to
+/// recover from.
 #[derive(Debug, Default)]
 pub struct InputDecoder {
     buf: Vec<u8>,
@@ -196,8 +198,7 @@ impl InputDecoder {
     /// Unparsed bytes are held until [`next()`](Self::next) can produce an
     /// [`Input`] from them. The decoder does not bound how many bytes it holds;
     /// an application that can receive unparsable input should watch
-    /// [`buffered_bytes()`](Self::buffered_bytes) and trim the excess with
-    /// [`trim_buffered_bytes()`](Self::trim_buffered_bytes).
+    /// [`buffered_bytes()`](Self::buffered_bytes).
     pub fn feed(&mut self, bytes: &[u8]) {
         self.buf.extend_from_slice(bytes);
     }
@@ -245,36 +246,17 @@ impl InputDecoder {
     /// [`commit_escape()`](Self::commit_escape) has committed, which is held as a
     /// flag rather than as a byte and is reported by
     /// [`has_uncommitted_escape()`](Self::has_uncommitted_escape) until
-    /// [`next()`](Self::next) yields it. Use the count to bound how much memory a
-    /// decoder can take: when the count grows past what the application wants to
-    /// keep, trim the excess with
-    /// [`trim_buffered_bytes()`](Self::trim_buffered_bytes). The count is also
-    /// how a caller notices that the buffer is oversized at all, or decides to
-    /// trim only past some mark rather than on every read.
+    /// [`next()`](Self::next) yields it.
+    ///
+    /// Waiting for more bytes is the only reason the decoder holds any, so a
+    /// count that keeps growing is a statement about the input rather than about
+    /// the decoder: no well-formed sequence stays buffered forever, so a buffer
+    /// that does not drain means the source is not speaking terminal input. That
+    /// makes this count the whole of what a caller needs to enforce and act on a
+    /// bound of its own; see the crate documentation for the shape of such a
+    /// loop.
     pub fn buffered_bytes(&self) -> usize {
         self.buf.len()
-    }
-
-    /// Shortens the buffer to at most `max_len` bytes, discarding from the
-    /// front, and returns how many bytes were discarded.
-    ///
-    /// This is how an application enforces its own bound on
-    /// [`buffered_bytes()`](Self::buffered_bytes): the decoder never drops bytes
-    /// on its own, because only the application knows whether discarding a
-    /// partial sequence is acceptable. Pass the bound you want to keep rather
-    /// than the amount to remove, so the length you care about is the one you
-    /// write. A call with `max_len` greater than or equal to the current length
-    /// discards nothing and returns `0`, so the call needs no guard around it.
-    ///
-    /// The cut is byte-oriented while the parser is sequence-oriented, so it can
-    /// land in the middle of an incomplete sequence. A caller that wants to trim
-    /// only at a sequence boundary can check [`buffered_bytes()`](Self::buffered_bytes)
-    /// first, but trimming is the only way to shed the front of one very long
-    /// incomplete sequence.
-    pub fn trim_buffered_bytes(&mut self, max_len: usize) -> usize {
-        let excess = self.buf.len().saturating_sub(max_len);
-        self.buf.drain(..excess);
-        excess
     }
 
     // Returns `true` when the decoder holds unconsumed bytes. Only the tests
@@ -2295,34 +2277,28 @@ mod tests {
     }
 
     #[test]
-    fn test_input_decoder_buffered_bytes_and_trim() {
+    fn test_input_decoder_buffered_bytes_grow_without_draining() {
         let mut input = InputDecoder::new();
         assert_eq!(input.buffered_bytes(), 0);
 
-        // An SGR mouse prefix that is never terminated keeps growing until the
-        // application decides to trim it.
+        // A CSI parameter run that never reaches a terminator keeps growing:
+        // holding bytes is how the decoder waits for the rest of the sequence,
+        // so the count is all the application has to notice that the wait never
+        // ends. Nothing here discards them for the application.
         let mut prefix = b"\x1b[<".to_vec();
         prefix.extend(std::iter::repeat_n(b'1', 10_000));
         input.feed(&prefix);
         assert_eq!(input.buffered_bytes(), prefix.len());
+        assert_eq!(input.next(), None);
+        assert_eq!(input.buffered_bytes(), prefix.len());
 
-        // The argument is the length to keep, and the return value is the count
-        // of bytes discarded to reach it.
-        const MAX_BUFFERED_BYTES: usize = 4096;
-        let excess = prefix.len() - MAX_BUFFERED_BYTES;
-        assert_eq!(input.trim_buffered_bytes(MAX_BUFFERED_BYTES), excess);
-        assert_eq!(input.buffered_bytes(), MAX_BUFFERED_BYTES);
-
-        // A bound the buffer already satisfies discards nothing, so the call can
-        // be made unconditionally.
-        assert_eq!(input.trim_buffered_bytes(MAX_BUFFERED_BYTES * 2), 0);
-        assert_eq!(input.buffered_bytes(), MAX_BUFFERED_BYTES);
-
-        // A bound of zero empties the buffer and reports the number of bytes that
-        // were held.
-        assert_eq!(input.trim_buffered_bytes(0), MAX_BUFFERED_BYTES);
-        assert_eq!(input.buffered_bytes(), 0);
-        assert!(!input.has_pending());
+        // Draining does not help: every `next()` returns `None` and leaves the
+        // count where it was, so only the application can decide what a growing
+        // buffer means.
+        for _ in 0..3 {
+            assert_eq!(input.next(), None);
+            assert_eq!(input.buffered_bytes(), prefix.len());
+        }
     }
 
     #[test]
