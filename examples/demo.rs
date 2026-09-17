@@ -182,6 +182,17 @@ fn handle_event(
                 BODY_STYLE,
             );
         }
+        tuinix::Input::Paste { bytes } => {
+            // A paste is inserted as text rather than interpreted, which is the
+            // whole point of reporting it as one input: a newline in the pasted
+            // text is a newline, not the Enter key.
+            write_text(&mut frame, "\nLast event: Paste:\n", INFO_STYLE);
+            write_text(
+                &mut frame,
+                &format!("  {} byte(s)\n", bytes.len()),
+                BODY_STYLE,
+            );
+        }
     }
 
     let out = frame.render(prev_frame.as_ref(), cursor);

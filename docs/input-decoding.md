@@ -170,6 +170,29 @@ terminator. `BEL` ends an OSC alone, since the other two bodies may contain it.
 Whichever terminator comes first ends the string. Until one does, nothing is
 reported: the decoder waits for the end rather than guessing at a body length.
 
+## Bracketed paste: `ESC [ 200 ~` … `ESC [ 201 ~`
+
+A terminal that has bracketed paste turned on wraps pasted text in these two
+markers. Without them a paste is just a burst of bytes, so a newline in the
+pasted text is read as the Enter key and every other control byte is read as
+whatever key it usually stands for.
+
+The two markers are recognized, and the text between them is reported as one
+[`Input::Paste`](crate::Input::Paste) whose payload is the body as it arrived,
+with the markers themselves removed. The body is not read as input: a `~`, an
+`ESC`, or a carriage return inside it is text.
+
+A paste is one value or none at all. Until the closing marker arrives nothing is
+reported, so a half-arrived paste is never handed to the application as
+characters; the bytes stay counted by
+[`buffered_bytes()`](crate::InputDecoder::buffered_bytes) while they wait. The
+markers are not nested: a `ESC [ 200 ~` inside the body is pasted text, and the
+first `ESC [ 201 ~` ends the paste.
+
+An `ESC [ 201 ~` with no paste open, and the marker numbers `200` and `201` when
+they carry a modifier, are undecodable input like any other unmapped `~`
+sequence.
+
 ## Undecodable input
 
 The decoder never silently drops bytes. Anything it consumes without producing
@@ -212,8 +235,6 @@ for a decode that merely failed:
 - SS3 (`ESC O`) is recognized only for the arrow, Home, and End keys; the F1–F4
   keys many terminals send that way are undecodable input here, and the C1 form
   (`0x8f`) is not recognized at all.
-- Bracketed paste (`ESC [ 200 ~` and `ESC [ 201 ~`) is undecodable input, and a
-  paste arrives as the characters between the two markers.
 - The focus events (`ESC [ I`, `ESC [ O`) are undecodable input. They are CSI
   sequences like any other, so they settle as reports rather than keys.
 - `ESC [ 13 ~`, F3 on the terminals that send it, is undecodable input.

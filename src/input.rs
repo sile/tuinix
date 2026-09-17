@@ -35,6 +35,27 @@ pub enum Input {
         /// The bytes of the sequence that could not be decoded.
         bytes: Vec<u8>,
     },
+
+    /// A bracketed paste: the text between `ESC [ 200 ~` and `ESC [ 201 ~`.
+    ///
+    /// The two markers are how a terminal tells the application that the bytes
+    /// between them came from a paste rather than from typing. Without them a
+    /// paste is indistinguishable from a burst of key presses, so a newline in
+    /// the pasted text is read as the Enter key. Recognizing the markers lets
+    /// an application insert the text as one block.
+    ///
+    /// The body is reported as bytes rather than as a string: what a paste
+    /// carries is whatever the terminal sent, and the decoder has no reason to
+    /// insist it is UTF-8. The markers themselves are not included, so the
+    /// payload is exactly what the terminal bracketed.
+    ///
+    /// A paste arrives as one [`Input`] once the closing marker is seen. The
+    /// bytes are held until then, so a paste whose closing marker never arrives
+    /// stays in the buffer; see [`buffered_bytes()`](InputDecoder::buffered_bytes).
+    Paste {
+        /// The text between the two markers, as it arrived.
+        bytes: Vec<u8>,
+    },
 }
 
 /// Keyboard input.
@@ -686,6 +707,47 @@ fn find_tilde_terminator(seq: &ControlSequence<'_>) -> Option<usize> {
     None
 }
 
+/// Return the index of the byte just past the `ESC [ 201 ~` that closes a
+/// bracketed paste opened by the `ESC [ 200 ~` that ends at `start_len`.
+///
+/// The body between the markers is opaque: it is whatever the terminal sent,
+/// so it may contain `ESC`, `~`, and every other byte. The close marker is
+/// therefore the one thing to look for, and the body is not scanned for
+/// anything else.
+///
+/// The markers are not nested. A `ESC [ 200 ~` inside the body is taken as
+/// pasted text, not as a second paste, because xterm does not nest them; an
+/// application that wants the nested reading can find the marker in the
+/// reported bytes.
+///
+/// `None` means the close marker has not arrived, so the paste is still
+/// incomplete.
+fn find_paste_end(bytes: &[u8], start_len: usize) -> Option<usize> {
+    const CLOSE: &[u8] = b"\x1b[201~";
+
+    let mut i = start_len;
+    while i + CLOSE.len() <= bytes.len() {
+        if &bytes[i..i + CLOSE.len()] == CLOSE {
+            return Some(i + CLOSE.len());
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Build the [`Input::Paste`] reported for the bytes of a complete bracketed
+/// paste: `open_len` bytes of open marker, then the body, then the close marker
+/// ending just before `end`.
+///
+/// The markers are dropped because the caller asked for the pasted text, which
+/// is what arriving as one value is meant to protect.
+fn parse_paste(bytes: &[u8], open_len: usize, end: usize) -> (Option<Input>, usize) {
+    const CLOSE: &[u8] = b"\x1b[201~";
+
+    let body = bytes[open_len..end - CLOSE.len()].to_vec();
+    (Some(Input::Paste { bytes: body }), end)
+}
+
 /// Decode an `ESC [ ... ~` sequence whose parameter text runs from `bytes[2]` up
 /// to (but not including) the `~` at `end`. The parameter is either a single
 /// key number, or a key number and a modifier separated by `;`.
@@ -700,6 +762,26 @@ fn parse_tilde_key(seq: &ControlSequence<'_>, end: usize) -> (Option<Input>, usi
         Ok(s) => s,
         Err(_) => return unrecognized(bytes, len),
     };
+
+    // Bracketed paste: `ESC [ 200 ~` opens it and `ESC [ 201 ~` closes it. The
+    // body between them is opaque, so the close marker cannot be found by
+    // scanning for a terminator the way the other `~` sequences can: the next
+    // `~` may well be ordinary pasted text. Both markers are settled only when
+    // the sequence is complete, which is what `end` says.
+    if params == "200" {
+        return match find_paste_end(bytes, len) {
+            Some(end) => parse_paste(bytes, len, end),
+            // The closing marker has not arrived, so the whole paste is still
+            // incomplete. Holding the bytes is the point: the application gets
+            // the paste in one piece or not at all.
+            None => (None, 0),
+        };
+    }
+    if params == "201" {
+        // A close marker with no open marker before it. There is no paste to
+        // close, so report it rather than inventing an empty one.
+        return unrecognized(bytes, len);
+    }
 
     let (number, modifier) = match params.split_once(';') {
         Some((number, modifier)) => (number, Some(modifier)),
@@ -1878,6 +1960,84 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_bracketed_paste() {
+        // The body is reported on its own, with both markers removed.
+        let result = parse_input(b"\x1b[200~hello\x1b[201~");
+        assert_eq!(
+            result.0,
+            Some(Input::Paste {
+                bytes: b"hello".to_vec()
+            })
+        );
+        assert_eq!(result.1, b"\x1b[200~hello\x1b[201~".len());
+
+        // An empty paste is still a paste, so it is not confused with a
+        // sequence the decoder failed to read.
+        let result = parse_input(b"\x1b[200~\x1b[201~");
+        assert_eq!(result.0, Some(Input::Paste { bytes: Vec::new() }));
+        assert_eq!(result.1, b"\x1b[200~\x1b[201~".len());
+    }
+
+    #[test]
+    fn test_parse_bracketed_paste_body_is_opaque() {
+        // The body may contain anything, since the terminal pastes whatever the
+        // user selected. In particular a `~`, an `ESC`, and a newline are text
+        // here, not the start of another sequence and not the Enter key.
+        let result = parse_input(b"\x1b[200~a~b\x1b[Cc\r\nd\x1b[201~");
+        assert_eq!(
+            result.0,
+            Some(Input::Paste {
+                bytes: b"a~b\x1b[Cc\r\nd".to_vec()
+            })
+        );
+        assert_eq!(result.1, b"\x1b[200~a~b\x1b[Cc\r\nd\x1b[201~".len());
+    }
+
+    #[test]
+    fn test_parse_bracketed_paste_does_not_nest() {
+        // A second open marker inside the body is pasted text: the paste ends
+        // at the first close marker, not at the one matching the inner marker.
+        let result = parse_input(b"\x1b[200~\x1b[200~x\x1b[201~y");
+        assert_eq!(
+            result.0,
+            Some(Input::Paste {
+                bytes: b"\x1b[200~x".to_vec()
+            })
+        );
+        assert_eq!(result.1, b"\x1b[200~\x1b[200~x\x1b[201~".len());
+    }
+
+    #[test]
+    fn test_parse_unterminated_bracketed_paste_waits() {
+        // Until the close marker arrives the paste is incomplete, so nothing is
+        // settled and no byte of the body is handed out as a character.
+        for input in [
+            &b"\x1b[200~"[..],
+            &b"\x1b[200~hello"[..],
+            &b"\x1b[200~hello\x1b[20"[..],
+            &b"\x1b[200~hello\x1b[200~"[..],
+        ] {
+            let result = parse_input(input);
+            assert_eq!(result.0, None, "{input:?} is incomplete");
+            assert_eq!(result.1, 0, "{input:?} must consume nothing");
+        }
+    }
+
+    #[test]
+    fn test_parse_close_marker_without_open_marker() {
+        // A close marker on its own has no paste to close, so it is reported
+        // like any other sequence that names nothing.
+        let result = parse_input(b"\x1b[201~");
+        assert_eq!(
+            result.0,
+            Some(Input::Unrecognized {
+                bytes: b"\x1b[201~".to_vec()
+            })
+        );
+        assert_eq!(result.1, b"\x1b[201~".len());
+    }
+
+    #[test]
     fn test_parse_empty_input() {
         let result = parse_input(&[]);
         assert_eq!(result.0, None);
@@ -2169,6 +2329,88 @@ mod tests {
             assert_eq!(split.next(), whole.next(), "{seq:?}");
             assert_eq!(split.buffered_bytes(), whole.buffered_bytes(), "{seq:?}");
         }
+    }
+
+    #[test]
+    fn test_input_decoder_consumes_bracketed_paste_without_leaving_bytes() {
+        // D1: a paste becomes one value and leaves nothing behind, however
+        // large its body is. A body that leaked would arrive as a flood of
+        // characters, which is the failure the markers exist to prevent.
+        let body = b"a\r\nb".repeat(1024);
+        let mut seq = b"\x1b[200~".to_vec();
+        seq.extend_from_slice(&body);
+        seq.extend_from_slice(b"\x1b[201~");
+
+        let mut buffer = InputDecoder::new();
+        buffer.feed(&seq);
+        assert_eq!(buffer.next(), Some(Input::Paste { bytes: body }));
+        assert_eq!(buffer.next(), None);
+        assert_eq!(buffer.buffered_bytes(), 0);
+        assert!(!buffer.has_pending());
+    }
+
+    #[test]
+    fn test_input_decoder_bracketed_paste_matches_split_feed() {
+        // D2: feeding a paste byte by byte yields the same value and the same
+        // drained buffer as feeding it whole. This is what makes the decoder
+        // usable on a socket, where the paste arrives in arbitrary pieces.
+        for seq in [
+            &b"\x1b[200~hello\x1b[201~"[..],
+            &b"\x1b[200~\x1b[201~"[..],
+            &b"\x1b[200~a~b\x1b[Cc\r\nd\x1b[201~"[..],
+        ] {
+            let mut whole = InputDecoder::new();
+            whole.feed(seq);
+
+            let mut split = InputDecoder::new();
+            for byte in seq {
+                split.feed(&[*byte]);
+            }
+
+            assert_eq!(split.next(), whole.next(), "{seq:?}");
+            assert_eq!(split.buffered_bytes(), whole.buffered_bytes(), "{seq:?}");
+        }
+    }
+
+    #[test]
+    fn test_input_decoder_holds_a_paste_until_its_close_marker() {
+        // The application is never handed half a paste: while the close marker
+        // is missing, `next()` yields nothing and the bytes stay counted by
+        // `buffered_bytes()` so a caller can watch the bound.
+        let mut buffer = InputDecoder::new();
+        buffer.feed(b"\x1b[200~hello");
+
+        assert_eq!(buffer.next(), None);
+        assert_eq!(buffer.buffered_bytes(), b"\x1b[200~hello".len());
+
+        buffer.feed(b"\x1b[201~");
+        assert_eq!(
+            buffer.next(),
+            Some(Input::Paste {
+                bytes: b"hello".to_vec()
+            })
+        );
+        assert_eq!(buffer.buffered_bytes(), 0);
+    }
+
+    #[test]
+    fn test_input_decoder_yields_a_character_after_a_bracketed_paste() {
+        // The bytes after the close marker are ordinary input, so the decoder
+        // must not over-consume them.
+        let mut buffer = InputDecoder::new();
+        buffer.feed(b"\x1b[200~hi\x1b[201~x");
+
+        assert_eq!(
+            buffer.next(),
+            Some(Input::Paste {
+                bytes: b"hi".to_vec()
+            })
+        );
+        assert_eq!(
+            buffer.next(),
+            Some(create_key_input(false, false, KeyCode::Char('x')))
+        );
+        assert_eq!(buffer.buffered_bytes(), 0);
     }
 
     #[test]
