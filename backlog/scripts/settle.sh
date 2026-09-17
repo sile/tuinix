@@ -138,7 +138,12 @@ EOF
         git branch -D "$head"
     fi
 
+    # Say what was done, then show the state a reader would check anyway: the
+    # commit that just went out and whether the tree is back where it started.
     echo "settled $slug (PR #$pr, $sha)"
+    echo
+    git --no-pager log --oneline -1
+    git --no-pager status --short --branch
 }
 
 die() {
