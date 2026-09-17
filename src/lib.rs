@@ -163,7 +163,7 @@
 //!
 //! [demo.rs]: https://github.com/sile/tuinix/blob/main/examples/demo.rs
 #![warn(missing_docs)]
-use std::os::fd::RawFd;
+#![deny(unsafe_code)]
 
 mod frame;
 mod geometry;
@@ -189,19 +189,6 @@ pub use geometry::{Position, Region, Size};
 pub use input::{Input, InputDecoder, KeyCode, KeyInput, MouseInput, MouseInputKind};
 pub use style::{Color, Style};
 pub use terminal::TerminalDriver;
-
-pub(crate) fn set_fd_nonblocking(fd: RawFd) -> std::io::Result<()> {
-    unsafe {
-        let flags = libc::fcntl(fd, libc::F_GETFL, 0);
-        if flags < 0 {
-            return Err(std::io::Error::last_os_error());
-        }
-        if libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) < 0 {
-            return Err(std::io::Error::last_os_error());
-        }
-        Ok(())
-    }
-}
 
 /// Compiles the code examples in `README.md` as doctests so that they cannot
 /// drift away from the API.

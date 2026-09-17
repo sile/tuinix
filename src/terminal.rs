@@ -1,3 +1,10 @@
+// SIGWINCH handling and terminal mode control are not expressible without
+// calling `libc` directly, so `unsafe_code` is expected for this module.
+#![expect(
+    unsafe_code,
+    reason = "terminal mode control and SIGWINCH handling go through libc"
+)]
+
 use std::{
     fs::File,
     io::{self, BufWriter, Error, IsTerminal, Read, Stdout, Write},
@@ -414,6 +421,18 @@ fn set_fd_cloexec(fd: RawFd) -> io::Result<()> {
     Ok(())
 }
 
+/// Marks `fd` as non-blocking so that reads from it never wait for input.
+fn set_fd_nonblocking(fd: RawFd) -> io::Result<()> {
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL, 0) };
+    if flags < 0 {
+        return Err(Error::last_os_error());
+    }
+    if unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+        return Err(Error::last_os_error());
+    }
+    Ok(())
+}
+
 unsafe extern "C" fn handle_sigwinch(_: libc::c_int) {
     unsafe {
         let _ = libc::write(SIGWINCH_PIPE_FD, [0].as_ptr().cast(), 1);
@@ -444,8 +463,8 @@ fn set_sigwinch_handler() -> io::Result<File> {
     // on a full pipe.
     let result = set_fd_cloexec(pipefd[0])
         .and_then(|()| set_fd_cloexec(pipefd[1]))
-        .and_then(|()| crate::set_fd_nonblocking(pipefd[0]))
-        .and_then(|()| crate::set_fd_nonblocking(pipefd[1]))
+        .and_then(|()| set_fd_nonblocking(pipefd[0]))
+        .and_then(|()| set_fd_nonblocking(pipefd[1]))
         .and_then(|()| {
             let mut action = unsafe { MaybeUninit::<libc::sigaction>::zeroed().assume_init() };
             action.sa_sigaction = handle_sigwinch as *const () as libc::sighandler_t;
@@ -493,7 +512,7 @@ fn open_nonblocking_input(input_fd: RawFd) -> io::Result<RawFd> {
     if fd < 0 {
         return Err(Error::last_os_error());
     }
-    if let Err(err) = crate::set_fd_nonblocking(fd) {
+    if let Err(err) = set_fd_nonblocking(fd) {
         unsafe { libc::close(fd) };
         return Err(err);
     }
