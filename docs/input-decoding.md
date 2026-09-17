@@ -196,10 +196,13 @@ reading can take it from there.
 
 **Nothing is bounded.** A payload may be as long as the sequence that arrived
 (a full image, for instance), and an incomplete sequence sits in the buffer
-until it is completed or trimmed. The application decides how much to keep; see
-the [`InputDecoder`](crate::InputDecoder) rustdoc for the shape of such a loop
-and for [`trim_buffered_bytes()`](crate::InputDecoder::trim_buffered_bytes),
-which sheds the oldest bytes when the buffer is too long.
+until it is completed. Holding it is the only thing the decoder does while it
+waits for the rest of a sequence, so there is no way to make it drop those bytes:
+doing so would mean decoding a stream whose sequence boundaries are already lost.
+An application that reads from a source it does not control watches
+[`buffered_bytes()`](crate::InputDecoder::buffered_bytes) and treats a buffer that
+keeps growing as a broken source rather than something to recover from; see the
+[`InputDecoder`](crate::InputDecoder) rustdoc for the shape of such a loop.
 
 ## Not supported
 
