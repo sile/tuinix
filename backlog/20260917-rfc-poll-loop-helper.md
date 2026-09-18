@@ -1,9 +1,6 @@
----
-Created: 2026-09-17
-Status: draft
----
-
 # RFC: Offer a helper for the standard poll loop
+
+- Status: draft
 
 ## Summary
 

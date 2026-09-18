@@ -1,9 +1,6 @@
----
-Created: 2026-09-17
-Status: draft
----
-
 # RFC: Make character and tab widths non-zero types
+
+- Status: draft
 
 ## Summary
 

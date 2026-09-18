@@ -1,9 +1,6 @@
----
-Created: 2026-09-17
-Status: rejected
----
-
 # RFC: Tell the caller *why* `push_char` clipped
+
+- Status: rejected
 
 ## Summary
 

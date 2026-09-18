@@ -1,9 +1,6 @@
----
-Created: 2026-09-17
-Status: not-a-bug
----
-
 # Not a bug: an overwritten wide character does not leave its trailing cell stale
+
+- Status: not-a-bug
 
 ## Summary
 

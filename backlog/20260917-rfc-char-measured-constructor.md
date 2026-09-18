@@ -1,9 +1,6 @@
----
-Created: 2026-09-17
-Status: draft
----
-
 # RFC: Provide a "measured" constructor for `Char`
+
+- Status: draft
 
 ## Summary
 

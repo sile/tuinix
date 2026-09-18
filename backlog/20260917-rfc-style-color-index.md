@@ -1,9 +1,6 @@
----
-Created: 2026-09-17
-Status: draft
----
-
 # RFC: Let `Style` carry a palette color, not only RGB
+
+- Status: draft
 
 ## Summary
 

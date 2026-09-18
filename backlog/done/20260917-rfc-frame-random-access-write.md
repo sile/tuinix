@@ -1,9 +1,6 @@
----
-Created: 2026-09-17
-Status: accepted
----
-
 # RFC: Add random-access character writes to `Frame` (superseded)
+
+- Status: accepted
 
 ## Summary
 

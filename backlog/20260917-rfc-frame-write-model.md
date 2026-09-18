@@ -1,9 +1,6 @@
----
-Created: 2026-09-17
-Status: accepted
----
-
 # RFC: Address frame writes by position instead of by a cursor
+
+- Status: accepted
 
 ## Summary
 
