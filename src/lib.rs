@@ -14,6 +14,8 @@
 //!
 //! - [`docs::input_decoding`] — the byte sequences [`InputDecoder`] recognizes,
 //!   and what it does with the bytes that decode to nothing.
+//! - [`docs::frame_writes`] — where a [`Frame`] stores characters, and what
+//!   happens when a write does not fit.
 //!
 //! ## Architecture
 //!
