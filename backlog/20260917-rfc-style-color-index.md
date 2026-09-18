@@ -104,12 +104,16 @@ change is in three parts:
 - **The constants' documentation.** Each constant's doc used to print an RGB
   triple ("ANSI red color (RGB: 255, 0, 0)"). It now names the palette entry
   ("ANSI red (color index 1)"), which is what the name referred to all along.
-- **Ordering.** `PartialOrd` and `Ord` are dropped. They were derived on the
-  struct and compared RGB components in order, which nobody can have meant;
-  on an enum they would compare variant tags first. `PartialEq`, `Eq`, and
-  `Hash` stay. This is the same reasoning that removed ordering from `Size`.
-- **Rendering.** `Style`'s `Display` emits the index ([38;5;Nm) for
-  `Indexed` and the RGB sequence ([38;2;r;g;bm) for `Rgb`.
+- **Ordering.** `PartialOrd` and `Ord` are dropped from `Color` and from
+  `Style`. They were derived on the struct and compared RGB components in
+  order, which nobody can have meant; on an enum they would compare variant
+  tags first, and `Style`'s derive was only valid because its color fields
+  were ordered. `PartialEq`, `Eq`, and `Hash` stay on both. This is the same
+  reasoning that removed ordering from `Size`.
+- **Rendering.** `Color` gains a `Display` that emits the parameters for its
+  kind (`5;N` or `2;r;g;b`), and `Style`'s `Display` writes it after the `;38`
+  / `;48` selector, so an `Indexed` color comes out as an index sequence
+  and an `Rgb` color as an RGB sequence.
   `Style`'s `FromStr` gains the matching branches so a parsed style round-trips.
   Both are additions to an existing mapping, not a new escape sequence.
   The same split applies to the background (`;48`).
@@ -167,7 +171,9 @@ cases; a trait moves the decision to every caller and adds generics to `Style`.
   terminal from now on, and `Color::WHITE` (entry 7) no longer coincides with
   `Color::BRIGHT_WHITE` (entry 15) on terminals that distinguish them.
 - `Color` loses `PartialOrd` and `Ord`, which is breaking on its own for any
-  caller that sorted by it.
+  caller that sorted by it. `Style` loses them too, since it derived them from
+  its color fields (`Option<Color>`) and no longer has an ordered color to
+  derive them from.
 - The type can no longer be destructured as a plain RGB triple. A caller that
   genuinely has RGB now writes `Color::Rgb(r, g, b)` where it wrote
   `Color { r, g, b }`.

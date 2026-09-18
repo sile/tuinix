@@ -11,14 +11,18 @@ use std::cell::Cell;
 
 use helpers::run;
 
-/// Draws a color biased toward the `0` / `128` / `255` components, so that the
-/// boundaries of the decimal rendering are exercised.
+/// Draws a color, half the time from the palette and half the time as RGB, so
+/// that both escape-sequence shapes are exercised.
 fn sample_color(ctx: &mut noprop::TestCaseContext) -> tuinix::Color {
-    tuinix::Color::new(
-        sample_color_component(ctx),
-        sample_color_component(ctx),
-        sample_color_component(ctx),
-    )
+    if noprop::sample_bool(ctx) {
+        tuinix::Color::Indexed(noprop::sample_usize_in(ctx, 0..=255) as u8)
+    } else {
+        tuinix::Color::Rgb(
+            sample_color_component(ctx),
+            sample_color_component(ctx),
+            sample_color_component(ctx),
+        )
+    }
 }
 
 /// Draws a single color component.

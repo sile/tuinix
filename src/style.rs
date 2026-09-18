@@ -67,7 +67,7 @@ use std::{
 ///     at = frame.put_char(at, tuinix::Char::new(c, 1, bold_and_underlined).expect("valid char"));
 /// }
 /// ```
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Style {
     /// Whether the text should be displayed in bold.
     pub bold: bool,
@@ -219,10 +219,10 @@ impl Display for Style {
             write!(f, ";9")?;
         }
         if let Some(color) = self.fg_color {
-            write!(f, ";38;2;{};{};{}", color.r, color.g, color.b)?;
+            write!(f, ";38;{color}")?;
         }
         if let Some(color) = self.bg_color {
-            write!(f, ";48;2;{};{};{}", color.r, color.g, color.b)?;
+            write!(f, ";48;{color}")?;
         }
 
         write!(f, "m")
@@ -266,6 +266,16 @@ impl FromStr for Style {
             this.strikethrough = true;
             s = s0;
         }
+        if let Some(s0) = s.strip_prefix(";38;5;") {
+            let (index, s0) = s0
+                .match_indices(&[';', 'm'])
+                .next()
+                .map(|(i, _)| s0.split_at(i))
+                .ok_or_else(error)?;
+            let index = index.parse().map_err(|_| error())?;
+            this.fg_color = Some(Color::Indexed(index));
+            s = s0;
+        }
         if let Some(s0) = s.strip_prefix(";38;2;") {
             let (r, s0) = s0.split_once(';').ok_or_else(error)?;
             let (g, s0) = s0.split_once(';').ok_or_else(error)?;
@@ -277,7 +287,17 @@ impl FromStr for Style {
             let r = r.parse().map_err(|_| error())?;
             let g = g.parse().map_err(|_| error())?;
             let b = b.parse().map_err(|_| error())?;
-            this.fg_color = Some(Color::new(r, g, b));
+            this.fg_color = Some(Color::Rgb(r, g, b));
+            s = s0;
+        }
+        if let Some(s0) = s.strip_prefix(";48;5;") {
+            let (index, s0) = s0
+                .match_indices(&[';', 'm'])
+                .next()
+                .map(|(i, _)| s0.split_at(i))
+                .ok_or_else(error)?;
+            let index = index.parse().map_err(|_| error())?;
+            this.bg_color = Some(Color::Indexed(index));
             s = s0;
         }
         if let Some(s0) = s.strip_prefix(";48;2;") {
@@ -291,7 +311,7 @@ impl FromStr for Style {
             let r = r.parse().map_err(|_| error())?;
             let g = g.parse().map_err(|_| error())?;
             let b = b.parse().map_err(|_| error())?;
-            this.bg_color = Some(Color::new(r, g, b));
+            this.bg_color = Some(Color::Rgb(r, g, b));
             s = s0;
         }
 
@@ -302,71 +322,77 @@ impl FromStr for Style {
     }
 }
 
-/// A color (RGB).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Color {
-    /// Red component.
-    pub r: u8,
+/// A color a frame can be drawn in.
+///
+/// A color is either an entry in the terminal's palette or a 24-bit RGB value.
+/// The palette is the terminal's, not tuinix's: an [`Color::Indexed`] is drawn
+/// as whatever the terminal says that entry is, which is why the named
+/// constants are indices rather than RGB triples.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Color {
+    /// An entry in the terminal's palette (`0..=255`).
+    Indexed(u8),
 
-    /// Green component.
-    pub g: u8,
-
-    /// Blue component.
-    pub b: u8,
+    /// A 24-bit color.
+    Rgb(u8, u8, u8),
 }
 
 impl Color {
-    /// ANSI black color (RGB: 0, 0, 0).
-    pub const BLACK: Self = Self::new(0, 0, 0);
+    /// ANSI black (color index 0).
+    pub const BLACK: Self = Self::Indexed(0);
 
-    /// ANSI red color (RGB: 255, 0, 0).
-    pub const RED: Self = Self::new(255, 0, 0);
+    /// ANSI red (color index 1).
+    pub const RED: Self = Self::Indexed(1);
 
-    /// ANSI green color (RGB: 0, 255, 0).
-    pub const GREEN: Self = Self::new(0, 255, 0);
+    /// ANSI green (color index 2).
+    pub const GREEN: Self = Self::Indexed(2);
 
-    /// ANSI yellow color (RGB: 255, 255, 0).
-    pub const YELLOW: Self = Self::new(255, 255, 0);
+    /// ANSI yellow (color index 3).
+    pub const YELLOW: Self = Self::Indexed(3);
 
-    /// ANSI blue color (RGB: 0, 0, 255).
-    pub const BLUE: Self = Self::new(0, 0, 255);
+    /// ANSI blue (color index 4).
+    pub const BLUE: Self = Self::Indexed(4);
 
-    /// ANSI magenta color (RGB: 255, 0, 255).
-    pub const MAGENTA: Self = Self::new(255, 0, 255);
+    /// ANSI magenta (color index 5).
+    pub const MAGENTA: Self = Self::Indexed(5);
 
-    /// ANSI cyan color (RGB: 0, 255, 255).
-    pub const CYAN: Self = Self::new(0, 255, 255);
+    /// ANSI cyan (color index 6).
+    pub const CYAN: Self = Self::Indexed(6);
 
-    /// ANSI white color (RGB: 255, 255, 255).
-    pub const WHITE: Self = Self::new(255, 255, 255);
+    /// ANSI white (color index 7).
+    pub const WHITE: Self = Self::Indexed(7);
 
-    /// ANSI bright black color (gray) (RGB: 128, 128, 128).
-    pub const BRIGHT_BLACK: Self = Self::new(128, 128, 128);
+    /// ANSI bright black (color index 8).
+    pub const BRIGHT_BLACK: Self = Self::Indexed(8);
 
-    /// ANSI bright red color (RGB: 255, 100, 100).
-    pub const BRIGHT_RED: Self = Self::new(255, 100, 100);
+    /// ANSI bright red (color index 9).
+    pub const BRIGHT_RED: Self = Self::Indexed(9);
 
-    /// ANSI bright green color (RGB: 100, 255, 100).
-    pub const BRIGHT_GREEN: Self = Self::new(100, 255, 100);
+    /// ANSI bright green (color index 10).
+    pub const BRIGHT_GREEN: Self = Self::Indexed(10);
 
-    /// ANSI bright yellow color (RGB: 255, 255, 100).
-    pub const BRIGHT_YELLOW: Self = Self::new(255, 255, 100);
+    /// ANSI bright yellow (color index 11).
+    pub const BRIGHT_YELLOW: Self = Self::Indexed(11);
 
-    /// ANSI bright blue color (RGB: 100, 100, 255).
-    pub const BRIGHT_BLUE: Self = Self::new(100, 100, 255);
+    /// ANSI bright blue (color index 12).
+    pub const BRIGHT_BLUE: Self = Self::Indexed(12);
 
-    /// ANSI bright magenta color (RGB: 255, 100, 255).
-    pub const BRIGHT_MAGENTA: Self = Self::new(255, 100, 255);
+    /// ANSI bright magenta (color index 13).
+    pub const BRIGHT_MAGENTA: Self = Self::Indexed(13);
 
-    /// ANSI bright cyan color (RGB: 100, 255, 255).
-    pub const BRIGHT_CYAN: Self = Self::new(100, 255, 255);
+    /// ANSI bright cyan (color index 14).
+    pub const BRIGHT_CYAN: Self = Self::Indexed(14);
 
-    /// ANSI bright white color (RGB: 255, 255, 255).
-    pub const BRIGHT_WHITE: Self = Self::new(255, 255, 255);
+    /// ANSI bright white (color index 15).
+    pub const BRIGHT_WHITE: Self = Self::Indexed(15);
+}
 
-    /// Makes a new [`Color`] instance.
-    pub const fn new(r: u8, g: u8, b: u8) -> Self {
-        Self { r, g, b }
+impl Display for Color {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Indexed(index) => write!(f, "5;{index}"),
+            Self::Rgb(r, g, b) => write!(f, "2;{r};{g};{b}"),
+        }
     }
 }
 
@@ -378,12 +404,32 @@ mod tests {
     fn parse_style() {
         let style: Style = "\x1b[0;1;38;2;0;255;0m".parse().expect("invalid");
         assert!(style.bold);
-        assert_eq!(style.fg_color, Some(Color::GREEN));
+        assert_eq!(style.fg_color, Some(Color::Rgb(0, 255, 0)));
 
         let style: Style = "\x1b[0;38;2;0;0;0;48;2;255;255;0m"
             .parse()
             .expect("invalid");
-        assert_eq!(style.fg_color, Some(Color::BLACK));
-        assert_eq!(style.bg_color, Some(Color::YELLOW));
+        assert_eq!(style.fg_color, Some(Color::Rgb(0, 0, 0)));
+        assert_eq!(style.bg_color, Some(Color::Rgb(255, 255, 0)));
+
+        let style: Style = "\x1b[0;38;5;2;48;5;255m".parse().expect("invalid");
+        assert_eq!(style.fg_color, Some(Color::Indexed(2)));
+        assert_eq!(style.bg_color, Some(Color::Indexed(255)));
+    }
+
+    #[test]
+    fn display_style() {
+        assert_eq!(
+            Style::new().fg_color(Color::GREEN).to_string(),
+            "\x1b[0;38;5;2m"
+        );
+        assert_eq!(
+            Style::new().fg_color(Color::Rgb(0, 255, 0)).to_string(),
+            "\x1b[0;38;2;0;255;0m"
+        );
+        assert_eq!(
+            Style::new().bg_color(Color::Indexed(255)).to_string(),
+            "\x1b[0;48;5;255m"
+        );
     }
 }
