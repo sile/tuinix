@@ -44,6 +44,7 @@ keyboard input, and handles terminal resizing.
 
 ```rust,no_run
 use std::io::{Read, Write};
+use std::num::NonZeroUsize;
 
 // NOTE: This is an ASCII-oriented demo helper: every character is assigned a width of 1.
 // Non-ASCII characters (for example CJK or emoji) would need the caller to supply their
@@ -61,7 +62,8 @@ fn write_text(
     for c in text.chars() {
         match c {
             '\n' => at = at.next_line(),
-            '\t' => at = at.next_tab_stop(8),
+            // `next_tab_stop` takes a non-zero width; the application owns the value.
+            '\t' => at = at.next_tab_stop(NonZeroUsize::new(8).expect("8 is not 0")),
             c if c.is_control() => {}
             c => {
                 at = frame.put_char(at, tuinix::Char::new(c, 1, style).expect("valid char"));

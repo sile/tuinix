@@ -44,6 +44,7 @@
 //!
 //! ```no_run
 //! use std::io::{Read, Write};
+//! use std::num::NonZeroUsize;
 //!
 //! fn main() -> std::io::Result<()> {
 //!     // Initialize terminal driver and query its size
@@ -78,7 +79,8 @@
 //!         for c in text.chars() {
 //!             match c {
 //!                 '\n' => at = at.next_line(),
-//!                 '\t' => at = at.next_tab_stop(8),
+//!                 // `next_tab_stop` takes a non-zero width; the application owns the value.
+//!                 '\t' => at = at.next_tab_stop(NonZeroUsize::new(8).expect("8 is not 0")),
 //!                 c if c.is_control() => {}
 //!                 c => {
 //!                     at = frame.put_char(at, tuinix::Char::new(c, 1, style).expect("valid char"));

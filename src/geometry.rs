@@ -1,3 +1,5 @@
+use std::num::NonZeroUsize;
+
 /// The number of rows and columns of a terminal display area.
 ///
 /// This describes the extent of a [`Frame`](crate::Frame) or a
@@ -63,12 +65,8 @@ impl Position {
     /// A position that is already on a stop moves to the following one, so a
     /// tab always advances by at least one full stop and never lands on the
     /// column it started from. The row is unchanged.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `tab_width` is `0`.
-    pub const fn next_tab_stop(self, tab_width: usize) -> Self {
-        assert!(tab_width > 0, "tab_width must be greater than zero");
+    pub const fn next_tab_stop(self, tab_width: NonZeroUsize) -> Self {
+        let tab_width = tab_width.get();
         let distance = (tab_width - self.col % tab_width) % tab_width;
         if distance == 0 {
             self.advance(tab_width)
