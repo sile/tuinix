@@ -70,6 +70,24 @@ today. Asking `push_char` for the reason instead would not remove it either:
 choosing what to do about a clip — wrap, pad, or stop — has to happen before
 the write, and a returned reason arrives after the position has already moved.
 
+## How a wide character occupies its cells
+
+A character of width 2 occupies two cells but is stored once, at the column
+where it starts. The column to its right belongs to that character: it is not
+reported as a position of its own by [`chars()`](crate::Frame::chars), which
+yields the character at its starting column and skips over the rest of its
+width.
+
+So the cells a frame covers and the positions it reports do not line up one to
+one. A row of 4 columns fits `あ あ` as two characters while covering the same 4
+cells as `a b c d`, and [`size()`](crate::Frame::size) counts cells, not
+characters. This is also why the clipping rule above is stated in cells: a
+width-2 character needs two of them, so it is dropped when only one is left in
+the row.
+
+The pairing assumes the declared width matches what the terminal draws, which
+is the caller's declaration to get right — see [`Char`](crate::Char).
+
 ## Moving past the edges is normal
 
 Only [`push_char()`](crate::Frame::push_char) tests the frame bounds.
