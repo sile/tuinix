@@ -1,143 +1,134 @@
-# RFC: Make character and tab widths non-zero types
+# RFC: Make the tab width a non-zero type
 
-- Status: draft
+- Status: accepted
 
 ## Summary
 
-Represent the "`1` or more" rule for character widths and tab widths in the
-type, using a non-zero integer instead of a plain `usize` plus a runtime check.
+Change `Position::next_tab_stop()` to take a `NonZeroUsize` tab width, so the
+"greater than `0`" rule moves from an `assert!` plus a "Panics if `0`" doc
+clause into the signature. Leave `Char::width()` as `usize`.
 
 ## Motivation
 
-Two values in tuinix are widths that cannot be zero, and both currently say so
-in prose and enforce it at runtime:
+A tab width of `0` is meaningless, and `next_tab_stop()` currently enforces that
+with an `assert!` and documents it as a panic. That is a rule the caller has to
+remember from prose. A non-zero type makes the invalid value impossible to
+construct, removes the panic, and lets the rustdoc drop its "Panics if" clause —
+the promise moves from documentation into the signature, at no cost to the call
+site, since a tab width is normally a `const`.
 
-- [`Char::width()`](crate::Char::width) documents "always `1` or more", and
-  [`Char::new()`](crate::Char::new) returns `None` when the width is `0`.
-- `Frame::push_tab()` asserts that the tab width is greater than `0`, and its
-  rustdoc carries a "Panics if `0`" clause. (Under
-  `20260917-rfc-frame-write-model.md`, this becomes
-  `Position::next_tab_stop()`.)
-
-A rule that is stated in a comment and checked with `assert!` or a `None` return
-is a rule the caller has to remember. A non-zero type makes the invalid value
-impossible to construct, removes the panic, and lets the rustdoc drop its
-"Panics if" clause — the promise moves from documentation into the signature.
+`Char::width()` makes a superficially similar "`1` or more" promise, and an
+earlier draft of this proposal changed both. That framing is dropped; see
+"Why `Char::width()` stays `usize`" below.
 
 ## Guide-level explanation
 
-Today, a zero width is rejected at the point of use:
+Today, a zero tab width is rejected at the point of use:
 
 ```rust
-// None: width must be 1 or more
-let ch = Char::new('あ', 0, style);
-
 // panics: tab width must be greater than 0
-frame.push_tab(0);
+at = at.next_tab_stop(0);
 ```
 
-With non-zero types, a zero width cannot be written down:
+With a non-zero type, a zero tab width cannot be written down:
 
 ```rust
-// compile error: 0 is not a non-zero value
-let ch = Char::new('あ', NonZeroUsize::new(0), style);
+use std::num::NonZeroUsize;
 
-// the tab width is a value that is already known to be non-zero
-let tab = NonZeroUsize::new(4).expect("4 is not 0");
-at = at.next_tab_stop(tab);
+// the application owns the tab width, and writes it down once
+const TAB_WIDTH: NonZeroUsize = NonZeroUsize::new(4).expect("4 is not 0");
+
+at = at.next_tab_stop(TAB_WIDTH);
 ```
 
-The cost is visible in that second example: every call site that passes a
-literal has to build the type first. That cost is the reason this proposal is
-tracked on its own rather than folded into the write-model change.
+The literal is built once, at the application's own constant, and every call
+site passes that constant. tuinix does not supply a tab width of its own: it has
+no way to know what an application considers a tab stop, the same way it does
+not read the terminal's palette.
 
 ## Reference-level explanation
 
 ```rust
-impl Char {
-    /// Makes a new styled character with the given width.
-    ///
-    /// Returns `None` when `value` is a control character. A width of `0` is
-    /// not representable, so it needs no arm here.
-    pub const fn new(value: char, width: NonZeroUsize, style: Style) -> Option<Self>;
-
-    /// The number of terminal columns this character occupies.
-    pub const fn width(self) -> NonZeroUsize;
-}
-
 impl Position {
     /// The next tab stop at or after this position, stepping by `tab_width` columns.
     pub const fn next_tab_stop(self, tab_width: NonZeroUsize) -> Self;
-
-    /// The position this far to the right.
-    pub const fn advance(self, width: NonZeroUsize) -> Self;
 }
 ```
 
-`Char::BLANK` keeps width `1`. Its `width` field becomes the non-zero type, but
-the constant value does not change.
-
-### Where `usize` still appears
-
-`Position`'s coordinates and `Size`'s extents stay `usize`; a `row` or `col` of
-`0` is meaningful and must stay representable. Only widths become non-zero. That
-leaves arithmetic between a width and a coordinate as `width.get() + col` or an
-`advance(width)` call that does the conversion once, rather than every caller
-doing it.
-
-### Rejected alternative: `NonZeroU8` for the tab width
-
-A tab width is a small number in practice, so `u8` would fit. Pushing it to
-`NonZeroU8` is rejected for two reasons: `advance()` and `Char::width()` deal in
-`usize`, so every use would need a cast back; and the memory saved by a smaller
-type does not apply, since the tab width is passed as an argument rather than
-stored in a frame.
+`Char::new`, `Char::width()`, and `Position::advance()` keep their `usize`
+widths and are not touched.
 
 ## Drawbacks
 
-- Every call site that passes a literal width becomes
-  `NonZeroUsize::new(n).expect(...)` or carries a `const`. `Char::new` in
-  particular is a widely used constructor, and this makes it heavier to call.
-- `Char::new` returns `Option` for the control-character case. If a non-zero
-  width still leaves a `None` arm, the type change removes only one of the two
-  reasons and the caller still handles `None`.
+- The tab width can no longer be passed as a bare literal. That cost lands once,
+  on an application's own `const`, because a tab width is a value an application
+  states rather than derives.
+- A `NonZeroUsize` is less specific a name than the parameter it replaces. The
+  rustdoc for `next_tab_stop()` has to say "tab width", since the type does not.
 
 ## Rationale and alternatives
 
-### Why not leave both as `usize`?
+### Why not leave the tab width as `usize`?
 
-The status quo has no migration cost and the runtime checks already work. It is
-rejected only if the prose-plus-check style is judged worse than the call-site
-cost, which is a value judgment rather than a correctness one. If nothing here
-motivates the change, rejecting this RFC is a reasonable outcome.
+The status quo has no migration cost and the `assert!` already works. It is
+rejected only if the prose-plus-panic style is judged worse than building the
+constant, which is a value judgment rather than a correctness one. If nothing
+here motivates the change, rejecting this RFC is a reasonable outcome.
 
-### Why not change only the tab width?
+### Why `Char::width()` stays `usize`
 
-Because the two widths make the same promise. Making the tab width non-zero
-while `Char::width()` stays `usize` would leave "a width is at least 1" split
-across two representations — enforced by the type in one place and by
-convention in the other — which is the inconsistency this proposal exists to
-avoid. Either both change or neither does.
+An earlier draft treated `Char::width()` and the tab width as "the same
+promise" and changed both. On inspection they are different kinds of rule:
 
-### Why not change only `Char::width()`?
+- `Char::width()` is an invariant fixed when the character is built. It is the
+  width the caller declared, and `Char::new()` already rejects `0`.
+- The tab width is a precondition on an argument, passed on every call.
 
-Symmetric to the above, and worse in one respect: `push_tab`'s `assert!` would
-remain the only place a zero width is caught at runtime, while the type system
-handled the other.
+Only the second is a rule that an `assert!` is holding up. `Char::width()` has
+no runtime check to remove at its point of use, and `Char::new()` returns `None`
+for control characters anyway, so making its width non-zero would remove one of
+two reasons for that `None` while leaving the caller still handling `None` — a
+partial gain at the price of `NonZeroUsize::new(1).expect(...)` on the most
+frequently written constructor in tuinix. The two rules are not one
+representation split in two, so there is no inconsistency in changing only the
+tab width.
+
+### Why not supply a default or a few common widths?
+
+A tab width is in practice `2`, `4`, or `8`, which tempts a library constant.
+It is declined because tuinix cannot know what an application considers a tab
+stop, in the same way it does not read the terminal's palette. A single
+`TAB_WIDTH` would only serve the applications that happen to share that value,
+while suggesting tuinix has an opinion it does not have; a set of them would be
+worse. The application states its own constant once; that is the whole cost.
+
+### Rejected alternative: `NonZeroU8` for the tab width
+
+A tab width is a small number in practice, so `u8` would fit. It is rejected
+because no other width in tuinix is `u8`, and the memory saved does not apply:
+the tab width is passed as an argument rather than stored in a frame.
+
+### Rejected alternative: a `TabWidth` newtype
+
+A newtype (`TabWidth(NonZeroUsize)`) was considered, so that "tab width" would
+be visible in the type rather than only in the parameter name. It is declined
+because the name is the only thing it adds. `next_tab_stop()` computes with its
+argument (`(tab_width - self.col % tab_width) % tab_width` and
+`advance(tab_width)`), so a newtype would have to hand its inner value back out
+at every step, and tuinix has no other newtype that pays that cost for a name.
+`NonZeroUsize` reuses a familiar type, and `next_tab_stop()`'s own doc supplies
+the name.
 
 ## Unresolved questions
 
-- Should this be adopted at all, given the call-site cost on `Char::new()`? The
-  change is only worth making if the type-level guarantee is judged more
-  valuable than the convenience of `Char::new('x', 1, style)`.
-- `NonZeroUsize` versus a newtype (`CharWidth(NonZeroUsize)`) that could carry
-  the doc and any methods. A newtype adds a type to learn; `NonZeroUsize` reuses
-  a familiar one at the price of a less specific name.
+None. The choice was between `NonZeroUsize` and a newtype, and the newtype was
+rejected above.
 
 ## Future possibilities
 
-- If a width newtype is introduced, it is the natural home for a
-  `saturating_add` when stacking widths, which currently has to be written at
-  each call site.
+- If a `Char` width newtype is introduced later — for instance to carry a
+  `saturating_add` when stacking widths — the tab width could move to it as
+  well, so that widths have one name. Any such newtype would subsume the
+  reasoning above, since the argument would no longer be a bare non-zero number.
 - Non-zero types for any other "must be positive" value that appears later
   (for example a region extent) would follow the same pattern.
