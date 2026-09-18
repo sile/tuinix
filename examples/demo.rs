@@ -38,20 +38,36 @@ const ESCAPE_TIMEOUT_MS: libc::c_int = 50;
 /// truncated mouse report) from growing the buffer without limit.
 const MAX_BUFFERED_BYTES: usize = 4096;
 
+/// The tab width [`write_text`] uses.
+const TAB_WIDTH: usize = 8;
+
 // NOTE: This is an ASCII-oriented demo helper: every character is assigned a width of 1.
 // Non-ASCII characters (for example CJK or emoji) would need the caller to supply their
 // actual width, because Frame does not compute character widths itself.
-fn write_text(frame: &mut tuinix::Frame, text: &str, style: tuinix::Style) {
+//
+// The write position is the caller's to keep: it starts where the caller says and
+// is threaded through `put_char`, which returns the position just past each
+// character. A character that runs past the right edge is dropped rather than
+// wrapped, so there is no newline to insert behind the caller's back; a caller
+// that wants wrapping wraps. The returned position is where the next write goes.
+fn write_text(
+    frame: &mut tuinix::Frame,
+    at: tuinix::Position,
+    text: &str,
+    style: tuinix::Style,
+) -> tuinix::Position {
+    let mut at = at;
     for c in text.chars() {
         match c {
-            '\n' => frame.push_newline(),
-            '\t' => frame.push_tab(8),
+            '\n' => at = at.next_line(),
+            '\t' => at = at.next_tab_stop(TAB_WIDTH),
             c if c.is_control() => {}
             c => {
-                frame.push_char(tuinix::Char::new(c, 1, style).expect("valid char"));
+                at = frame.put_char(at, tuinix::Char::new(c, 1, style).expect("valid char"));
             }
         }
     }
+    at
 }
 
 /// Maps a non-blocking I/O result's [`std::io::ErrorKind::WouldBlock`] to `Ok(None)`.
@@ -67,25 +83,31 @@ fn would_block_as_none<T>(result: std::io::Result<T>) -> std::io::Result<Option<
     }
 }
 
-fn draw_header(frame: &mut tuinix::Frame) {
-    write_text(frame, "tuinix Demo\n", TITLE_STYLE);
-    write_text(frame, "\nInstructions:\n", INFO_STYLE);
-    write_text(
+/// Draws the demo's fixed banner, and returns the position just below it where
+/// the caller's own text should start.
+fn draw_header(frame: &mut tuinix::Frame) -> tuinix::Position {
+    let mut at = tuinix::Position::ORIGIN;
+    at = write_text(frame, at, "tuinix Demo\n", TITLE_STYLE);
+    at = write_text(frame, at, "\nInstructions:\n", INFO_STYLE);
+    at = write_text(
         frame,
+        at,
         "\u{2022} Click anywhere to see mouse events\n",
         BODY_STYLE,
     );
-    write_text(
+    at = write_text(
         frame,
+        at,
         "\u{2022} Try left, right, and middle mouse buttons\n",
         BODY_STYLE,
     );
-    write_text(
+    at = write_text(
         frame,
+        at,
         "\u{2022} Try scrolling with the mouse wheel\n",
         BODY_STYLE,
     );
-    write_text(frame, "\u{2022} Press 'q' to quit\n", BODY_STYLE);
+    write_text(frame, at, "\u{2022} Press 'q' to quit\n", BODY_STYLE)
 }
 
 fn handle_resize(
@@ -101,9 +123,10 @@ fn handle_resize(
         return Ok(());
     }
     let mut frame = tuinix::Frame::new(new_size);
-    draw_header(&mut frame);
+    let at = draw_header(&mut frame);
     write_text(
         &mut frame,
+        at,
         &format!(
             "\nLast event: terminal resized to {}x{}\n",
             new_size.cols, new_size.rows
@@ -129,7 +152,7 @@ fn handle_event(
     // The frame is built at the terminal's current dimensions, so a resize is
     // picked up on whichever event is handled first afterwards.
     let mut frame = tuinix::Frame::new(driver.size());
-    draw_header(&mut frame);
+    let at = draw_header(&mut frame);
 
     match event {
         tuinix::Input::Key(key_input) => {
@@ -139,19 +162,22 @@ fn handle_event(
             }
             write_text(
                 &mut frame,
+                at,
                 &format!("\nLast event: Key pressed: {:?}\n", key_input),
                 INFO_STYLE,
             );
         }
         tuinix::Input::Mouse(mouse_input) => {
-            write_text(&mut frame, "\nMouse Input Details:\n", MOUSE_STYLE);
-            write_text(
+            let at = write_text(&mut frame, at, "\nMouse Input Details:\n", MOUSE_STYLE);
+            let at = write_text(
                 &mut frame,
+                at,
                 &format!("  Kind: {:?}\n", mouse_input.kind),
                 BODY_STYLE,
             );
-            write_text(
+            let at = write_text(
                 &mut frame,
+                at,
                 &format!(
                     "  Position: column {}, row {}\n",
                     mouse_input.position.col, mouse_input.position.row
@@ -160,6 +186,7 @@ fn handle_event(
             );
             write_text(
                 &mut frame,
+                at,
                 &format!(
                     "  Modifiers: {}\n",
                     [
@@ -178,6 +205,7 @@ fn handle_event(
         tuinix::Input::Unrecognized { bytes } => {
             write_text(
                 &mut frame,
+                at,
                 &format!("\nLast event: Undecodable input: {} byte(s)\n", bytes.len()),
                 BODY_STYLE,
             );
@@ -186,9 +214,10 @@ fn handle_event(
             // A paste is inserted as text rather than interpreted, which is the
             // whole point of reporting it as one input: a newline in the pasted
             // text is a newline, not the Enter key.
-            write_text(&mut frame, "\nLast event: Paste:\n", INFO_STYLE);
+            let at = write_text(&mut frame, at, "\nLast event: Paste:\n", INFO_STYLE);
             write_text(
                 &mut frame,
+                at,
                 &format!("  {} byte(s)\n", bytes.len()),
                 BODY_STYLE,
             );
@@ -244,8 +273,8 @@ fn main() -> std::io::Result<()> {
 
     // Build an initial frame at the terminal's current dimensions.
     let mut frame = tuinix::Frame::new(driver.size());
-    draw_header(&mut frame);
-    write_text(&mut frame, "\nLast event: None\n", INFO_STYLE);
+    let at = draw_header(&mut frame);
+    write_text(&mut frame, at, "\nLast event: None\n", INFO_STYLE);
 
     // Render the initial frame and write it to the terminal.
     let out = frame.render(prev_frame.as_ref(), cursor);

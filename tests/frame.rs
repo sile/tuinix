@@ -2,10 +2,10 @@
 //!
 //! The properties covered here use only the public API:
 //!
-//! - The write position after `push_char` / `push_newline` matches a model:
-//!   a character advances the position by its width, and `\n` resets the
-//!   column, regardless of clipping.
-//! - `draw` matches a model that replays the overlap handling: a partially
+//! - `put_char` writes at the position it is told and returns the position just
+//!   past the character, regardless of clipping, and `fits` agrees with whether
+//!   the character was stored.
+//! - `put_frame` matches a model that replays the overlap handling: a partially
 //!   overlapped character is removed, the cells a drawn character covers are
 //!   cleared, and characters drawn outside the frame are ignored.
 //! - Replaying the bytes produced by `render` onto a model screen reproduces
@@ -49,20 +49,23 @@ fn ch(value: char, width: usize) -> tuinix::Char {
     tuinix::Char::new(value, width, tuinix::Style::new()).expect("valid char")
 }
 
-/// Pushes a string of text onto the frame, handling newlines and per-character
-/// widths. A zero-width character occupies no column, so it is dropped.
-fn push_text(frame: &mut tuinix::Frame, text: &str) {
+/// Writes a string of text onto the frame starting at `at`, handling newlines
+/// and per-character widths. A zero-width character occupies no column, so it is
+/// dropped. The returned position is where the next write would go.
+fn put_text(frame: &mut tuinix::Frame, at: tuinix::Position, text: &str) -> tuinix::Position {
+    let mut at = at;
     for c in text.chars() {
         match c {
-            '\n' => frame.push_newline(),
+            '\n' => at = at.next_line(),
             _ => {
                 let width = char_width(c);
                 if width > 0 {
-                    frame.push_char(ch(c, width));
+                    at = frame.put_char(at, ch(c, width));
                 }
             }
         }
     }
+    at
 }
 
 fn sample_size(ctx: &mut noprop::TestCaseContext) -> tuinix::Size {
@@ -124,16 +127,17 @@ fn sample_op(ctx: &mut noprop::TestCaseContext) -> Op {
     }
 }
 
-/// A write-position model for `Op`: a character advances the column by its
-/// width, and `\n` resets the column, regardless of clipping.
+/// A model of the position a run of writes leaves behind: a character advances
+/// the column by its width and a newline resets the column, regardless of
+/// clipping.
 #[derive(Debug)]
-struct CursorModel {
+struct WriteModel {
     row: usize,
     col: usize,
     clipped: bool,
 }
 
-impl CursorModel {
+impl WriteModel {
     fn apply(&mut self, op: Op, size: tuinix::Size) {
         match op {
             Op::Newline => {
@@ -148,31 +152,23 @@ impl CursorModel {
             }
         }
     }
+
+    fn fits(&self, width: usize, size: tuinix::Size) -> bool {
+        self.row < size.rows && self.col + width <= size.cols
+    }
 }
 
-/// The write position must follow the model after applying a random sequence
-/// of character writes and newlines.
+/// `put_char` must return the position the model predicts after a random
+/// sequence of writes and newlines, and `fits` must agree with whether the
+/// character was actually stored.
 #[test]
-fn push_cursor_matches_model() -> noprop::TestResult {
+fn put_char_returns_the_model_position() -> noprop::TestResult {
     let observed_char = Cell::new(false);
     let observed_wide = Cell::new(false);
     let observed_newline = Cell::new(false);
     let observed_clipped = Cell::new(false);
     let runner = run(256, |ctx| {
-        let size = tuinix::Size {
-            rows: noprop::sample_with_boundaries(
-                ctx,
-                &[0usize, 12],
-                noprop::Ratio::one_nth(5),
-                |ctx| noprop::sample_usize_in(ctx, 0..=12),
-            ),
-            cols: noprop::sample_with_boundaries(
-                ctx,
-                &[0usize, 12],
-                noprop::Ratio::one_nth(5),
-                |ctx| noprop::sample_usize_in(ctx, 0..=12),
-            ),
-        };
+        let size = sample_size(ctx);
         let mut ops = Vec::new();
         let n_ops =
             noprop::sample_with_boundaries(ctx, &[0usize, 64], noprop::Ratio::one_nth(5), |ctx| {
@@ -181,29 +177,57 @@ fn push_cursor_matches_model() -> noprop::TestResult {
         for _ in 0..n_ops {
             ops.push(sample_op(ctx));
         }
-        let mut model = CursorModel {
+        let mut model = WriteModel {
             row: 0,
             col: 0,
             clipped: false,
         };
         let mut frame = tuinix::Frame::new(size);
+        let mut at = tuinix::Position::ORIGIN;
         for &op in &ops {
-            model.apply(op, size);
             match op {
-                Op::Newline => frame.push_newline(),
+                Op::Newline => {
+                    model.apply(op, size);
+                    at = at.next_line();
+                    assert_eq!(
+                        at,
+                        tuinix::Position {
+                            row: model.row,
+                            col: model.col
+                        },
+                        "next_line mismatch for {ops:?}"
+                    );
+                }
                 Op::Char(c, width) => {
-                    frame.push_char(ch(c, width));
+                    let fits = model.fits(width, size);
+                    let target = at;
+                    model.apply(op, size);
+                    let ch = ch(c, width);
+                    assert_eq!(frame.fits(target, ch), fits, "fits mismatch for {ops:?}");
+                    at = frame.put_char(target, ch);
+                    assert_eq!(
+                        at,
+                        tuinix::Position {
+                            row: model.row,
+                            col: model.col
+                        },
+                        "position mismatch for {ops:?}"
+                    );
+                    // `fits` is a prediction of the write, so a character it
+                    // reported as fitting must be stored and one it reported as
+                    // clipped must not be.
+                    let stored = frame.chars().any(|(pos, c)| pos == target && c == ch);
+                    assert_eq!(
+                        stored,
+                        fits && width > 0,
+                        "stored mismatch at {target:?} for {ops:?}"
+                    );
+                    if !fits {
+                        model.clipped = true;
+                    }
                 }
             }
         }
-        assert_eq!(
-            frame.next_position(),
-            tuinix::Position {
-                row: model.row,
-                col: model.col
-            },
-            "write position mismatch for {ops:?}"
-        );
         if ops.iter().any(|op| matches!(op, Op::Char(_, w) if *w > 0)) {
             observed_char.set(true);
         }
@@ -231,11 +255,11 @@ fn push_cursor_matches_model() -> noprop::TestResult {
     Ok(())
 }
 
-/// `draw` must match a model that replays the overlap handling: a partially
+/// `put_frame` must match a model that replays the overlap handling: a partially
 /// overlapped character is removed, the cells covered by the drawn character
 /// are cleared, and characters drawn outside the frame are ignored.
 #[test]
-fn draw_matches_model() -> noprop::TestResult {
+fn put_frame_matches_model() -> noprop::TestResult {
     let observed_overlap = Cell::new(false);
     let observed_clipped = Cell::new(false);
     let runner = run(256, |ctx| {
@@ -262,9 +286,9 @@ fn draw_matches_model() -> noprop::TestResult {
         };
 
         let mut dest = tuinix::Frame::new(size);
-        push_text(&mut dest, &dest_text);
+        put_text(&mut dest, tuinix::Position::ORIGIN, &dest_text);
         let mut src = tuinix::Frame::new(size);
-        push_text(&mut src, &src_text);
+        put_text(&mut src, tuinix::Position::ORIGIN, &src_text);
 
         let mut expected: BTreeMap<_, _> = dest
             .chars()
@@ -297,7 +321,7 @@ fn draw_matches_model() -> noprop::TestResult {
             expected.insert(target_pos, c);
         }
 
-        dest.draw(position, &src);
+        dest.put_frame(position, &src);
         let actual: BTreeMap<_, _> = dest
             .chars()
             .filter(|(_, c)| *c != tuinix::Char::BLANK)
@@ -436,7 +460,7 @@ fn render_full_redraw_matches_model() -> noprop::TestResult {
     let runner = run(256, |ctx| {
         let size = sample_size(ctx);
         let mut frame = tuinix::Frame::new(size);
-        push_text(&mut frame, &sample_text(ctx));
+        put_text(&mut frame, tuinix::Position::ORIGIN, &sample_text(ctx));
 
         let out = frame.render(None, None);
         assert!(out.starts_with(HIDE_CURSOR), "output must hide the cursor");
@@ -493,10 +517,10 @@ fn render_diff_matches_model() -> noprop::TestResult {
             sample_size(ctx)
         };
         let mut prev = tuinix::Frame::new(prev_size);
-        push_text(&mut prev, &sample_text(ctx));
+        put_text(&mut prev, tuinix::Position::ORIGIN, &sample_text(ctx));
 
         let mut frame = tuinix::Frame::new(size);
-        push_text(&mut frame, &sample_text(ctx));
+        put_text(&mut frame, tuinix::Position::ORIGIN, &sample_text(ctx));
 
         let cursor = if !size.is_empty() && noprop::sample_bool(ctx) {
             observed_cursor.set(true);

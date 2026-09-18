@@ -22,8 +22,9 @@ use std::{
 ///     .fg_color(tuinix::Color::GREEN);
 ///
 /// // Write styled text to the frame
+/// let mut at = tuinix::Position::ORIGIN;
 /// for c in "This text is bold and green".chars() {
-///     frame.push_char(tuinix::Char::new(c, 1, style).expect("valid char"));
+///     at = frame.put_char(at, tuinix::Char::new(c, 1, style).expect("valid char"));
 /// }
 ///
 /// // Create another style for highlighting
@@ -32,7 +33,7 @@ use std::{
 ///     .fg_color(tuinix::Color::BLACK);
 ///
 /// for c in "Important information".chars() {
-///     frame.push_char(tuinix::Char::new(c, 1, highlight).expect("valid char"));
+///     at = frame.put_char(at, tuinix::Char::new(c, 1, highlight).expect("valid char"));
 /// }
 /// ```
 ///
@@ -52,17 +53,18 @@ use std::{
 /// let bold = tuinix::Style::new().bold();
 /// let underline = tuinix::Style::new().underline();
 ///
+/// let mut at = tuinix::Position::ORIGIN;
 /// for c in "This is bold.".chars() {
-///     frame.push_char(tuinix::Char::new(c, 1, bold).expect("valid char"));
+///     at = frame.put_char(at, tuinix::Char::new(c, 1, bold).expect("valid char"));
 /// }
 /// for c in "This is only underlined (not bold).".chars() {
-///     frame.push_char(tuinix::Char::new(c, 1, underline).expect("valid char"));
+///     at = frame.put_char(at, tuinix::Char::new(c, 1, underline).expect("valid char"));
 /// }
 ///
 /// // To apply multiple styles, combine them in a single Style instance
 /// let bold_and_underlined = tuinix::Style::new().bold().underline();
 /// for c in "This is both bold and underlined.".chars() {
-///     frame.push_char(tuinix::Char::new(c, 1, bold_and_underlined).expect("valid char"));
+///     at = frame.put_char(at, tuinix::Char::new(c, 1, bold_and_underlined).expect("valid char"));
 /// }
 /// ```
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -127,8 +129,9 @@ impl Style {
     ///     .bold()
     ///     .fg_color(tuinix::Color::GREEN);
     ///
+    /// let mut at = tuinix::Position::ORIGIN;
     /// for c in "hello".chars() {
-    ///     frame.push_char(tuinix::Char::new(c, 1, style).expect("valid char"));
+    ///     at = frame.put_char(at, tuinix::Char::new(c, 1, style).expect("valid char"));
     /// }
     /// ```
     pub const fn new() -> Self {
