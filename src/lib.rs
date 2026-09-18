@@ -111,8 +111,21 @@
 //!     ];
 //!     let mut raw = [0u8; 256];
 //!
+//!     // How long to wait for more input while a lone `ESC` is held.
+//!     const ESCAPE_TIMEOUT_MS: i32 = 50;
+//!
 //!     loop {
-//!         if unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, -1) } < 0 {
+//!         // A lone `ESC` byte is ambiguous: the terminal reports the Escape key
+//!         // and the start of a sequence such as `ESC [ A` identically. While one
+//!         // is held, wait only briefly so it is reported as Escape promptly
+//!         // instead of sitting there until the next key arrives.
+//!         let timeout = if input.has_uncommitted_escape() {
+//!             ESCAPE_TIMEOUT_MS
+//!         } else {
+//!             -1
+//!         };
+//!         let n = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, timeout) };
+//!         if n < 0 {
 //!             let err = std::io::Error::last_os_error();
 //!             // `poll` is never restarted by `SA_RESTART`, so a SIGWINCH makes it
 //!             // return `EINTR`. The handler writes the resize byte to the signal
@@ -121,6 +134,21 @@
 //!                 continue;
 //!             }
 //!             return Err(err);
+//!         }
+//!
+//!         // A descriptor that hung up or failed can never become ready again, so
+//!         // stop instead of spinning on it.
+//!         if fds
+//!             .iter()
+//!             .any(|fd| fd.revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0)
+//!         {
+//!             return Err(std::io::Error::other("terminal closed"));
+//!         }
+//!
+//!         if n == 0 {
+//!             // The wait elapsed with the lone `ESC` still held, so commit it as
+//!             // the Escape key.
+//!             input.commit_escape();
 //!         }
 //!
 //!         // Handle a terminal resize.
@@ -144,34 +172,35 @@
 //!         if fds[1].revents & libc::POLLIN != 0 {
 //!             while let Some(n @ 1..) = would_block_as_none(driver.read(&mut raw))? {
 //!                 input.feed(&raw[..n]);
-//!                 while let Some(event) = input.next() {
-//!                     let tuinix::Input::Key(key_input) = event else {
-//!                         continue;  // Skip mouse events
-//!                     };
-//!
-//!                     // Display the input
-//!                     let mut frame = tuinix::Frame::new(size);
-//!                     let at = write_text(&mut frame, tuinix::Position::ORIGIN, &format!("Key pressed: {:?}\n", key_input), tuinix::Style::new());
-//!                     write_text(&mut frame, at, "\nPress any key ('q' to quit)\n", tuinix::Style::new());
-//!                     let out = frame.render(prev.as_ref(), cursor);
-//!                     driver.write_all(&out)?;
-//!                     driver.flush()?;
-//!                     prev = Some(frame);
-//!                 }
 //!             }
+//!         }
+//!
+//!         // Drain every event the bytes fed above (or the committed `ESC`) made
+//!         // available. This is the single place that consumes the decoder, so a
+//!         // timeout and normal input share one path.
+//!         while let Some(event) = input.next() {
+//!             let tuinix::Input::Key(key_input) = event else {
+//!                 continue;  // Skip mouse events
+//!             };
+//!
+//!             // Display the input
+//!             let mut frame = tuinix::Frame::new(size);
+//!             let at = write_text(&mut frame, tuinix::Position::ORIGIN, &format!("Key pressed: {:?}\n", key_input), tuinix::Style::new());
+//!             write_text(&mut frame, at, "\nPress any key ('q' to quit)\n", tuinix::Style::new());
+//!             let out = frame.render(prev.as_ref(), cursor);
+//!             driver.write_all(&out)?;
+//!             driver.flush()?;
+//!             prev = Some(frame);
 //!         }
 //!     }
 //! }
 //! ```
 //!
-//! A lone `ESC` byte is ambiguous: a terminal sends the same byte whether the
-//! user pressed the Escape key or started a sequence such as `ESC [ A`. Waiting
-//! for more input reports Escape only when the next key arrives, and the two
-//! bytes then read as one Alt+key sequence. The fix is to poll with a short
-//! timeout while [`InputDecoder::has_uncommitted_escape()`] is `true`, and to
-//! commit the byte with [`InputDecoder::commit_escape()`] once the wait has elapsed. The
-//! committed Escape key is then returned by [`InputDecoder::next()`]. Around
-//! 50 ms, the default of Vim's `ttimeoutlen`, is the usual choice.
+//! The example waits with a short timeout while
+//! [`InputDecoder::has_uncommitted_escape()`] is `true`, then calls
+//! [`InputDecoder::commit_escape()`] once that wait has elapsed. Around 50 ms, the
+//! default of Vim's `ttimeoutlen`, is the usual choice; the constant above and the
+//! `n == 0` branch are that rule.
 //!
 //! For a full example of an event loop driven with `poll`, and how to handle keyboard, mouse, and resize events together, see the [demo.rs] example.
 //!

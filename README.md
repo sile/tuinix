@@ -169,6 +169,8 @@ fn main() -> std::io::Result<()> {
 }
 ```
 
-For a complete event loop that handles keyboard, mouse, and resize events
-(including how to disambiguate a lone `ESC` key), see the
-[demo.rs](examples/demo.rs) example.
+The loop above is the short version: it waits forever and reads input only when
+the descriptor is ready. An application also has to keep the wait short while a
+lone `ESC` is held, and to handle `EINTR` and a descriptor that hangs up. The
+crate documentation and the [demo.rs](examples/demo.rs) example show the full
+loop.
