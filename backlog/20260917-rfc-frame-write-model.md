@@ -1,6 +1,6 @@
 ---
 Created: 2026-09-17
-Status: draft
+Status: accepted
 ---
 
 # RFC: Address frame writes by position instead of by a cursor
@@ -73,13 +73,20 @@ let mut at = Position::ORIGIN;
 for ch in text {
     if !frame.fits(at, ch) {
         at = at.next_line();
-        if at.row >= frame.size().rows {
-            break;
+        if !frame.fits(at, ch) {
+            break; // past the bottom row, or too wide for an empty row
         }
     }
     at = frame.put_char(at, ch);
 }
 ```
+
+The wrap test asks `fits` twice around the line break: once where the character
+was, and once at the start of the next row. Both the right edge and the bottom
+edge are answered by the same predicate, so the loop never consults `size()`
+directly and never needs a separate "is there another row?" test. The second
+check also ends the loop on a frame too narrow to hold the character at all,
+rather than advancing forever.
 
 `put_char` returns the position just past the character it wrote, so the caller
 carries the position instead of asking the frame for it. Tab stops and line
@@ -148,6 +155,12 @@ not a failure to report.
 at.row < self.size().rows && at.col + ch.width() <= self.size().cols
 ```
 
+The character is tested as the range of cells it would occupy, not as a point:
+for a width-2 character at the last column, `at.col + 2 <= cols` fails and
+nothing is drawn. A character that does not fit the remaining columns of a row
+is never split across the row edge — none of its cells land, and the caller
+moves on (`next_line`) or stops.
+
 Splitting this into `contains` (position in the frame) and a separate width
 check would make every caller AND the two together anyway. It is named `fits`
 rather than `is_writable` because the predicate reports what will be *drawn*,
@@ -164,6 +177,14 @@ is shared: a private `put_cell(at, ch)` holds the overwrite rule and both
 `put_char` and `put_frame` call it. `put_frame` does not loop over `put_char`;
 the two differ in what they do at the edges (see below) and `put_frame` has no
 use for a returned position.
+
+### `put_frame` returns nothing
+
+`put_frame` returns `()` where `put_char` returns a `Position`. A frame is many
+cells, so "the position just past the character" has no single answer, and a
+caller placing a rectangle is not sweeping a run and has no next write to aim.
+The asymmetry with `put_char` is deliberate: the returned position exists to
+carry a sweep, and `put_frame` does not sweep.
 
 ### `put_frame` keeps `draw`'s behavior
 
@@ -234,18 +255,10 @@ a write lands, not a replacement for one.
 
 ## Unresolved questions
 
-- Should the tab width be a non-zero type?
-
-  `Position::next_tab_stop()` must reject a tab width of `0`, which `push_tab`
-  currently does with `assert!`. A non-zero type would move that guarantee into
-  the signature and drop the panic.
-
-  This is tracked separately because it does not stand alone: `Char::width()`
-  already promises "`1` or more" in its rustdoc and `Char::new()` rejects `0`,
-  so making the tab width non-zero while leaving `Char::width()` a plain
-  `usize` would split one promise across two representations. If either becomes
-  non-zero, both should, and that is a wider change than this proposal. See
-  `20260917-rfc-nonzero-widths.md`.
+None. The one adjacent question — whether the tab width should be a non-zero
+type — is tracked in `20260917-rfc-nonzero-widths.md`: it does not stand alone
+because `Char::width()` makes the same "1 or more" promise, so changing one
+without the other would split that promise across two representations.
 
 ## Future possibilities
 
