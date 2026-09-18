@@ -206,3 +206,20 @@ None; the three points below were settled when this item was decided.
 - Reading the terminal's palette, which would let tuinix resolve an index to
   RGB. This is a much larger change and tuinix deliberately does not own the
   terminal, so it is not implied by this proposal.
+
+## Outcome
+
+Implemented in [#44](https://github.com/sile/tuinix/pull/44) (merged as `6cda323`).
+
+`Color` is now an enum with `Indexed(u8)` and `Rgb(u8, u8, u8)`, and the
+sixteen named constants name palette entries rather than RGB triples. The
+`;38;5;N` and `;48;5;N` forms are written and read back alongside the `;2;`
+forms, so an index survives a round trip through a style string.
+
+Two things changed that the RFC did not name. `Color::new(r, g, b)` is gone,
+replaced by the `Rgb` variant. And `Style` had to lose its ordering derives as
+well, not just `Color`: `Style` derived `PartialOrd` and `Ord` on the strength
+of its color fields being ordered, so dropping them from `Color` alone would
+not have compiled. The Ordering section and the Drawbacks now say so.
+
+The scope is unchanged from what is described above.
