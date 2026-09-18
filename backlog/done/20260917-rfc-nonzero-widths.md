@@ -132,3 +132,20 @@ rejected above.
   reasoning above, since the argument would no longer be a bare non-zero number.
 - Non-zero types for any other "must be positive" value that appears later
   (for example a region extent) would follow the same pattern.
+
+## Outcome
+
+Implemented in [#43](https://github.com/sile/tuinix/pull/43) (merged as `a869a2f`).
+
+The `tab_width` argument is now a `NonZeroUsize`, so a width of zero is not
+representable and the `assert!` that guarded against it is gone. `Char::width()`
+and `Position::advance()` keep `usize`: the RFC's original claim that the two
+widths had to be changed together did not hold, because one is an invariant of a
+value tuinix derives and the other is a precondition of an argument the caller
+passes.
+
+The constant stays with the application. `tuinix` does not ship a tab width,
+because it does not know what a tab should mean in someone else's program; the
+caller writes one `const` and passes it.
+
+The scope is unchanged from what is described above.
