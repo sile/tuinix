@@ -110,9 +110,7 @@ Design points to settle:
   the caller's problem to repaint. Documenting this is enough for now; making the
   frame repair it is a larger question (see the related wide-tail bug report).
 
-This proposal composes with the one that gives `push_char` a richer return
-value: a renderer can walk a layer with `push_char`/`push_newline` and place a
-sparse layer with `put_char`, and neither has to re-derive the other's wrapping.
+
 
 ## Alternatives
 
@@ -137,6 +135,14 @@ stated as intentional, because it is currently discoverable only by using it.
 Rejected for the same reason: it moves the cell map out of `Frame` into one
 more type the caller has to learn.
 
+This proposal composes with the append-only cursor rather than replacing it: a
+renderer walks a whole screen with `push_char`/`push_newline`, and fills a
+sparse later layer with `put_char`. Neither has to re-derive the other's
+wrapping. The write model the cursor follows — bounds, clipping, and what the
+write position means — is described in `docs/frame-writes.md`; that document
+covers only `push_*`, and its closing paragraph names the open question this
+proposal has to answer.
+
 ## Drawbacks
 
 - Two ways to write into a frame (`push_char`, `put_char`) is one more than
@@ -149,6 +155,12 @@ more type the caller has to learn.
 ## Open questions
 
 - Does `put_char` move the cursor or leave it? (Sketch assumes leave it.)
+  This is the deciding question for the whole proposal, and it is what
+  `docs/frame-writes.md` stops short of: as long as the write position only
+  moves forward through `push_*`, a caller can predict a clip from
+  `next_position()` and `size()`; a position-addressed write that also moves the
+  write position would break that rule for every `push_*` that follows it, so
+  whichever way this is settled has to be written into that document as well.
 - Is a scalar `put_char` enough, or is a `put_text(at, text, style)` that lays
   a run down from a position worth having, given labels in a keyboard row are
   exactly that?
