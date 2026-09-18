@@ -182,6 +182,11 @@ pub mod docs {
     /// happens to the bytes that become nothing.
     #[doc = include_str!("../docs/input-decoding.md")]
     pub mod input_decoding {}
+
+    /// How a [`Frame`](crate::Frame) stores characters: where a write goes,
+    /// what happens when it does not fit, and what the write position means.
+    #[doc = include_str!("../docs/frame-writes.md")]
+    pub mod frame_writes {}
 }
 
 pub use frame::{Char, Frame};
