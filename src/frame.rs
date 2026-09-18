@@ -412,17 +412,19 @@ mod tests {
 
     #[test]
     fn next_tab_stop_advances_to_a_tab_stop() {
+        let tab_width = std::num::NonZeroUsize::new(8).expect("8 is not 0");
+
         // From column 1, advance to the next stop (8).
         let at = Position { row: 3, col: 1 };
-        assert_eq!(at.next_tab_stop(8), Position { row: 3, col: 8 });
+        assert_eq!(at.next_tab_stop(tab_width), Position { row: 3, col: 8 });
 
         // Already at a stop: advance one full stop.
         let at = Position { row: 3, col: 8 };
-        assert_eq!(at.next_tab_stop(8), Position { row: 3, col: 16 });
+        assert_eq!(at.next_tab_stop(tab_width), Position { row: 3, col: 16 });
 
         // A non-aligned column advances to the next stop.
         let at = Position { row: 3, col: 17 };
-        assert_eq!(at.next_tab_stop(8), Position { row: 3, col: 24 });
+        assert_eq!(at.next_tab_stop(tab_width), Position { row: 3, col: 24 });
     }
 
     #[test]

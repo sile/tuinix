@@ -39,7 +39,7 @@ const ESCAPE_TIMEOUT_MS: libc::c_int = 50;
 const MAX_BUFFERED_BYTES: usize = 4096;
 
 /// The tab width [`write_text`] uses.
-const TAB_WIDTH: usize = 8;
+const TAB_WIDTH: std::num::NonZeroUsize = std::num::NonZeroUsize::new(8).expect("8 is not 0");
 
 // NOTE: This is an ASCII-oriented demo helper: every character is assigned a width of 1.
 // Non-ASCII characters (for example CJK or emoji) would need the caller to supply their
