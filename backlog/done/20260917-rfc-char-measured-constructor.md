@@ -1,6 +1,6 @@
 # RFC: Provide a "measured" constructor for `Char`
 
-- Status: draft
+- Status: rejected
 
 ## Summary
 
@@ -8,6 +8,10 @@ Add a constructor that takes a `char` and a `Style` and derives the display
 width itself — for example `Char::new_measured(ch: char, style: Style)` — so a
 caller that cannot depend on a width crate still has a way to ask tuinix to be
 as right as tuinix can be about width.
+
+Rejected. tuinix does not measure width, and a constructor that measured some
+widths would make that wrongness tuinix's rather than the caller's without
+ever making it right. See `## Outcome`.
 
 ## Motivation
 
@@ -87,8 +91,10 @@ first is real.
 
 ### Do nothing; document that the caller owns width
 
-This is the `motivation` for the RFC. Nothing changes, and callers keep
-passing `1` with no signal at the call site that it is an approximation.
+Nothing changes, and callers keep passing `1` with no signal at the call site
+that it is an approximation. This turned out to be the right answer; the
+Motivation above is the description of why it looks like a problem, and the
+Outcome explains why it is not one that tuinix should solve by measuring.
 
 ### Require the caller to measure, never provide a fallback
 
@@ -98,8 +104,10 @@ choice tuinix's own dependency policy already made.
 
 ### Take `unicode-width` unconditionally
 
-Rejected by komado's dependency policy in its current form; recorded here in
-case tuinix's policy for this one crate ever differs.
+This is the only option that would make `new_measured` actually correct, and it
+is the reason the proposal fails: tuinix has no width dependency, and the whole
+point of `Char::new` trusting a declared width is that the decision is not
+tuinix's to make. Recorded here in case that stance ever changes.
 
 ## Drawbacks
 
@@ -110,8 +118,29 @@ case tuinix's policy for this one crate ever differs.
   columns, a wrong zero width draws none, and only one of those is purely
   cosmetic.
 
-## Open questions
+## Outcome
 
-- Inline rule versus optional `width` feature (see above).
-- Should the width type stay `u8`, or is `usize` the better currency now that a
-  table is doing the computing?
+Rejected. Both shapes the RFC considered amount to tuinix shipping a width
+table, and a table that is only approximately right relocates the error from
+the caller to tuinix without removing it. The `Char` documentation already
+settles the responsibility question in one direction — the declared width is
+the only source of that information, and deciding it is the caller's job — and
+adding a constructor that measures would contradict that while buying no
+accuracy that a caller could not get from a width crate itself.
+
+The Motivation is not wrong about the problem: a caller that cannot measure
+ends up passing `1`, and nothing at the call site says so. But the fix for that
+is the existing wording on `Char` and `Char::new()`, which states outright that
+tuinix does not measure and cannot detect a mismatched width. Repeating it in a
+fourth place would add another wording to keep in step without giving a caller
+new information, so no documentation change was made either.
+
+The optional off-by-default `width` feature was rejected with the rest: a
+feature flag changes which crate measures, not whether tuinix should be the one
+doing it.
+
+No change landed. The scope is unchanged from what is described above.
+
+## Unresolved questions
+
+- None; settled as rejected when the item was decided.
