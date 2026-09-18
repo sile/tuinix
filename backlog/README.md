@@ -52,6 +52,28 @@ documented contract (input dropped, output wrong, a documented invariant
 violated). A bug report is shorter than an RFC: it needs a reproduction, the
 observed behavior, and the expected behavior, not a full design rationale.
 
+There is a state that neither kind fits: work that has no open question and no
+contract violation, only a decision already made and waiting to be carried out
+(write a document, rename a private helper, drop a dead branch). Do not stretch
+`rfc-` or `bug-` over it, and do not create a third prefix pre-emptively
+looking for a use. When such items start to accumulate — and the tell is having
+to write an RFC whose Summary already says what will be done — add a third kind
+then. It would carry a two-value state (`open` / `done`) instead of the
+`draft`/`accepted`/`rejected` and `open`/`fixed`/`not-a-bug` vocabularies above,
+because it records work rather than a decision.
+
+Dependencies between items are written in the items themselves, in prose at
+both ends: the item that needs something from another says so where it
+matters, and the other says so back. There is no `Depends-on:` field and no
+machine-readable graph, because reading an item is already how a maintainer
+learns what is blocking what, and a field nobody parses is one more thing to
+keep true by hand. State the dependency in the section that depends on it —
+for an RFC that is usually "Open questions" or "Unresolved questions".
+
+An item's kind is not a promise about size. A `rfc-` that settles into
+two paragraphs of docs is still an RFC, and a one-line `bug-` is still a bug:
+the kind says which question is being asked, not how much work the answer is.
+
 ## Naming
 
 `YYYYMMDD-<kind>-<slug>.md`

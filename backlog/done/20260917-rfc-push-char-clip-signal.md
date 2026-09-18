@@ -1,6 +1,6 @@
 ---
 Created: 2026-09-17
-Status: draft
+Status: rejected
 ---
 
 # RFC: Tell the caller *why* `push_char` clipped
@@ -11,6 +11,17 @@ Give `Frame::push_char` a return value that distinguishes "the character did
 not fit because it would wrap off the bottom" from "the character did not fit
 because it would overflow the right edge", or add a `try_push_char` that
 returns that distinction while `push_char` keeps its current `bool`.
+
+Rejected, for the same reasons as the earlier
+`done/20260915-rfc-push-char-clip-signal.md`: the position and size needed to
+predict a clip are already public, predicting before the write is more useful
+than inspecting a result after it, and naming a cause would not save the
+caller the geometry check anyway. That earlier item settled this by improving
+`push_char`'s rustdoc; this one proposed the same change again without a new
+argument, so it is closed without reopening the decision. Nothing about the
+layer-composition case in Motivation is new either — see
+`20260917-rfc-frame-random-access-write.md`, which is the standing answer to
+it and stays open.
 
 ## Motivation
 
@@ -135,8 +146,19 @@ cursor does not remove the duplicate decision; it relocates it.
 
 ## Open questions
 
-- Option (1) versus option (2) above.
-- Should there be a `Pushed::ClippedRow`-equivalent result that also carries
-  *how many columns were left*, so a caller can pad in one step instead of
-  computing `cols - cursor.col`? Left out of the sketch to keep the enum to
-  three honest variants; noted in case the pad case turns out to be common.
+- None; settled as rejected when the item was closed as a duplicate of the
+  earlier item.
+
+## Outcome
+
+Closed as a duplicate of `done/20260915-rfc-push-char-clip-signal.md`, which
+reached the same conclusion with the same reasoning. No change landed: the
+return value of `push_char` is still `bool`, and the documentation catch-up that
+the earlier item describes is already in place.
+
+The scope is unchanged from what is described above.
+
+One thing this item did surface is real and is not settled here: the
+cursor-only write API is a poor fit for composing a screen in layers, which is
+the problem `20260917-rfc-frame-random-access-write.md` proposes to solve. That
+item is the one to follow for the layer-composition case.
