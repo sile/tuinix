@@ -20,8 +20,8 @@ caller the geometry check anyway. That earlier item settled this by improving
 `push_char`'s rustdoc; this one proposed the same change again without a new
 argument, so it is closed without reopening the decision. Nothing about the
 layer-composition case in Motivation is new either — see
-`20260917-rfc-frame-random-access-write.md`, which is the standing answer to
-it and stays open.
+`20260917-rfc-frame-random-access-write.md` (since superseded by
+`20260917-rfc-frame-write-model.md`), which is the standing answer to it.
 
 ## Motivation
 
@@ -160,5 +160,5 @@ The scope is unchanged from what is described above.
 
 One thing this item did surface is real and is not settled here: the
 cursor-only write API is a poor fit for composing a screen in layers, which is
-the problem `20260917-rfc-frame-random-access-write.md` proposes to solve. That
-item is the one to follow for the layer-composition case.
+the problem `20260917-rfc-frame-write-model.md` solves. That item is the one to
+follow for the layer-composition case.

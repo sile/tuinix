@@ -1,9 +1,9 @@
 ---
 Created: 2026-09-17
-Status: draft
+Status: accepted
 ---
 
-# RFC: Add random-access character writes to `Frame`
+# RFC: Add random-access character writes to `Frame` (superseded)
 
 ## Summary
 
@@ -164,3 +164,21 @@ proposal has to answer.
 - Is a scalar `put_char` enough, or is a `put_text(at, text, style)` that lays
   a run down from a position worth having, given labels in a keyboard row are
   exactly that?
+
+## Superseded
+
+Superseded by
+[`20260917-rfc-frame-write-model.md`](../20260917-rfc-frame-write-model.md),
+which reached this proposal's core question — whether a position-addressed write
+leaves the cursor alone — by deciding that the cursor should not exist at all.
+The question this RFC left open ("does `put_char` move the cursor?") cannot be
+answered the way it is framed here, because moving or not moving the cursor is
+the thing that keeps two coordinate systems alive. The follow-up RFC drops
+`push_char`/`push_newline`/`push_tab`/`next_position` and the `tail` field, so
+there is nothing for a write to move, and `put_char` returns the next position to
+the caller instead.
+
+The two things this RFC decided and the follow-up keeps: a position-addressed
+write leaves no cursor behind, and a clip is a normal outcome rather than a
+failure to return. Its open question about `put_text` is carried forward as a
+future possibility.
