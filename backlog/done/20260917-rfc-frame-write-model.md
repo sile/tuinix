@@ -266,3 +266,21 @@ without the other would split that promise across two representations.
   current behavior is the one `draw` has today.
 - Deleting the cursor makes `Frame` a pure cell map, which makes it
   straightforward to snapshot, compare, or serialize a frame later.
+
+## Outcome
+
+Implemented in [#42](https://github.com/sile/tuinix/pull/42) (merged as `c35a1e0`).
+
+The frame no longer carries a write position of its own. Every write names
+its `Position`, and the position of the next character is the caller's to
+thread through, so a frame has one coordinate system instead of two.
+
+`put_cell` was factored out as the single place that stores a character,
+including the rule for a wide character that an incoming write overlaps. Both
+`put_char` and `put_frame` go through it, so the storage rule is stated once.
+
+`put_frame` keeps the behavior the old `draw` had, but it now decides what to
+place with the same `fits` predicate that `put_char` uses, so "fits" means one
+thing on both paths.
+
+The scope is unchanged from what is described above.
