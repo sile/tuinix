@@ -40,6 +40,42 @@ pub struct Position {
 impl Position {
     /// Origin position (0,0).
     pub const ORIGIN: Self = Self { row: 0, col: 0 };
+
+    /// Returns the position at column `0` of the next row.
+    pub const fn next_line(self) -> Self {
+        Self {
+            row: self.row + 1,
+            col: 0,
+        }
+    }
+
+    /// Returns the position this far to the right, in the same row.
+    pub const fn advance(self, width: usize) -> Self {
+        Self {
+            row: self.row,
+            col: self.col + width,
+        }
+    }
+
+    /// Returns the next tab stop at or after this position.
+    ///
+    /// Tab stops are placed every `tab_width` columns, starting at column `0`.
+    /// A position that is already on a stop moves to the following one, so a
+    /// tab always advances by at least one full stop and never lands on the
+    /// column it started from. The row is unchanged.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `tab_width` is `0`.
+    pub const fn next_tab_stop(self, tab_width: usize) -> Self {
+        assert!(tab_width > 0, "tab_width must be greater than zero");
+        let distance = (tab_width - self.col % tab_width) % tab_width;
+        if distance == 0 {
+            self.advance(tab_width)
+        } else {
+            self.advance(distance)
+        }
+    }
 }
 
 /// A rectangular region within a terminal, defined by a position and size.

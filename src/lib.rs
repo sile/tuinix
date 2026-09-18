@@ -65,24 +65,35 @@
 //!     // NOTE: This is an ASCII-oriented demo helper: every character is assigned a width of 1.
 //!     // Non-ASCII characters (for example CJK or emoji) would need the caller to supply their
 //!     // actual width, because Frame does not compute character widths itself.
-//!     fn write_text(frame: &mut tuinix::Frame, text: &str, style: tuinix::Style) {
+//!     //
+//!     // The write position is the caller's to keep; it is threaded through `put_char`,
+//!     // which returns the position just past each character.
+//!     fn write_text(
+//!         frame: &mut tuinix::Frame,
+//!         at: tuinix::Position,
+//!         text: &str,
+//!         style: tuinix::Style,
+//!     ) -> tuinix::Position {
+//!         let mut at = at;
 //!         for c in text.chars() {
 //!             match c {
-//!                 '\n' => frame.push_newline(),
-//!                 '\t' => frame.push_tab(8),
+//!                 '\n' => at = at.next_line(),
+//!                 '\t' => at = at.next_tab_stop(8),
 //!                 c if c.is_control() => {}
 //!                 c => {
-//!                     frame.push_char(tuinix::Char::new(c, 1, style).expect("valid char"));
+//!                     at = frame.put_char(at, tuinix::Char::new(c, 1, style).expect("valid char"));
 //!                 }
 //!             }
 //!         }
+//!         at
 //!     }
 //!
 //!     // Add styled content to a frame
 //!     let title_style = tuinix::Style::new().bold().fg_color(tuinix::Color::GREEN);
 //!     let mut frame = tuinix::Frame::new(size);
-//!     write_text(&mut frame, "Welcome to tuinix!", title_style);
-//!     write_text(&mut frame, "\nPress any key ('q' to quit)", tuinix::Style::new());
+//!     let mut at = tuinix::Position::ORIGIN;
+//!     at = write_text(&mut frame, at, "Welcome to tuinix!", title_style);
+//!     write_text(&mut frame, at, "\nPress any key ('q' to quit)", tuinix::Style::new());
 //!
 //!     // Render the frame to a byte buffer, then write it to the terminal.
 //!     let out = frame.render(prev.as_ref(), cursor);
@@ -117,8 +128,9 @@
 //!             if new_size != size {
 //!                 size = new_size;
 //!                 let mut frame = tuinix::Frame::new(size);
-//!                 write_text(&mut frame, "Welcome to tuinix!", title_style);
-//!                 write_text(&mut frame, "\nPress any key ('q' to quit)", tuinix::Style::new());
+//!                 let mut at = tuinix::Position::ORIGIN;
+//!                 at = write_text(&mut frame, at, "Welcome to tuinix!", title_style);
+//!                 write_text(&mut frame, at, "\nPress any key ('q' to quit)", tuinix::Style::new());
 //!                 let out = frame.render(prev.as_ref(), cursor);
 //!                 driver.write_all(&out)?;
 //!                 driver.flush()?;
@@ -137,8 +149,8 @@
 //!
 //!                     // Display the input
 //!                     let mut frame = tuinix::Frame::new(size);
-//!                     write_text(&mut frame, &format!("Key pressed: {:?}\n", key_input), tuinix::Style::new());
-//!                     write_text(&mut frame, "\nPress any key ('q' to quit)\n", tuinix::Style::new());
+//!                     let at = write_text(&mut frame, tuinix::Position::ORIGIN, &format!("Key pressed: {:?}\n", key_input), tuinix::Style::new());
+//!                     write_text(&mut frame, at, "\nPress any key ('q' to quit)\n", tuinix::Style::new());
 //!                     let out = frame.render(prev.as_ref(), cursor);
 //!                     driver.write_all(&out)?;
 //!                     driver.flush()?;
@@ -184,7 +196,7 @@ pub mod docs {
     pub mod input_decoding {}
 
     /// How a [`Frame`](crate::Frame) stores characters: where a write goes,
-    /// what happens when it does not fit, and what the write position means.
+    /// what happens when it does not fit, and what a position means.
     #[doc = include_str!("../docs/frame-writes.md")]
     pub mod frame_writes {}
 }

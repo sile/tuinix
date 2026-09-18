@@ -28,9 +28,10 @@ application works with.
   so an application can read raw input bytes and write raw output bytes.
 - `InputDecoder` is a pure input parser. It accumulates raw bytes and yields
   parsed `Input` values, but it never performs I/O itself.
-- `Frame` is a pure frame buffer. It renders itself into a byte buffer,
-  comparing against a previous frame to redraw only what changed, and it never
-  performs I/O itself.
+- `Frame` is a pure frame buffer. Characters are written at the position the
+  caller names, and the frame renders itself into a byte buffer, comparing
+  against a previous frame to redraw only what changed. It never performs I/O
+  itself.
 
 The application drives the loop: read raw bytes from the driver, feed them into
 `InputDecoder`, pull `Input` values out, build a `Frame`, render it into a byte
@@ -47,17 +48,27 @@ use std::io::{Read, Write};
 // NOTE: This is an ASCII-oriented demo helper: every character is assigned a width of 1.
 // Non-ASCII characters (for example CJK or emoji) would need the caller to supply their
 // actual width, because Frame does not compute character widths itself.
-fn write_text(frame: &mut tuinix::Frame, text: &str, style: tuinix::Style) {
+//
+// The write position is the caller's to keep; it is threaded through `put_char`,
+// which returns the position just past each character.
+fn write_text(
+    frame: &mut tuinix::Frame,
+    at: tuinix::Position,
+    text: &str,
+    style: tuinix::Style,
+) -> tuinix::Position {
+    let mut at = at;
     for c in text.chars() {
         match c {
-            '\n' => frame.push_newline(),
-            '\t' => frame.push_tab(8),
+            '\n' => at = at.next_line(),
+            '\t' => at = at.next_tab_stop(8),
             c if c.is_control() => {}
             c => {
-                frame.push_char(tuinix::Char::new(c, 1, style).expect("valid char"));
+                at = frame.put_char(at, tuinix::Char::new(c, 1, style).expect("valid char"));
             }
         }
     }
+    at
 }
 
 /// Maps a non-blocking I/O result's `WouldBlock` to `Ok(None)`.
@@ -80,8 +91,9 @@ fn main() -> std::io::Result<()> {
     // Add styled content to a frame
     let title_style = tuinix::Style::new().bold().fg_color(tuinix::Color::GREEN);
     let mut frame = tuinix::Frame::new(size);
-    write_text(&mut frame, "Welcome to tuinix!\n", title_style);
-    write_text(&mut frame, "\nPress any key ('q' to quit)\n", tuinix::Style::new());
+    let mut at = tuinix::Position::ORIGIN;
+    at = write_text(&mut frame, at, "Welcome to tuinix!\n", title_style);
+    write_text(&mut frame, at, "\nPress any key ('q' to quit)\n", tuinix::Style::new());
 
     // Render the frame to a byte buffer, then write it to the terminal.
     let out = frame.render(prev.as_ref(), cursor);
@@ -116,8 +128,9 @@ fn main() -> std::io::Result<()> {
             if new_size != size {
                 size = new_size;
                 let mut frame = tuinix::Frame::new(size);
-                write_text(&mut frame, "Welcome to tuinix!\n", title_style);
-                write_text(&mut frame, "\nPress any key ('q' to quit)\n", tuinix::Style::new());
+                let mut at = tuinix::Position::ORIGIN;
+                at = write_text(&mut frame, at, "Welcome to tuinix!\n", title_style);
+                write_text(&mut frame, at, "\nPress any key ('q' to quit)\n", tuinix::Style::new());
                 let out = frame.render(prev.as_ref(), cursor);
                 driver.write_all(&out)?;
                 driver.flush()?;
@@ -141,8 +154,8 @@ fn main() -> std::io::Result<()> {
 
                     // Display the input
                     let mut frame = tuinix::Frame::new(size);
-                    write_text(&mut frame, &format!("Key pressed: {:?}\n", key_input), tuinix::Style::new());
-                    write_text(&mut frame, "\nPress any key ('q' to quit)\n", tuinix::Style::new());
+                    let at = write_text(&mut frame, tuinix::Position::ORIGIN, &format!("Key pressed: {:?}\n", key_input), tuinix::Style::new());
+                    write_text(&mut frame, at, "\nPress any key ('q' to quit)\n", tuinix::Style::new());
                     let out = frame.render(prev.as_ref(), cursor);
                     driver.write_all(&out)?;
                     driver.flush()?;

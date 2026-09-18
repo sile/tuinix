@@ -33,7 +33,7 @@ impl Char {
     /// A blank character (a single space with no styling), used for unwritten positions.
     ///
     /// This is the sentinel returned for unwritten positions by [`Frame::chars()`].
-    /// Pushing it is the same as writing a plain space, so [`Frame::push_char()`] does
+    /// Writing it is the same as writing a plain space, so [`Frame::put_char()`] does
     /// not treat it specially.
     pub const BLANK: Self = Self {
         value: ' ',
@@ -44,9 +44,10 @@ impl Char {
     /// Makes a new styled character with the given width.
     ///
     /// Returns `None` when the character cannot be represented in a frame: if `value` is a
-    /// control character, or `width` is `0`. Control characters are written with the
-    /// dedicated methods ([`Frame::push_newline()`], [`Frame::push_tab()`]),
-    /// and a zero-width character would occupy no column.
+    /// control character, or `width` is `0`. Control characters are not stored in a
+    /// frame at all; a newline or a tab is a move of the position the caller keeps
+    /// ([`Position::next_line()`], [`Position::next_tab_stop()`]), and a zero-width
+    /// character would occupy no column.
     ///
     /// Any `width` of `1` or more is accepted as given. tuinix does not measure how wide a
     /// character will actually be drawn, so the declared `width` is what the frame lays out
@@ -97,12 +98,15 @@ impl Char {
 /// [`Frame`] is a buffer of styled characters. Each character stores the
 /// glyph, the number of terminal columns it occupies, and the style.
 ///
-/// Characters are written with [`push_char()`](Self::push_char) and advanced sequentially
-/// from the position returned by [`next_position()`](Self::next_position).
-/// Use [`push_newline()`](Self::push_newline) to move to the
-/// next line and [`push_tab()`](Self::push_tab) to advance to a tab stop. A frame can be
-/// composed onto another with [`draw()`](Self::draw), and its contents inspected with
-/// [`chars()`](Self::chars).
+/// Every write names the position it targets, and nothing is carried over from
+/// the write before it: [`put_char()`](Self::put_char) places one character and
+/// returns the position just past it, and [`put_frame()`](Self::put_frame)
+/// places another frame as a rectangle. Neither moves anything else, so a
+/// caller that sweeps the screen keeps the position in a local of its own,
+/// moving it with [`Position::next_line()`] and
+/// [`Position::next_tab_stop()`]. [`fits()`](Self::fits) reports whether a
+/// character would be drawn at a position, and the frame's contents are read
+/// back with [`chars()`](Self::chars).
 ///
 /// # Examples
 ///
@@ -111,21 +115,19 @@ impl Char {
 /// let mut frame = tuinix::Frame::new(size);
 ///
 /// let bold = tuinix::Style::new().bold();
-/// frame.push_char(tuinix::Char::new('H', 1, bold).expect("valid char"));
-/// frame.push_char(tuinix::Char::new('i', 1, bold).expect("valid char"));
-/// frame.push_char(tuinix::Char::new('!', 1, bold).expect("valid char"));
-/// frame.push_newline();
+/// let mut at = tuinix::Position::ORIGIN;
+/// for (c, wide) in [('H', false), ('i', false), ('!', false), ('\u{3042}', true)] {
+///     let width = if wide { 2 } else { 1 };
+///     let ch = tuinix::Char::new(c, width, bold).expect("valid char");
+///     at = frame.put_char(at, ch);
+/// }
 ///
-/// // A full-width (CJK) character occupies two columns.
-/// frame.push_char(tuinix::Char::new('\u{3042}', 2, tuinix::Style::new()).expect("valid character"));
-///
-/// assert_eq!(frame.next_position().col, 2);
+/// assert_eq!(at, tuinix::Position { row: 0, col: 5 });
 /// ```
 #[derive(Debug, Default, Clone)]
 pub struct Frame {
     size: Size,
     data: BTreeMap<Position, Char>,
-    tail: Position,
 }
 
 impl Frame {
@@ -134,7 +136,6 @@ impl Frame {
         Self {
             size,
             data: BTreeMap::new(),
-            tail: Position::ORIGIN,
         }
     }
 
@@ -143,115 +144,124 @@ impl Frame {
         self.size
     }
 
-    /// Returns the position where the next [`push_char()`](Self::push_char) will write.
+    /// Returns `true` if a character written at `at` would be drawn.
     ///
-    /// This is unrelated to the position of the terminal's display cursor, which is an
-    /// argument of [`render()`](Self::render).
-    pub fn next_position(&self) -> Position {
-        self.tail
-    }
-
-    /// Writes a single styled character at [`next_position()`](Self::next_position)
-    /// and advances that position.
+    /// This reports what [`put_char()`](Self::put_char) will paint, not what is
+    /// permitted: a write is always valid, and one that does not fit simply draws
+    /// nothing. The two ways that happens are a row that does not exist (the row
+    /// is at or past `size().rows`) and columns past the right edge (the
+    /// character ends past `size().cols`).
     ///
-    /// Returns `true` when the character was stored, and `false` when it was clipped
-    /// because it did not fit within the frame: the character would extend past the right
-    /// edge of the current row, or there was no row left beneath the position. Clipped
-    /// characters are not stored, but the position still advances by the character's width,
-    /// so a caller that wants to wrap the line does so itself.
+    /// The character is tested as the whole span of cells it occupies, so a
+    /// width-2 character with only one cell left in the row does not fit. Use this
+    /// to decide what to do about a clip before writing — wrap with
+    /// [`Position::next_line()`], pad, or stop.
     ///
-    /// The `false` result folds those two causes together, and the write position advances
-    /// the same way for both, so the reason cannot be recovered afterwards. A caller that
-    /// needs to tell them apart decides before pushing, from the position and size:
+    /// # Examples
     ///
     /// ```
-    /// # let mut frame = tuinix::Frame::new(tuinix::Size { rows: 2, cols: 4 });
-    /// # let ch = tuinix::Char::new('a', 1, tuinix::Style::new()).expect("valid char");
-    /// let pos = frame.next_position();
-    /// let size = frame.size();
-    /// if pos.row < size.rows && pos.col + ch.width() <= size.cols {
-    ///     frame.push_char(ch);
+    /// let mut frame = tuinix::Frame::new(tuinix::Size { rows: 2, cols: 4 });
+    /// let ch = tuinix::Char::new('a', 1, tuinix::Style::new()).expect("valid char");
+    /// assert!(frame.fits(tuinix::Position { row: 0, col: 3 }, ch));
+    /// assert!(!frame.fits(tuinix::Position { row: 0, col: 4 }, ch));
+    ///
+    /// // A wide character needs both of its columns.
+    /// let wide = tuinix::Char::new('\u{3042}', 2, tuinix::Style::new()).expect("valid char");
+    /// assert!(frame.fits(tuinix::Position { row: 0, col: 2 }, wide));
+    /// assert!(!frame.fits(tuinix::Position { row: 0, col: 3 }, wide));
+    /// ```
+    pub fn fits(&self, at: Position, ch: Char) -> bool {
+        at.row < self.size.rows && at.col + ch.width <= self.size.cols
+    }
+
+    /// Writes a single styled character at `at` and returns the position just
+    /// past it.
+    ///
+    /// The character is stored when it [fits](Self::fits), and draws nothing when
+    /// it does not. Either way the returned position is `at.advance(ch.width())`,
+    /// so a run of writes advances identically whether or not each character
+    /// landed. A character that does not fit is a normal outcome for a caller
+    /// sweeping a row, not a failure, which is why the return type carries no
+    /// error or "did it fit" flag: ask [`fits()`](Self::fits) before writing to
+    /// act on a clip.
+    ///
+    /// The position returned is the caller's to keep; the frame remembers nothing
+    /// about it. A caller filling a line passes it straight back in:
+    ///
+    /// ```
+    /// let mut frame = tuinix::Frame::new(tuinix::Size { rows: 2, cols: 3 });
+    /// let mut at = tuinix::Position::ORIGIN;
+    /// for c in "abcd".chars() {
+    ///     let ch = tuinix::Char::new(c, 1, tuinix::Style::new()).expect("valid char");
+    ///     if !frame.fits(at, ch) {
+    ///         at = at.next_line();
+    ///     }
+    ///     at = frame.put_char(at, ch);
     /// }
+    /// assert_eq!(at, tuinix::Position { row: 1, col: 1 });
     /// ```
-    pub fn push_char(&mut self, ch: Char) -> bool {
-        if self.tail.row < self.size.rows && self.tail.col + ch.width <= self.size.cols {
-            self.data.insert(self.tail, ch);
-            self.tail.col += ch.width;
-            true
-        } else {
-            self.tail.col += ch.width;
-            false
+    ///
+    /// A character written where another one already is replaces it, as described
+    /// on [`put_frame()`](Self::put_frame).
+    pub fn put_char(&mut self, at: Position, ch: Char) -> Position {
+        if self.fits(at, ch) {
+            self.put_cell(at, ch);
         }
+        at.advance(ch.width)
     }
 
-    /// Moves the write position to the beginning of the next line.
+    /// Stores `ch` at `at`, replacing whatever is there.
     ///
-    /// Content already written is not cleared or shifted; this only moves the write
-    /// position.
-    pub fn push_newline(&mut self) {
-        self.tail.row += 1;
-        self.tail.col = 0;
-    }
-
-    /// Moves the write position to the next tab stop.
-    ///
-    /// Tab stops are placed every `tab_width` columns, starting at column `0`. This only
-    /// moves the write position: the columns that are skipped are left blank and need not
-    /// be written explicitly (as with [`push_newline()`](Self::push_newline), existing
-    /// content is neither cleared nor shifted).
-    ///
-    /// As with [`push_char()`](Self::push_char), the write position may be advanced past
-    /// the right edge of the frame; use [`push_newline()`](Self::push_newline) to wrap.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `tab_width` is `0`.
-    pub fn push_tab(&mut self, tab_width: usize) {
-        assert!(tab_width > 0, "tab_width must be greater than zero");
-        let col = self.tail.col;
-        // Distance from `col` to the next tab stop. When `col` is already sitting on a
-        // stop this is 0, so the `if` below moves to the *following* stop instead: a tab
-        // always advances by at least one full stop and never lands on the current column.
-        self.tail.col += (tab_width - col % tab_width) % tab_width;
-        if self.tail.col == col {
-            self.tail.col += tab_width;
+    /// The caller must have checked that the character fits.
+    fn put_cell(&mut self, at: Position, ch: Char) {
+        // A wide character starting to the left of `at` owns the cells `at`
+        // covers, so it has to go whole: removing only the cells that are being
+        // overwritten would leave its remaining columns behind as a partial
+        // glyph.
+        if let Some((&prev_pos, prev_c)) = self.data.range(..at).next_back() {
+            let end_col = prev_pos.col + prev_c.width;
+            if at.row == prev_pos.row && at.col < end_col {
+                self.data.remove(&prev_pos);
+            }
         }
+        // Clear the cells this character covers, including the continuation
+        // columns of a wide character that may be stored at one of them.
+        for i in 0..ch.width {
+            self.data.remove(&Position {
+                row: at.row,
+                col: at.col + i,
+            });
+        }
+        self.data.insert(at, ch);
     }
 
-    /// Draws the contents of another frame onto this one at the given position.
+    /// Writes the contents of `source` onto this frame as a rectangle, with the
+    /// source's top-left corner at `at`.
     ///
-    /// The source frame is pasted as a rectangle: every cell position in the source is
+    /// The source is pasted as a rectangle: every cell position in the source is
     /// written to the corresponding position in this frame, including unwritten cells,
     /// which are pasted as a plain blank character ([`Char::BLANK`]) and therefore
-    /// overwrite whatever was in the destination at that position.
+    /// overwrite whatever was in the destination at that position. In other words this
+    /// replaces a rectangle; it does not merge one, and the source's blanks are not
+    /// transparent.
     ///
     /// Characters that fall outside this frame, or that would extend past the right edge
     /// of a row, are ignored. A character that partially overlaps a wide character causes
     /// that wide character to be removed, so none of its columns are left behind as a
     /// partial glyph.
-    pub fn draw(&mut self, position: Position, frame: &Frame) {
-        for (src_pos, c) in frame.chars() {
+    ///
+    /// This returns nothing, unlike [`put_char()`](Self::put_char): a rectangle of
+    /// cells has no single "position just past it", and a caller placing one is not
+    /// sweeping a run with a next write to aim at.
+    pub fn put_frame(&mut self, at: Position, source: &Frame) {
+        for (src_pos, c) in source.chars() {
             let target_pos = Position {
-                row: position.row + src_pos.row,
-                col: position.col + src_pos.col,
+                row: at.row + src_pos.row,
+                col: at.col + src_pos.col,
             };
-            if target_pos.row >= self.size.rows || target_pos.col + c.width > self.size.cols {
-                continue;
+            if self.fits(target_pos, c) {
+                self.put_cell(target_pos, c);
             }
-
-            if let Some((&prev_pos, prev_c)) = self.data.range(..target_pos).next_back() {
-                let end_col = prev_pos.col + prev_c.width;
-                if target_pos.row == prev_pos.row && target_pos.col < end_col {
-                    self.data.remove(&prev_pos);
-                }
-            }
-            for i in 0..c.width {
-                self.data.remove(&Position {
-                    row: target_pos.row,
-                    col: target_pos.col + i,
-                });
-            }
-            self.data.insert(target_pos, c);
         }
     }
 
@@ -281,7 +291,10 @@ impl Frame {
     ///
     /// ```
     /// let mut frame = tuinix::Frame::new(tuinix::Size { rows: 2, cols: 4 });
-    /// frame.push_char(tuinix::Char::new('a', 1, Default::default()).expect("valid char"));
+    /// frame.put_char(
+    ///     tuinix::Position::ORIGIN,
+    ///     tuinix::Char::new('a', 1, Default::default()).expect("valid char"),
+    /// );
     ///
     /// let written = frame.chars().filter(|(_, c)| !c.is_blank()).count();
     /// assert_eq!(written, 1);
@@ -327,11 +340,10 @@ impl Frame {
     /// ```
     /// let size = tuinix::Size { rows: 24, cols: 80 };
     /// let mut frame = tuinix::Frame::new(size);
-    /// frame.push_char(tuinix::Char::new(
-    ///     'h',
-    ///     1,
-    ///     tuinix::Style::new(),
-    /// ).expect("valid char"));
+    /// frame.put_char(
+    ///     tuinix::Position::ORIGIN,
+    ///     tuinix::Char::new('h', 1, tuinix::Style::new()).expect("valid char"),
+    /// );
     ///
     /// let out = frame.render(None, None);
     /// ```
@@ -387,43 +399,38 @@ mod tests {
     }
 
     #[test]
-    fn next_position_advances_by_width() {
+    fn put_char_returns_the_next_position() {
         let size = Size { rows: 2, cols: 4 };
         let mut frame = Frame::new(size);
-        frame.push_char(ch('a', 1));
-        frame.push_char(ch('b', 1));
-        frame.push_char(ch('\u{3042}', 2));
-        assert_eq!(frame.next_position(), Position { row: 0, col: 4 });
-        frame.push_newline();
-        assert_eq!(frame.next_position(), Position { row: 1, col: 0 });
+        let mut at = Position::ORIGIN;
+        at = frame.put_char(at, ch('a', 1));
+        at = frame.put_char(at, ch('b', 1));
+        at = frame.put_char(at, ch('\u{3042}', 2));
+        assert_eq!(at, Position { row: 0, col: 4 });
+        assert_eq!(at.next_line(), Position { row: 1, col: 0 });
     }
 
     #[test]
-    fn push_tab_advances_to_tab_stop() {
-        let size = Size { rows: 2, cols: 32 };
-        let mut frame = Frame::new(size);
-
+    fn next_tab_stop_advances_to_a_tab_stop() {
         // From column 1, advance to the next stop (8).
-        frame.push_char(ch('a', 1));
-        frame.push_tab(8);
-        assert_eq!(frame.next_position(), Position { row: 0, col: 8 });
+        let at = Position { row: 3, col: 1 };
+        assert_eq!(at.next_tab_stop(8), Position { row: 3, col: 8 });
 
         // Already at a stop: advance one full stop.
-        frame.push_tab(8);
-        assert_eq!(frame.next_position(), Position { row: 0, col: 16 });
+        let at = Position { row: 3, col: 8 };
+        assert_eq!(at.next_tab_stop(8), Position { row: 3, col: 16 });
 
         // A non-aligned column advances to the next stop.
-        frame.push_char(ch('b', 1)); // col 17
-        frame.push_tab(8);
-        assert_eq!(frame.next_position(), Position { row: 0, col: 24 });
+        let at = Position { row: 3, col: 17 };
+        assert_eq!(at.next_tab_stop(8), Position { row: 3, col: 24 });
     }
 
     #[test]
     fn wide_char_continuation_is_blank_or_skipped() {
         let size = Size { rows: 1, cols: 4 };
         let mut frame = Frame::new(size);
-        frame.push_char(ch('\u{3042}', 2));
-        frame.push_char(ch('x', 1));
+        let at = frame.put_char(Position::ORIGIN, ch('\u{3042}', 2));
+        frame.put_char(at, ch('x', 1));
 
         assert_eq!(
             frame.get_char(Position { row: 0, col: 0 }).map(|c| c.value),
@@ -450,13 +457,14 @@ mod tests {
     fn clips_cells_at_right_edge() {
         let size = Size { rows: 1, cols: 3 };
         let mut frame = Frame::new(size);
-        assert!(frame.push_char(ch('a', 1)));
-        assert!(frame.push_char(ch('b', 1)));
-        assert!(frame.push_char(ch('c', 1)));
-        // The row is full; the next cell is clipped but the write position still advances.
-        assert!(!frame.push_char(ch('d', 1)));
+        let mut at = Position::ORIGIN;
+        for c in ['a', 'b', 'c', 'd'] {
+            // The row is full by the time 'd' arrives, so it is not stored; the
+            // position still advances by its width either way.
+            at = frame.put_char(at, ch(c, 1));
+        }
+        assert_eq!(at, Position { row: 0, col: 4 });
 
-        assert_eq!(frame.next_position(), Position { row: 0, col: 4 });
         let stored: Vec<_> = frame
             .chars()
             .filter(|(_, c)| *c != Char::BLANK)
@@ -466,18 +474,18 @@ mod tests {
     }
 
     #[test]
-    fn draw_removes_partial_overlap_and_clips() {
+    fn put_frame_removes_partial_overlap_and_clips() {
         let size = Size { rows: 1, cols: 4 };
         let mut dest = Frame::new(size);
-        dest.push_char(ch('\u{3042}', 2)); // wide char at col 0-1
-        dest.push_char(ch('y', 1));
+        let at = dest.put_char(Position::ORIGIN, ch('\u{3042}', 2)); // wide char at col 0-1
+        dest.put_char(at, ch('y', 1));
 
         // A one-cell source drawn over the continuation column of the wide char.
         let mut src = Frame::new(Size { rows: 1, cols: 1 });
-        src.push_char(ch('x', 1));
+        src.put_char(Position::ORIGIN, ch('x', 1));
 
         // Draw 'x' over column 1, which is the continuation of the wide char.
-        dest.draw(Position { row: 0, col: 1 }, &src);
+        dest.put_frame(Position { row: 0, col: 1 }, &src);
 
         // The partially overlapped wide char should be removed entirely,
         // while the unaffected 'y' at column 2 remains.
