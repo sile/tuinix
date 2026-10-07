@@ -267,17 +267,28 @@ proposal depends on `set_clipboard` / `append_clipboard` existing here, because
 `kk` can only write to the terminal through `TerminalDriver`. The consumer's own
 RFC says so and treats tuinix as the required prerequisite.
 
-There is a third piece, `termnix` (the test terminal, a dev-dependency of
-consumers rather than of tuinix): it ignores every OSC it does not need today,
-so a test that wants to assert the *decoded* clipboard text -- that the base64
-decoded back to what was written, and that a set was told apart from an append --
-needs `termnix` to keep OSC 52. That is a change to `termnix`, not to tuinix, and
-it does not block this API: tuinix can ship `set_clipboard` /
-`append_clipboard` with only a unit test that watches the raw bytes. The stronger
-end-to-end assertion is what waits on `termnix`.
+There is a third piece, `termnix` (the test terminal). It already delivers OSC 52
+to its caller: `TerminalState::take_osc_request()` returns an
+`OscRequest::SetClipboard { text, selection, append }` whose `text` is the
+decoded payload. A test can therefore assert the *decoded* clipboard text -- that
+the base64 decoded back to what was written, and that a set was told apart from
+an append -- by driving tuinix through a real PTY-backed `termnix` session and
+draining that channel.
 
-Filing items against the consumer and against `termnix` is a separate step and is
-not a prerequisite for this tuinix change.
+That test is where this RFC's implementation needs `termnix`, and it needs it as
+a **dev-dependency of tuinix**: tuinix does not depend on `termnix` today, in any
+form. Adding `termnix` as a dev-dependency is therefore part of implementing this
+RFC -- it does not affect downstream consumers, but it is what lets the change
+land with a test that checks the encoding rather than only the raw bytes.
+
+One consequence has to be settled when the dependency is added: the released
+`termnix` requires a newer MSRV than tuinix's current `rust-version`, so taking
+it as a dev-dependency raises the toolchain tuinix's own `cargo build
+--all-targets` needs (and the version CI's MSRV job pins). That is a decision for
+the implementing change, not for the API, but it is part of the same step.
+
+Filing items against the consumer is a separate step and is not a prerequisite
+for this tuinix change.
 
 ## Unresolved questions
 
