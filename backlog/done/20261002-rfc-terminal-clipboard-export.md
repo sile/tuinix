@@ -1,6 +1,6 @@
 # RFC: `TerminalDriver` writes the terminal's clipboard (OSC 52)
 
-- Status: draft
+- Status: accepted
 
 ## Summary
 
@@ -284,3 +284,27 @@ than to be validated by a test that cannot exist.
 - If more than one consumer wants the encoding, extracting the base64 helper
   (or taking the dependency) becomes worthwhile, and this RFC's private-helper
   choice would be the thing to revisit.
+
+## Outcome
+
+Implemented in [#45](https://github.com/sile/tuinix/pull/45) (merged as `782b5c3`).
+
+`TerminalDriver::set_clipboard` landed as proposed: one method on the driver,
+taking `&str` and writing `ESC ] 52 ; c ; <base64> ST` straight to the driver's
+output. The base64 encoder went into its own private module, `src/base64.rs`,
+rather than into `terminal.rs`; it writes its output to a generic `Write`
+instead of building a `String`, so a large payload costs no intermediate
+allocation, and it encodes only, since the driver never decodes a reply.
+
+The `write_osc52` helper takes any `Write` rather than the driver's stdout, so
+the bytes of the sequence are asserted against a `Vec<u8>` in a unit test
+instead of being read back from a terminal. The encoder keeps its own test in
+`src/base64.rs`, checked against known vectors.
+
+The open questions settled the way the proposal suggested: the encoder is
+hand-written rather than taken from a dependency (it is small, it is only the
+encode side, and the crate's single-dependency story is worth keeping), the
+method writes directly rather than through a formatted `write!`, and the
+sequence ends with the two-byte `ST` rather than `BEL`.
+
+The scope is unchanged from what is described above.
