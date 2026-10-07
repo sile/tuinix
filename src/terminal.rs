@@ -193,6 +193,29 @@ impl TerminalDriver {
         Ok(())
     }
 
+    /// Replaces the terminal's clipboard with `text`, using OSC 52.
+    ///
+    /// Encodes `text` as base64 and writes `ESC ] 52 ; c ; <base64> ST` to the
+    /// terminal's output. The sequence is buffered like any other write, so the
+    /// caller flushes (or writes a frame) for it to take effect.
+    ///
+    /// This is best-effort: OSC 52 has no reply, so a terminal that ignores the
+    /// sequence, or has no clipboard behind it, is indistinguishable from one
+    /// that accepts it. `Ok(())` means the sequence was written, not delivered.
+    ///
+    /// An empty `text` writes an empty payload, which OSC 52 defines as clearing
+    /// the clipboard. A caller that wants the clipboard left alone simply does
+    /// not call.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error only if writing to the terminal's output fails.
+    pub fn set_clipboard(&mut self, text: &str) -> io::Result<()> {
+        write_osc52(&mut self.output, text)?;
+        self.output.flush()?;
+        Ok(())
+    }
+
     /// Disables mouse reporting in the terminal.
     ///
     /// This undoes [`TerminalDriver::enable_mouse_reporting()`].
@@ -401,6 +424,18 @@ impl Drop for SingletonGuard {
     }
 }
 
+/// Writes the OSC 52 sequence that replaces the terminal's clipboard.
+///
+/// The bytes are `ESC ] 52 ; c ; <base64(text)> ST`, written to `w` without
+/// flushing. This is split out from [`TerminalDriver::set_clipboard()`] so the
+/// exact bytes can be tested against a `Vec<u8>`.
+fn write_osc52<W: Write>(w: &mut W, text: &str) -> io::Result<()> {
+    w.write_all(b"\x1b]52;c;")?;
+    crate::base64::encode(w, text)?;
+    w.write_all(b"\x1b\\")?; // ST
+    Ok(())
+}
+
 fn check_libc_result(result: libc::c_int) -> io::Result<()> {
     if result == 0 {
         Ok(())
@@ -524,7 +559,7 @@ mod tests {
     use std::io::IsTerminal;
     use std::os::fd::RawFd;
 
-    use super::{TerminalDriver, open_nonblocking_input};
+    use super::{TerminalDriver, open_nonblocking_input, write_osc52};
 
     #[test]
     fn open_nonblocking_input_rejects_non_tty() {
@@ -585,6 +620,18 @@ mod tests {
             libc::close(master);
             libc::close(slave);
         }
+    }
+
+    #[test]
+    fn write_osc52_writes_the_expected_sequence() {
+        let mut out = Vec::new();
+        write_osc52(&mut out, "Man").expect("ok");
+        assert_eq!(out, b"\x1b]52;c;TWFu\x1b\\");
+
+        // An empty text clears the clipboard: an empty payload, no padding.
+        let mut out = Vec::new();
+        write_osc52(&mut out, "").expect("ok");
+        assert_eq!(out, b"\x1b]52;c;\x1b\\");
     }
 
     #[test]

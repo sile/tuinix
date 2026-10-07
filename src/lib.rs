@@ -210,6 +210,7 @@
 #![warn(missing_docs)]
 #![deny(unsafe_code)]
 
+mod base64;
 mod frame;
 mod geometry;
 mod input;
