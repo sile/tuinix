@@ -17,15 +17,13 @@ inside the process. There is no way for it to leave: the operating system's
 clipboard -- or, under tmux, the tmux buffer -- is a separate place, and the
 only protocol an application has for reaching it is OSC 52 ("manipulate
 selection data"). tuinix writes every other control sequence an application
-needs -- alternate screen, raw mode, mouse reporting -- but not this one, so a
-consumer that wants it must hand-roll the escape sequence, base64 and all,
-outside the driver where the rest of the terminal control already lives.
+needs -- alternate screen, raw mode, mouse reporting -- but not this one.
 
-This is not hypothetical: `kk` (a sibling project in this workspace's orbit)
-has a proposal to export each cut to the terminal's clipboard, and the proposal
-explicitly wants *tuinix* to own the protocol and the encoding, the way it owns
-mouse reporting. See "Dependencies" below. Until tuinix offers the write, the
-consumer has nothing to call and cannot land the feature.
+So a consumer that wants this today has nothing to call: an editor that copies a
+selection, or a tool that exports a report, has to build the sequence itself,
+base64 and all, outside the driver where the rest of the terminal control
+already lives. Owning the protocol here is the same division tuinix already
+draws for mouse reporting and the resize signal.
 
 The mechanism is old and portable. An application writes
 `ESC ] 52 ; c ; <base64> ST` to the terminal; the terminal decodes the payload
@@ -110,7 +108,18 @@ ESC ] 52 ; c ; <base64(text)> ST
 - `ST` (`ESC \`, `0x1b 0x5c`) terminates the sequence. `BEL` (`0x07`) is also
   accepted by many terminals as an OSC terminator, but `ST` is the correct one
   and the one tuinix writes. One choice, stated here, rather than a behavior
-  that varies by terminal.
+  that varies by terminal. Note that this is stricter than the *input* side:
+  `docs/input-decoding.md` accepts `BEL`, `ST`, and the one-byte `0x9c` as OSC
+  terminators when reading, because it must understand whatever a terminal
+  sends. Writing is our call, so it makes exactly one, the correct one.
+
+### An empty text clears the clipboard
+
+Passing `""` writes `ESC ] 52 ; c ; ST` with an empty payload, which the OSC 52
+description defines as clearing the clipboard. That is the honest result of
+asking to place no text there, so the method does it rather than special-casing
+an empty input to do nothing. A caller that wants the clipboard left alone
+simply does not call.
 
 ### Where the code goes
 
@@ -121,14 +130,17 @@ as those do:
 ```rust
 pub fn set_clipboard(&mut self, text: &str) -> io::Result<()> {
     write!(self.output, "\x1b]52;c;{}", base64(text))?;
-    write!(self.output, "\x1b\\")?;
+    self.output.write_all(b"\x1b\\")?; // ST
     self.output.flush()?;
     Ok(())
 }
 ```
 
-(The exact split between writing the body and the terminator is an
-implementation detail; the bytes are what the sections above say.)
+Writing the terminator as a byte literal (`b"\x1b\\"`) states `ESC \` without
+the double-escape a `write!` format string would need for the same bytes; the
+body and the terminator may also be a single `write_all` of a built buffer. The
+exact split is an implementation detail; the bytes are what the sections above
+say.
 
 ### Base64 belongs in tuinix, in this module
 
@@ -142,6 +154,13 @@ in a crate. That keeps `Cargo.toml`'s single runtime dependency (`libc`) intact
 and keeps the one consumer of the encoding private to the one place that needs
 it. If the encoder ever grows a second caller, extracting it (or taking the
 dependency) is a separate decision.
+
+The encoder may write straight into the output (a small stack buffer per three
+input bytes, or a `write_all` of the encoded chunk) instead of returning a
+`String`, if that stays simple -- it avoids an allocation the size of the cut.
+If threading the encoder's output shape through turns out to complicate the code,
+returning a `String` is fine and the extra allocation is not worth the
+tangle.
 
 ### No size cap
 
@@ -211,26 +230,20 @@ a no-op on its side.
 
 ## Dependencies
 
-This API is the tuinix half of a two-crate feature. The other half lives in a
-consumer (`kk`) that wants to export each cut to the terminal's clipboard; its
-proposal depends on `set_clipboard` existing here, because `kk` can only write
-to the terminal through `TerminalDriver`. The consumer's own RFC says so and
-treats tuinix as the required prerequisite.
-
-The change is otherwise self-contained. It adds no dependency: the encoder is a
-private helper in this crate (see "Base64 belongs in tuinix" above), so
-tuinix's runtime dependency set stays `libc` alone and its `rust-version` does
-not move. Testing it needs nothing outside the crate either -- the sequence is a
-fixed byte string and the encoding is checked against fixed vectors (see
-"Testing" below).
-
-Filing items against the consumer is a separate step and is not a prerequisite
-for this tuinix change.
+The change is self-contained. It adds no dependency: the encoder is a private
+helper in this crate (see "Base64 belongs in tuinix" above), so tuinix's runtime
+dependency set stays `libc` alone and its `rust-version` does not move. Testing
+it needs nothing outside the crate either -- the sequence is a fixed byte string
+and the encoding is checked against fixed vectors (see "Testing" below).
 
 ## Testing
 
 The change is testable inside the crate, without a PTY and without a new
-dependency:
+dependency. The tests are `#[cfg(test)]` unit tests in `src/terminal.rs`, not
+integration tests under `tests/`: the encoder is a private helper, so only a
+unit test in the same file can call it directly for the vector check below.
+(The method's own byte-level check could be either, but keeping both beside the
+code they cover is simpler.)
 
 - The written bytes are a fixed string. A test drives the method against a
   `Vec<u8>`-backed writer (or a driver built over one) and asserts the exact
