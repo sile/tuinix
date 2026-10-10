@@ -414,6 +414,9 @@ fn parse_ascii_char(bytes: &[u8]) -> (Option<Input>, usize) {
         let (ctrl, code) = match byte {
             0x0D => (false, KeyCode::Enter), // Enter
             0x09 => (false, KeyCode::Tab),   // Tab
+            // Ctrl+Space and Ctrl+@ both arrive as NUL. `0x00 + 0x60` would
+            // fall out of the letter range and name Ctrl+backtick.
+            0x00 => (true, KeyCode::Char(' ')),
             c => (true, KeyCode::Char((c + 0x60) as char)),
         };
         return (Some(create_key_input(ctrl, false, code)), 1);
@@ -536,6 +539,8 @@ fn parse_alt_char(bytes: &[u8]) -> (Option<Input>, usize) {
             0x0D => (false, KeyCode::Enter),
             0x09 => (false, KeyCode::Tab),
             0x08 => (false, KeyCode::Backspace),
+            // Alt+Ctrl+Space (equivalently Alt+Ctrl+@) arrives as ESC NUL.
+            0x00 => (true, KeyCode::Char(' ')),
             c => (true, KeyCode::Char((c + 0x60) as char)),
         }
     } else {
@@ -1193,6 +1198,19 @@ mod tests {
             }))
         );
         assert_eq!(result.1, 1);
+
+        // Test Ctrl+Space (0x00, the same byte as Ctrl+@). It must not decode
+        // as Ctrl+backtick, which `0x00 + 0x60` would produce.
+        let result = parse_input(&[0x00]);
+        assert_eq!(
+            result.0,
+            Some(Input::Key(KeyInput {
+                ctrl: true,
+                alt: false,
+                code: KeyCode::Char(' '),
+            }))
+        );
+        assert_eq!(result.1, 1);
     }
 
     #[test]
@@ -1263,6 +1281,19 @@ mod tests {
                 ctrl: false,
                 alt: true,
                 code: KeyCode::Tab,
+            }))
+        );
+        assert_eq!(result.1, 2);
+
+        // Alt+Ctrl+Space: ESC followed by NUL. Like the bare NUL above, this
+        // is a Ctrl chord, so `ctrl` stays true alongside `alt`.
+        let result = parse_input(&[0x1b, 0x00]);
+        assert_eq!(
+            result.0,
+            Some(Input::Key(KeyInput {
+                ctrl: true,
+                alt: true,
+                code: KeyCode::Char(' '),
             }))
         );
         assert_eq!(result.1, 2);
