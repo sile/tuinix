@@ -7,7 +7,7 @@
 
 use std::{
     fs::File,
-    io::{self, BufWriter, Error, IsTerminal, Read, Stdout, Write},
+    io::{self, BufWriter, Error, ErrorKind, IsTerminal, Read, Stdout, Write},
     mem::MaybeUninit,
     os::fd::{AsRawFd, FromRawFd, RawFd},
     sync::atomic::{AtomicBool, Ordering},
@@ -81,12 +81,8 @@ impl TerminalDriver {
         let singleton = SingletonGuard::acquire()?;
 
         let stdin = std::io::stdin();
-        let stdout = std::io::stdout();
         if !stdin.is_terminal() {
             return Err(Error::other("STDIN is not a terminal"));
-        }
-        if !stdout.is_terminal() {
-            return Err(Error::other("STDOUT is not a terminal"));
         }
 
         // Open a fresh, independent, non-blocking description of the terminal
@@ -96,7 +92,7 @@ impl TerminalDriver {
         let input_fd = open_nonblocking_input(stdin.as_raw_fd())?;
         let input = unsafe { File::from_raw_fd(input_fd) };
 
-        Self::install(input, stdout, singleton)
+        Self::install(input, std::io::stdout(), singleton)
     }
 
     /// Creates a terminal driver that reads input from `input`.
@@ -118,12 +114,11 @@ impl TerminalDriver {
     pub fn with_input(input: File) -> io::Result<Self> {
         let singleton = SingletonGuard::acquire()?;
 
-        let stdout = std::io::stdout();
         if !input.is_terminal() {
-            return Err(Error::other("input is not a terminal"));
-        }
-        if !stdout.is_terminal() {
-            return Err(Error::other("STDOUT is not a terminal"));
+            return Err(Error::new(
+                ErrorKind::InvalidInput,
+                "input is not a terminal",
+            ));
         }
 
         // The input is not opened by the driver, so it has to be made
@@ -131,17 +126,22 @@ impl TerminalDriver {
         // non-blocking. This only changes the caller's own file description.
         set_fd_nonblocking(input.as_raw_fd())?;
 
-        Self::install(input, stdout, singleton)
+        Self::install(input, std::io::stdout(), singleton)
     }
 
     /// Builds a driver around an already-opened, already-validated input.
     ///
     /// `input` is the terminal to read from (non-blocking and a terminal), and
-    /// `stdout` is the output terminal. The per-descriptor setup is done here
-    /// so that [`TerminalDriver::new()`] and [`TerminalDriver::with_input()`]
-    /// differ only in where `input` comes from. On success the `singleton`
-    /// guard is disarmed, handing the flag over to the returned driver.
+    /// `stdout` is the output terminal. The stdout check and the per-descriptor
+    /// setup are done here so that [`TerminalDriver::new()`] and
+    /// [`TerminalDriver::with_input()`] differ only in where `input` comes from.
+    /// On success the `singleton` guard is disarmed, handing the flag over to
+    /// the returned driver.
     fn install(input: File, stdout: Stdout, singleton: SingletonGuard) -> io::Result<Self> {
+        if !stdout.is_terminal() {
+            return Err(Error::other("STDOUT is not a terminal"));
+        }
+
         let input_fd = input.as_raw_fd();
 
         let mut termios = MaybeUninit::<libc::termios>::zeroed();
