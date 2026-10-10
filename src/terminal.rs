@@ -7,7 +7,7 @@
 
 use std::{
     fs::File,
-    io::{self, BufWriter, Error, IsTerminal, Read, Stdout, Write},
+    io::{self, BufWriter, Error, ErrorKind, IsTerminal, Read, Stdout, Write},
     mem::MaybeUninit,
     os::fd::{AsRawFd, FromRawFd, RawFd},
     sync::atomic::{AtomicBool, Ordering},
@@ -69,6 +69,10 @@ impl TerminalDriver {
     /// [`TerminalDriver::size()`]; it is refreshed by
     /// [`TerminalDriver::handle_resize_signal()`] whenever a resize notification arrives.
     ///
+    /// Use [`TerminalDriver::with_input()`] instead when standard input is not
+    /// the keyboard -- for example when the application reads data from a pipe
+    /// (`cat f | mytui`) and must take keys from the controlling terminal.
+    ///
     /// # Errors
     ///
     /// Returns an error if another driver instance already exists, if stdin or
@@ -77,26 +81,9 @@ impl TerminalDriver {
         let singleton = SingletonGuard::acquire()?;
 
         let stdin = std::io::stdin();
-        let stdout = std::io::stdout();
         if !stdin.is_terminal() {
             return Err(Error::other("STDIN is not a terminal"));
         }
-        if !stdout.is_terminal() {
-            return Err(Error::other("STDOUT is not a terminal"));
-        }
-
-        let mut termios = MaybeUninit::<libc::termios>::zeroed();
-        check_libc_result(unsafe { libc::tcgetattr(stdin.as_raw_fd(), termios.as_mut_ptr()) })?;
-        let original_termios = unsafe { termios.assume_init() };
-
-        let input_tty_path = unsafe {
-            let mut path = [0u8; libc::PATH_MAX as usize];
-            if libc::ttyname_r(stdin.as_raw_fd(), path.as_mut_ptr().cast(), path.len()) != 0 {
-                None
-            } else {
-                Some(path)
-            }
-        };
 
         // Open a fresh, independent, non-blocking description of the terminal
         // device that stdin is connected to. This keeps the original stdin (fd 0)
@@ -104,6 +91,72 @@ impl TerminalDriver {
         // through a shared open file description.
         let input_fd = open_nonblocking_input(stdin.as_raw_fd())?;
         let input = unsafe { File::from_raw_fd(input_fd) };
+
+        Self::install(input, std::io::stdout(), singleton)
+    }
+
+    /// Creates a terminal driver that reads input from `input`.
+    ///
+    /// Unlike [`TerminalDriver::new()`], this does not require standard input to
+    /// be a terminal. `input` is used as the driver's keyboard, so an
+    /// application that consumes standard input as data (`cat f | mytui`) can
+    /// still read keys -- typically by passing a handle to the controlling
+    /// terminal (`/dev/tty`). Output is standard output, as with `new()`.
+    ///
+    /// `input` must be an open, readable terminal device. It is made
+    /// non-blocking, raw mode is set on it, and dropping the driver restores it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `input` is not a terminal, if standard output is not
+    /// a terminal, if another driver instance already exists, or if a terminal
+    /// configuration call fails.
+    pub fn with_input(input: File) -> io::Result<Self> {
+        let singleton = SingletonGuard::acquire()?;
+
+        if !input.is_terminal() {
+            return Err(Error::new(
+                ErrorKind::InvalidInput,
+                "input is not a terminal",
+            ));
+        }
+
+        // The input is not opened by the driver, so it has to be made
+        // non-blocking here, the way `new()` makes its fresh input
+        // non-blocking. This only changes the caller's own file description.
+        set_fd_nonblocking(input.as_raw_fd())?;
+
+        Self::install(input, std::io::stdout(), singleton)
+    }
+
+    /// Builds a driver around an already-opened, already-validated input.
+    ///
+    /// `input` is the terminal to read from (non-blocking and a terminal), and
+    /// `stdout` is the output terminal. The stdout check and the per-descriptor
+    /// setup are done here so that [`TerminalDriver::new()`] and
+    /// [`TerminalDriver::with_input()`] differ only in where `input` comes from.
+    /// On success the `singleton` guard is disarmed, handing the flag over to
+    /// the returned driver.
+    fn install(input: File, stdout: Stdout, singleton: SingletonGuard) -> io::Result<Self> {
+        if !stdout.is_terminal() {
+            return Err(Error::other("STDOUT is not a terminal"));
+        }
+
+        let input_fd = input.as_raw_fd();
+
+        let mut termios = MaybeUninit::<libc::termios>::zeroed();
+        check_libc_result(unsafe { libc::tcgetattr(input_fd, termios.as_mut_ptr()) })?;
+        let original_termios = unsafe { termios.assume_init() };
+
+        let input_tty_path = unsafe {
+            let mut path = [0u8; libc::PATH_MAX as usize];
+            if libc::ttyname_r(input_fd, path.as_mut_ptr().cast(), path.len()) != 0 {
+                None
+            } else {
+                Some(path)
+            }
+        };
+
         let mut this = Self {
             input,
             output: BufWriter::new(stdout),
@@ -556,8 +609,9 @@ fn open_nonblocking_input(input_fd: RawFd) -> io::Result<RawFd> {
 
 #[cfg(test)]
 mod tests {
+    use std::fs::File;
     use std::io::IsTerminal;
-    use std::os::fd::RawFd;
+    use std::os::fd::{FromRawFd, RawFd};
 
     use super::{TerminalDriver, open_nonblocking_input, write_osc52};
 
@@ -634,6 +688,77 @@ mod tests {
         assert_eq!(out, b"\x1b]52;c;\x1b\\");
     }
 
+    /// Opens a pty and returns `(master, slave)` file descriptors.
+    fn open_pty() -> (RawFd, RawFd) {
+        let mut master = 0;
+        let mut slave = 0;
+        assert_eq!(
+            unsafe {
+                libc::openpty(
+                    &mut master,
+                    &mut slave,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                )
+            },
+            0
+        );
+        (master, slave)
+    }
+
+    #[test]
+    fn with_input_rejects_non_tty() {
+        // `with_input` checks the input before it checks stdout, so this does
+        // not depend on the test process having a terminal as stdout. The
+        // singleton is acquired first (as in `new()`), so if another test is
+        // holding a driver this may fail with "already exists" instead; either
+        // way it must not succeed.
+        let mut pipefd = [0 as RawFd; 2];
+        assert_eq!(unsafe { libc::pipe(pipefd.as_mut_ptr()) }, 0);
+        let input = unsafe { File::from_raw_fd(pipefd[0]) };
+        let result = TerminalDriver::with_input(input);
+        unsafe { libc::close(pipefd[1]) };
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn with_input_reads_from_the_given_terminal() {
+        // `with_input` still requires stdout to be a terminal, so this test
+        // only runs when the harness has one.
+        if !std::io::stdout().is_terminal() {
+            return;
+        }
+
+        let (master, slave) = open_pty();
+        let input = unsafe { File::from_raw_fd(slave) };
+
+        let mut driver = TerminalDriver::with_input(input).expect("ok");
+
+        // The input descriptor is the pty we handed over, and it was made
+        // non-blocking.
+        let flags = unsafe { libc::fcntl(driver.input_fd(), libc::F_GETFL, 0) };
+        assert!(flags & libc::O_NONBLOCK != 0);
+
+        // Bytes written to the master are readable through the driver.
+        assert_eq!(
+            unsafe { libc::write(master, b"hi\n".as_ptr().cast(), 3) },
+            3
+        );
+        let mut pfd = libc::pollfd {
+            fd: driver.input_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        assert_eq!(unsafe { libc::poll(&mut pfd, 1, 2000) }, 1);
+        let mut buf = [0u8; 16];
+        let n = std::io::Read::read(&mut driver, &mut buf).expect("ok");
+        assert_eq!(&buf[..n], b"hi\n");
+
+        std::mem::drop(driver);
+        unsafe { libc::close(master) };
+    }
+
     #[test]
     fn duplicate_check() {
         if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
@@ -651,5 +776,22 @@ mod tests {
         // After dropping the first driver, creating a new one should succeed
         std::mem::drop(terminal);
         assert!(TerminalDriver::new().is_ok());
+    }
+
+    #[test]
+    fn with_input_and_new_share_the_singleton() {
+        if !std::io::stdout().is_terminal() {
+            return;
+        }
+
+        let terminal = TerminalDriver::new().expect("ok");
+
+        // A `with_input` driver cannot coexist with the existing one.
+        let (master, slave) = open_pty();
+        let input = unsafe { File::from_raw_fd(slave) };
+        assert!(TerminalDriver::with_input(input).is_err());
+        unsafe { libc::close(master) };
+
+        std::mem::drop(terminal);
     }
 }
