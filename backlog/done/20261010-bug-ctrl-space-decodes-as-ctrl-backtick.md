@@ -1,6 +1,6 @@
 # Bug: Ctrl+Space (`0x00`) decodes as Ctrl+backtick
 
-- Status: open
+- Status: fixed
 
 ## Summary
 
@@ -83,3 +83,50 @@ confirm what the Alt path should do with a control byte whose modifier the
 keyboard reports differently: `0x1b 0x00` is the Alt+Ctrl+Space the terminal
 can actually send, so it should keep `ctrl: true` as well as `alt: true`, the
 way `parse_alt_char` already does for the letters.
+
+## Outcome
+
+Fixed in [#47](https://github.com/sile/tuinix/pull/47) (merged as `4984ed7`).
+
+Both branches are fixed in one place: `parse_ascii_char` and `parse_alt_char`
+get an explicit `0x00 => (true, KeyCode::Char(' '))` arm ahead of the
+`c => (true, KeyCode::Char((c + 0x60) as char))` catch-all, so `0x00` is reported
+as Ctrl+Space rather than the Ctrl+backtick the `+ 0x60` arithmetic happened to
+name. The Alt path keeps `ctrl: true` alongside `alt: true`, matching how it
+already treats the letters.
+
+Tests cover both: a Ctrl+Space case in `test_parse_control_characters` and an
+Alt+Ctrl+Space case in `test_parse_alt_combinations`. `docs/input-decoding.md`
+gains a `0x00` row in the byte table, which had listed only `0x01..=0x1f`.
+
+No behavior outside `0x00` changes, and no new arm is needed for the other
+control bytes.
+: `File` was kept over
+`impl Into<OwnedFd>`, since the driver already stores its input as a `File` and
+no caller needs the wider form.
+
+The shared setup became a private `install(input, stdout, singleton)` that both
+constructors call, so `new()` and `with_input()` differ only in where the input
+`File` comes from. `new()` still derives its input from stdin -- it opens a
+fresh, non-blocking description of the device stdin is connected to -- and its
+contract and behavior are unchanged.
+
+Two points settled differently from the text above:
+
+- The stdout-is-a-terminal check moved into `install`, so both constructors run
+  it once. `new()` keeps its own "STDIN is not a terminal" error, and the stdout
+  error stays `Error::other`.
+- `with_input` reports a non-terminal argument as `ErrorKind::InvalidInput`
+  rather than `Error::other`, because the argument is the caller's and the kind
+  names the fault.
+
+Unlike `new()`, whose input comes from `open_nonblocking_input`, `with_input`
+makes the caller's `File` non-blocking itself; this was not spelled out above
+and is the one per-descriptor difference between the two paths.
+
+The tests live in `src/terminal.rs`'s `mod tests`: `with_input_rejects_non_tty`
+(runs everywhere), and `with_input_reads_from_the_given_terminal` /
+`with_input_and_new_share_the_singleton` (skipped when stdout is not a
+terminal).
+
+The scope is unchanged from what is described above.
