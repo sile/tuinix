@@ -1,6 +1,6 @@
 # RFC: `TerminalDriver::with_input`
 
-- Status: draft
+- Status: accepted
 
 ## Summary
 
@@ -364,3 +364,37 @@ shared helper that backs both constructors is exercised by both paths.
 ## Outcome
 
 Fill this in only when the proposal is settled.
+
+## Outcome
+
+Implemented in [#46](https://github.com/sile/tuinix/pull/46) (merged as `0d97690`).
+
+The constructor landed as `with_input(File)`: `File` was kept over
+`impl Into<OwnedFd>`, since the driver already stores its input as a `File` and
+no caller needs the wider form.
+
+The shared setup became a private `install(input, stdout, singleton)` that both
+constructors call, so `new()` and `with_input()` differ only in where the input
+`File` comes from. `new()` still derives its input from stdin -- it opens a
+fresh, non-blocking description of the device stdin is connected to -- and its
+contract and behavior are unchanged.
+
+Two points settled differently from the text above:
+
+- The stdout-is-a-terminal check moved into `install`, so both constructors run
+  it once. `new()` keeps its own "STDIN is not a terminal" error, and the stdout
+  error stays `Error::other`.
+- `with_input` reports a non-terminal argument as `ErrorKind::InvalidInput`
+  rather than `Error::other`, because the argument is the caller's and the kind
+  names the fault.
+
+Unlike `new()`, whose input comes from `open_nonblocking_input`, `with_input`
+makes the caller's `File` non-blocking itself; this was not spelled out above
+and is the one per-descriptor difference between the two paths.
+
+The tests live in `src/terminal.rs`'s `mod tests`: `with_input_rejects_non_tty`
+(runs everywhere), and `with_input_reads_from_the_given_terminal` /
+`with_input_and_new_share_the_singleton` (skipped when stdout is not a
+terminal).
+
+The scope is unchanged from what is described above.
