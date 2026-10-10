@@ -42,6 +42,7 @@ unchanged.
 
 | Bytes | Input |
 | ----- | ----- |
+| `0x00` | Ctrl+Space (the same byte as Ctrl+`@`) |
 | `0x01..=0x1f`, except `0x09`, `0x0d`, `0x1b` | Ctrl+letter (`0x01` is Ctrl+A). `0x08` is read as Ctrl+H, not Backspace |
 | `0x09` | Tab |
 | `0x0d` | Enter |
