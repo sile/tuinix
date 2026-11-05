@@ -264,12 +264,14 @@ fn read_input(
 }
 
 fn main() -> std::io::Result<()> {
-    // Initialize the terminal driver and enable mouse input reporting.
+    // Initialize the terminal driver and enable the input modes this program
+    // handles. The driver takes both back when it is dropped.
     let mut driver = tuinix::TerminalDriver::new()?;
     let mut input = tuinix::InputDecoder::new();
     let cursor = None;
     let mut prev_frame = None;
     driver.enable_mouse_reporting()?;
+    driver.enable_bracketed_paste()?;
 
     // Build an initial frame at the terminal's current dimensions.
     let mut frame = tuinix::Frame::new(driver.size());

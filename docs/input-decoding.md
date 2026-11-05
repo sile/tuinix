@@ -178,6 +178,12 @@ markers. Without them a paste is just a burst of bytes, so a newline in the
 pasted text is read as the Enter key and every other control byte is read as
 whatever key it usually stands for.
 
+A terminal only brackets a paste after an application asks it to, with
+[`enable_bracketed_paste()`](crate::TerminalDriver::enable_bracketed_paste).
+An application that never asks sees a paste as ordinary input and never a
+[`Input::Paste`](crate::Input::Paste), which is why the mode is opt-in: it
+changes what the terminal sends.
+
 The two markers are recognized, and the text between them is reported as one
 [`Input::Paste`](crate::Input::Paste) whose payload is the body as it arrived,
 with the markers themselves removed. The body is not read as input: a `~`, an

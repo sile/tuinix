@@ -246,6 +246,44 @@ impl TerminalDriver {
         Ok(())
     }
 
+    /// Puts the terminal in bracketed-paste mode.
+    ///
+    /// In this mode a paste is wrapped in markers that the decoder strips, so
+    /// it arrives as one [`Input::Paste`](crate::Input::Paste) instead of
+    /// being read as the keys it looks like: a newline in the pasted text is
+    /// no longer reported as `Enter`.
+    ///
+    /// The driver takes the mode back when it is dropped, so a caller that
+    /// enabled it does not have to disable it, including on the early-return
+    /// and panic paths that drop the driver.
+    ///
+    /// A terminal that does not know the mode ignores it, so `Ok(())` means
+    /// the request was written, not that the terminal accepted it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error only if writing to the terminal's output fails.
+    pub fn enable_bracketed_paste(&mut self) -> io::Result<()> {
+        write_bracketed_paste_mode(&mut self.output, true)?;
+        self.output.flush()?;
+        Ok(())
+    }
+
+    /// Takes the terminal back out of bracketed-paste mode.
+    ///
+    /// This undoes [`TerminalDriver::enable_bracketed_paste()`]. It is safe to
+    /// call whether or not the mode was enabled: a terminal treats the request
+    /// for a mode that is not set as a no-op.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error only if writing to the terminal's output fails.
+    pub fn disable_bracketed_paste(&mut self) -> io::Result<()> {
+        write_bracketed_paste_mode(&mut self.output, false)?;
+        self.output.flush()?;
+        Ok(())
+    }
+
     /// Replaces the terminal's clipboard with `text`, using OSC 52.
     ///
     /// Encodes `text` as base64 and writes `ESC ] 52 ; c ; <base64> ST` to the
@@ -418,6 +456,7 @@ impl Write for TerminalDriver {
 
 impl Drop for TerminalDriver {
     fn drop(&mut self) {
+        let _ = self.disable_bracketed_paste();
         let _ = self.disable_mouse_reporting();
         let _ = self.disable_alternate_screen();
         let _ = self.disable_raw_mode();
@@ -475,6 +514,20 @@ impl Drop for SingletonGuard {
     fn drop(&mut self) {
         TERMINAL_EXISTS.store(false, Ordering::SeqCst);
     }
+}
+
+/// Writes the DEC private mode sequence that enables (`set = true`) or
+/// disables (`set = false`) bracketed-paste mode.
+///
+/// The bytes are `ESC [ ? 2004 h` or `ESC [ ? 2004 l`, written without
+/// flushing. This is split out from
+/// [`TerminalDriver::enable_bracketed_paste()`] so the exact bytes can be
+/// tested against a `Vec<u8>`.
+fn write_bracketed_paste_mode<W: Write>(w: &mut W, set: bool) -> io::Result<()> {
+    let terminator = if set { b'h' } else { b'l' };
+    w.write_all(b"\x1b[?2004")?;
+    w.write_all(&[terminator])?;
+    Ok(())
 }
 
 /// Writes the OSC 52 sequence that replaces the terminal's clipboard.
@@ -613,7 +666,7 @@ mod tests {
     use std::io::IsTerminal;
     use std::os::fd::{FromRawFd, RawFd};
 
-    use super::{TerminalDriver, open_nonblocking_input, write_osc52};
+    use super::{TerminalDriver, open_nonblocking_input, write_bracketed_paste_mode, write_osc52};
 
     #[test]
     fn open_nonblocking_input_rejects_non_tty() {
@@ -686,6 +739,17 @@ mod tests {
         let mut out = Vec::new();
         write_osc52(&mut out, "").expect("ok");
         assert_eq!(out, b"\x1b]52;c;\x1b\\");
+    }
+
+    #[test]
+    fn write_bracketed_paste_mode_writes_the_expected_sequence() {
+        let mut out = Vec::new();
+        write_bracketed_paste_mode(&mut out, true).expect("ok");
+        assert_eq!(out, b"\x1b[?2004h");
+
+        let mut out = Vec::new();
+        write_bracketed_paste_mode(&mut out, false).expect("ok");
+        assert_eq!(out, b"\x1b[?2004l");
     }
 
     /// Opens a pty and returns `(master, slave)` file descriptors.
