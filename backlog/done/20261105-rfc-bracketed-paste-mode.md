@@ -197,31 +197,18 @@ This RFC adds no encoding side and does not change that rule.
   writing the same two sequences in every application is the duplication this
   removes.
 
-## Outcome
-
-Settled before implementation with no change to the design above. Two
-questions the draft carried were closed on the way:
-
-- The methods return `io::Result<()>` and report the write, matching
-  `enable_mouse_reporting()` and `disable_mouse_reporting()`. A caller that
-  treats a mouse-reporting failure as a warning treats this one the same way;
-  no caller wanted it silent.
-- Nothing queries whether the terminal accepted the mode, because a terminal
-  cannot answer it. The call reports the write, not the effect.
-
-The scope is unchanged from what is described above.
-
 ## Unresolved questions
 
-None. The two questions carried by the draft were settled as described in
-`## Outcome`.
+None. The two questions carried by the draft -- whether the methods are
+infallible and whether a caller can learn whether the terminal accepted the
+mode -- were settled as described in `## Outcome`.
 
 ## Future possibilities
 
-- The same shape would fit any further opt-in input mode: a named pair, and a
-  line in `Drop`.
+- The same shape would fit any further input mode the driver can turn on by
+  itself: a private write at construction and a line in `Drop`.
 - If the crate ever grows a way to describe its terminal modes as data rather
-  than as methods, the pair becomes one row in that description and `Drop`
+  than as methods, this mode becomes one row in that description and `Drop`
   walks the rows instead of naming each one.
 
 ## Outcome
@@ -251,5 +238,3 @@ the shell that follows wrapping pastes in markers. And `examples/demo.rs`
 already had an `Input::Paste` arm that could never run, which now does.
 
 The scope is otherwise unchanged from what is described above.
-
-The scope is unchanged from what is described above.
