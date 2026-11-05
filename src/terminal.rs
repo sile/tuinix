@@ -63,9 +63,13 @@ impl TerminalDriver {
     /// Creates a new terminal driver.
     ///
     /// This enters raw mode, switches to the alternate screen, hides the cursor,
-    /// and installs a SIGWINCH handler (taking over any handler the application
-    /// had configured). The input and signal file descriptors are made
-    /// non-blocking. The initial terminal size is cached and can be read with
+    /// puts the terminal in bracketed-paste mode, and installs a SIGWINCH handler
+    /// (taking over any handler the application had configured). Bracketed paste
+    /// makes a paste arrive as one [`Input::Paste`](crate::Input::Paste) instead
+    /// of the keys it looks like, so a newline in the pasted text is not read as
+    /// `Enter`; every mode is taken back when the driver is dropped. The input
+    /// and signal file descriptors are made non-blocking. The initial terminal
+    /// size is cached and can be read with
     /// [`TerminalDriver::size()`]; it is refreshed by
     /// [`TerminalDriver::handle_resize_signal()`] whenever a resize notification arrives.
     ///
@@ -171,6 +175,7 @@ impl TerminalDriver {
         this.enable_raw_mode()?;
         this.enable_alternate_screen()?;
         this.hide_cursor()?;
+        this.enable_bracketed_paste()?;
         this.output.flush()?;
 
         let default_hook = std::panic::take_hook();
@@ -192,7 +197,11 @@ impl TerminalDriver {
                     libc::close(fd);
                 }
             }
-            let _ = write!(stdout, "\x1b[?1049l");
+            // Turn off the modes the driver set before the message is printed,
+            // so it is not painted into the alternate screen and a pasted
+            // command is not wrapped in markers on the way out. Raw mode was
+            // restored above by `tcsetattr`.
+            let _ = write!(stdout, "\x1b[?2004l\x1b[?1049l");
             let _ = stdout.flush();
 
             // Call the default panic handler
@@ -340,6 +349,14 @@ impl TerminalDriver {
         Err(Error::last_os_error())
     }
 
+    fn enable_bracketed_paste(&mut self) -> io::Result<()> {
+        write_bracketed_paste_mode(&mut self.output, true)
+    }
+
+    fn disable_bracketed_paste(&mut self) -> io::Result<()> {
+        write_bracketed_paste_mode(&mut self.output, false)
+    }
+
     fn enable_alternate_screen(&mut self) -> io::Result<()> {
         write!(self.output, "\x1b[?1049h")
     }
@@ -418,6 +435,7 @@ impl Write for TerminalDriver {
 
 impl Drop for TerminalDriver {
     fn drop(&mut self) {
+        let _ = self.disable_bracketed_paste();
         let _ = self.disable_mouse_reporting();
         let _ = self.disable_alternate_screen();
         let _ = self.disable_raw_mode();
@@ -475,6 +493,19 @@ impl Drop for SingletonGuard {
     fn drop(&mut self) {
         TERMINAL_EXISTS.store(false, Ordering::SeqCst);
     }
+}
+
+/// Writes the DEC private mode sequence that enables (`set = true`) or
+/// disables (`set = false`) bracketed-paste mode.
+///
+/// The bytes are `ESC [ ? 2004 h` or `ESC [ ? 2004 l`, written without
+/// flushing. This is split out from the driver's mode handling so the exact
+/// bytes can be tested against a `Vec<u8>`.
+fn write_bracketed_paste_mode<W: Write>(w: &mut W, set: bool) -> io::Result<()> {
+    let terminator = if set { b'h' } else { b'l' };
+    w.write_all(b"\x1b[?2004")?;
+    w.write_all(&[terminator])?;
+    Ok(())
 }
 
 /// Writes the OSC 52 sequence that replaces the terminal's clipboard.
@@ -613,7 +644,7 @@ mod tests {
     use std::io::IsTerminal;
     use std::os::fd::{FromRawFd, RawFd};
 
-    use super::{TerminalDriver, open_nonblocking_input, write_osc52};
+    use super::{TerminalDriver, open_nonblocking_input, write_bracketed_paste_mode, write_osc52};
 
     #[test]
     fn open_nonblocking_input_rejects_non_tty() {
@@ -686,6 +717,17 @@ mod tests {
         let mut out = Vec::new();
         write_osc52(&mut out, "").expect("ok");
         assert_eq!(out, b"\x1b]52;c;\x1b\\");
+    }
+
+    #[test]
+    fn write_bracketed_paste_mode_writes_the_expected_sequence() {
+        let mut out = Vec::new();
+        write_bracketed_paste_mode(&mut out, true).expect("ok");
+        assert_eq!(out, b"\x1b[?2004h");
+
+        let mut out = Vec::new();
+        write_bracketed_paste_mode(&mut out, false).expect("ok");
+        assert_eq!(out, b"\x1b[?2004l");
     }
 
     /// Opens a pty and returns `(master, slave)` file descriptors.
