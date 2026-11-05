@@ -171,6 +171,7 @@ impl TerminalDriver {
         this.enable_raw_mode()?;
         this.enable_alternate_screen()?;
         this.hide_cursor()?;
+        this.enable_bracketed_paste()?;
         this.output.flush()?;
 
         let default_hook = std::panic::take_hook();
@@ -192,7 +193,11 @@ impl TerminalDriver {
                     libc::close(fd);
                 }
             }
-            let _ = write!(stdout, "\x1b[?1049l");
+            // Turn off the modes the driver set before the message is printed,
+            // so it is not painted into the alternate screen and a pasted
+            // command is not wrapped in markers on the way out. Raw mode was
+            // restored above by `tcsetattr`.
+            let _ = write!(stdout, "\x1b[?2004l\x1b[?1049l");
             let _ = stdout.flush();
 
             // Call the default panic handler
@@ -246,34 +251,18 @@ impl TerminalDriver {
         Ok(())
     }
 
-    /// Puts the terminal in bracketed-paste mode.
-    ///
-    /// In this mode a paste is wrapped in markers that the decoder strips, so
-    /// it arrives as one [`Input::Paste`](crate::Input::Paste) instead of
-    /// being read as the keys it looks like: a newline in the pasted text is
-    /// no longer reported as `Enter`.
-    ///
-    /// The driver takes the mode back when it is dropped, so a caller that
-    /// enabled it does not have to disable it, including on the early-return
-    /// and panic paths that drop the driver.
-    ///
-    /// A terminal that does not know the mode ignores it, so `Ok(())` means
-    /// the request was written, not that the terminal accepted it.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error only if writing to the terminal's output fails.
-    pub fn enable_bracketed_paste(&mut self) -> io::Result<()> {
-        write_bracketed_paste_mode(&mut self.output, true)?;
-        self.output.flush()?;
-        Ok(())
-    }
-
     /// Takes the terminal back out of bracketed-paste mode.
     ///
-    /// This undoes [`TerminalDriver::enable_bracketed_paste()`]. It is safe to
-    /// call whether or not the mode was enabled: a terminal treats the request
-    /// for a mode that is not set as a no-op.
+    /// The driver enables the mode when it is constructed, the same way it
+    /// enters raw mode and the alternate screen, so a paste arrives as one
+    /// [`Input::Paste`](crate::Input::Paste) instead of being read as the keys
+    /// it looks like. This undoes that for a caller that would rather receive
+    /// a paste as ordinary input, or that dispatches on [`Input`](crate::Input)
+    /// without handling the paste variant.
+    ///
+    /// Dropping the driver disables the mode whether or not it was already
+    /// disabled, which is a no-op on a terminal that has it unset. Calling this
+    /// twice is therefore harmless.
     ///
     /// # Errors
     ///
@@ -376,6 +365,10 @@ impl TerminalDriver {
             });
         }
         Err(Error::last_os_error())
+    }
+
+    fn enable_bracketed_paste(&mut self) -> io::Result<()> {
+        write_bracketed_paste_mode(&mut self.output, true)
     }
 
     fn enable_alternate_screen(&mut self) -> io::Result<()> {
