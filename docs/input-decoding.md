@@ -182,10 +182,8 @@ A terminal only brackets a paste after an application asks it to.
 [`TerminalDriver`](crate::TerminalDriver) asks when it is constructed, the same
 way it enters raw mode and the alternate screen, so an application driving one
 receives a paste as [`Input::Paste`](crate::Input::Paste) without doing
-anything. A driver that never asked, or one that was taken back out of the mode
-with
-[`disable_bracketed_paste()`](crate::TerminalDriver::disable_bracketed_paste),
-receives the paste as ordinary input.
+anything. The mode is not opt-in: a paste that arrives as the keys it looks
+like would let a newline in the pasted text act as `Enter`.
 
 The two markers are recognized, and the text between them is reported as one
 [`Input::Paste`](crate::Input::Paste) whose payload is the body as it arrived,

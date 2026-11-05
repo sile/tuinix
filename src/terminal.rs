@@ -63,9 +63,13 @@ impl TerminalDriver {
     /// Creates a new terminal driver.
     ///
     /// This enters raw mode, switches to the alternate screen, hides the cursor,
-    /// and installs a SIGWINCH handler (taking over any handler the application
-    /// had configured). The input and signal file descriptors are made
-    /// non-blocking. The initial terminal size is cached and can be read with
+    /// puts the terminal in bracketed-paste mode, and installs a SIGWINCH handler
+    /// (taking over any handler the application had configured). Bracketed paste
+    /// makes a paste arrive as one [`Input::Paste`](crate::Input::Paste) instead
+    /// of the keys it looks like, so a newline in the pasted text is not read as
+    /// `Enter`; every mode is taken back when the driver is dropped. The input
+    /// and signal file descriptors are made non-blocking. The initial terminal
+    /// size is cached and can be read with
     /// [`TerminalDriver::size()`]; it is refreshed by
     /// [`TerminalDriver::handle_resize_signal()`] whenever a resize notification arrives.
     ///
@@ -251,28 +255,6 @@ impl TerminalDriver {
         Ok(())
     }
 
-    /// Takes the terminal back out of bracketed-paste mode.
-    ///
-    /// The driver enables the mode when it is constructed, the same way it
-    /// enters raw mode and the alternate screen, so a paste arrives as one
-    /// [`Input::Paste`](crate::Input::Paste) instead of being read as the keys
-    /// it looks like. This undoes that for a caller that would rather receive
-    /// a paste as ordinary input, or that dispatches on [`Input`](crate::Input)
-    /// without handling the paste variant.
-    ///
-    /// Dropping the driver disables the mode whether or not it was already
-    /// disabled, which is a no-op on a terminal that has it unset. Calling this
-    /// twice is therefore harmless.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error only if writing to the terminal's output fails.
-    pub fn disable_bracketed_paste(&mut self) -> io::Result<()> {
-        write_bracketed_paste_mode(&mut self.output, false)?;
-        self.output.flush()?;
-        Ok(())
-    }
-
     /// Replaces the terminal's clipboard with `text`, using OSC 52.
     ///
     /// Encodes `text` as base64 and writes `ESC ] 52 ; c ; <base64> ST` to the
@@ -369,6 +351,10 @@ impl TerminalDriver {
 
     fn enable_bracketed_paste(&mut self) -> io::Result<()> {
         write_bracketed_paste_mode(&mut self.output, true)
+    }
+
+    fn disable_bracketed_paste(&mut self) -> io::Result<()> {
+        write_bracketed_paste_mode(&mut self.output, false)
     }
 
     fn enable_alternate_screen(&mut self) -> io::Result<()> {
@@ -513,9 +499,8 @@ impl Drop for SingletonGuard {
 /// disables (`set = false`) bracketed-paste mode.
 ///
 /// The bytes are `ESC [ ? 2004 h` or `ESC [ ? 2004 l`, written without
-/// flushing. This is split out from
-/// [`TerminalDriver::enable_bracketed_paste()`] so the exact bytes can be
-/// tested against a `Vec<u8>`.
+/// flushing. This is split out from the driver's mode handling so the exact
+/// bytes can be tested against a `Vec<u8>`.
 fn write_bracketed_paste_mode<W: Write>(w: &mut W, set: bool) -> io::Result<()> {
     let terminator = if set { b'h' } else { b'l' };
     w.write_all(b"\x1b[?2004")?;
