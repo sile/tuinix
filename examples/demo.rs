@@ -264,9 +264,9 @@ fn read_input(
 }
 
 fn main() -> std::io::Result<()> {
-    // Initialize the terminal driver and turn on mouse reporting. Bracketed
-    // paste is already on, so the `Input::Paste` arm below is reachable. The
-    // driver takes both modes back when it is dropped.
+    // Initialize the terminal driver and turn on mouse reporting. The driver
+    // turns on bracketed paste itself, and takes both modes back when it is
+    // dropped.
     let mut driver = tuinix::TerminalDriver::new()?;
     let mut input = tuinix::InputDecoder::new();
     let cursor = None;
