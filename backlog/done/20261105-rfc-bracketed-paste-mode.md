@@ -223,3 +223,33 @@ None. The two questions carried by the draft were settled as described in
 - If the crate ever grows a way to describe its terminal modes as data rather
   than as methods, the pair becomes one row in that description and `Drop`
   walks the rows instead of naming each one.
+
+## Outcome
+
+Implemented in [#48](https://github.com/sile/tuinix/pull/48) (merged as `95f116a`).
+
+The mode is enabled by `TerminalDriver::new()` and `with_input()` rather
+than by a pair of methods. The draft kept it opt-in on the grounds that a
+caller ignoring `Input::Paste` would go from many key events to one event
+it drops, but that argument does not hold up: the driver already enters
+raw mode, the alternate screen, and a hidden cursor without being asked,
+and this mode adds no events and no per-move work, unlike mouse
+reporting. A paste arriving as the keys it looks like lets a newline in
+the pasted text act as `Enter`, which is the case the mode exists to
+prevent, so the safe setting is the default one.
+
+Neither enabling nor disabling is public. A public disable would make
+bracketed paste the one mode with an individual escape hatch, and the
+only reason to want it is the behaviour this change is meant to stop.
+The bytes are written by private methods called from construction and
+from `Drop`.
+
+Two things came out of implementing it that the draft did not cover. The
+panic hook now writes the reset along with the alternate-screen reset it
+already wrote; with the mode on by default, a panic would otherwise leave
+the shell that follows wrapping pastes in markers. And `examples/demo.rs`
+already had an `Input::Paste` arm that could never run, which now does.
+
+The scope is otherwise unchanged from what is described above.
+
+The scope is unchanged from what is described above.
