@@ -63,15 +63,17 @@ impl TerminalDriver {
     /// Creates a new terminal driver.
     ///
     /// This enters raw mode, switches to the alternate screen, hides the cursor,
-    /// puts the terminal in bracketed-paste mode, and installs a SIGWINCH handler
-    /// (taking over any handler the application had configured). Bracketed paste
-    /// makes a paste arrive as one [`Input::Paste`](crate::Input::Paste) instead
-    /// of the keys it looks like, so a newline in the pasted text is not read as
-    /// `Enter`; every mode is taken back when the driver is dropped. The input
-    /// and signal file descriptors are made non-blocking. The initial terminal
-    /// size is cached and can be read with
-    /// [`TerminalDriver::size()`]; it is refreshed by
-    /// [`TerminalDriver::handle_resize_signal()`] whenever a resize notification arrives.
+    /// and installs a SIGWINCH handler (taking over any handler the application
+    /// had configured). Every mode is taken back when the driver is dropped. The
+    /// input and signal file descriptors are made non-blocking. The initial
+    /// terminal size is cached and can be read with [`TerminalDriver::size()`];
+    /// it is refreshed by [`TerminalDriver::handle_resize_signal()`] whenever a
+    /// resize notification arrives.
+    ///
+    /// Bracketed paste is not among the modes the driver turns on. An
+    /// application that wants a paste to arrive as one
+    /// [`Input::Paste`](crate::Input::Paste) instead of the keys it looks like
+    /// calls [`TerminalDriver::enable_bracketed_paste()`].
     ///
     /// Use [`TerminalDriver::with_input()`] instead when standard input is not
     /// the keyboard -- for example when the application reads data from a pipe
@@ -175,7 +177,6 @@ impl TerminalDriver {
         this.enable_raw_mode()?;
         this.enable_alternate_screen()?;
         this.hide_cursor()?;
-        this.enable_bracketed_paste()?;
         this.output.flush()?;
 
         let default_hook = std::panic::take_hook();
@@ -349,12 +350,40 @@ impl TerminalDriver {
         Err(Error::last_os_error())
     }
 
-    fn enable_bracketed_paste(&mut self) -> io::Result<()> {
-        write_bracketed_paste_mode(&mut self.output, true)
+    /// Puts the terminal in bracketed-paste mode.
+    ///
+    /// The terminal then wraps pasted text in `ESC [ 200 ~` and `ESC [ 201 ~`,
+    /// which [`InputDecoder`](crate::InputDecoder) reports as one
+    /// [`Input::Paste`](crate::Input::Paste) rather than as the keys the text
+    /// looks like. A newline in the pasted text is then text instead of
+    /// `Enter`, which is the reason to ask for the mode.
+    ///
+    /// The mode is not on by default, and the driver does not call this for
+    /// you: a terminal that handles the mode badly degrades pastes in a way the
+    /// application cannot see, so turning it on is the application's decision.
+    /// A terminal that does not know the mode ignores it, and the call still
+    /// succeeds; pastes then keep arriving as ordinary input.
+    ///
+    /// The sequence is flushed before this returns, so an application can call
+    /// it from its own setup and stop there. There is no need to call
+    /// [`TerminalDriver::disable_bracketed_paste()`] to undo it: dropping the
+    /// driver takes the mode back.
+    pub fn enable_bracketed_paste(&mut self) -> io::Result<()> {
+        write_bracketed_paste_mode(&mut self.output, true)?;
+        self.output.flush()
     }
 
-    fn disable_bracketed_paste(&mut self) -> io::Result<()> {
-        write_bracketed_paste_mode(&mut self.output, false)
+    /// Takes the terminal back out of bracketed-paste mode.
+    ///
+    /// Pastes are then ordinary input again, decoded as the keys they look
+    /// like. This is the way back for an application that turns the mode on for
+    /// part of its run; one that turns it on and leaves it on does not need it,
+    /// since dropping the driver disables the mode itself.
+    ///
+    /// Disabling a mode that was never enabled is harmless.
+    pub fn disable_bracketed_paste(&mut self) -> io::Result<()> {
+        write_bracketed_paste_mode(&mut self.output, false)?;
+        self.output.flush()
     }
 
     fn enable_alternate_screen(&mut self) -> io::Result<()> {

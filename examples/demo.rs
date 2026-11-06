@@ -11,6 +11,7 @@
 //! * handling keyboard input (quitting on `q`),
 //! * reporting a lone Escape key without waiting for the next key,
 //! * reporting mouse events,
+//! * reporting a paste as one input,
 //! * reacting to a terminal resize.
 //!
 //! Run it with `cargo run --example demo`.
@@ -264,14 +265,16 @@ fn read_input(
 }
 
 fn main() -> std::io::Result<()> {
-    // Initialize the terminal driver and turn on mouse reporting. The driver
-    // turns on bracketed paste itself, and takes both modes back when it is
+    // Initialize the terminal driver and turn on the modes the demo handles: a
+    // paste has to be bracketed for the terminal to report it as one, and the
+    // driver turns neither mode on by itself. Both are taken back when it is
     // dropped.
     let mut driver = tuinix::TerminalDriver::new()?;
     let mut input = tuinix::InputDecoder::new();
     let cursor = None;
     let mut prev_frame = None;
     driver.enable_mouse_reporting()?;
+    driver.enable_bracketed_paste()?;
 
     // Build an initial frame at the terminal's current dimensions.
     let mut frame = tuinix::Frame::new(driver.size());
