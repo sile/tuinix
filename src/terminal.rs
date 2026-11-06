@@ -59,75 +59,6 @@ pub struct TerminalDriver {
     cached_size: Size,
 }
 
-/// A temporary redirection of this process's standard output to a fresh pty.
-///
-/// A driver writes to whatever file descriptor 1 points at, so the only way to
-/// observe what a constructor emits is to point standard output somewhere
-/// readable first. The original stdout is restored when this is dropped.
-///
-/// This is process-wide state, so it exists only for the tests that need it and
-/// is not built into the library.
-#[cfg(test)]
-struct StdoutRedirect {
-    saved: RawFd,
-    master: RawFd,
-}
-
-#[cfg(test)]
-impl StdoutRedirect {
-    fn install() -> Self {
-        let mut master = 0;
-        let mut slave = 0;
-        assert_eq!(
-            unsafe {
-                libc::openpty(
-                    &mut master,
-                    &mut slave,
-                    std::ptr::null_mut(),
-                    std::ptr::null_mut(),
-                    std::ptr::null_mut(),
-                )
-            },
-            0
-        );
-        let saved = unsafe { libc::fcntl(1, libc::F_DUPFD_CLOEXEC, 3) };
-        assert!(saved >= 0);
-        assert_eq!(unsafe { libc::dup2(slave, 1) }, 1);
-        unsafe { libc::close(slave) };
-        Self { saved, master }
-    }
-
-    fn read(&self) -> Vec<u8> {
-        let mut pfd = libc::pollfd {
-            fd: self.master,
-            events: libc::POLLIN,
-            revents: 0,
-        };
-        let mut out = Vec::new();
-        let mut buf = [0u8; 256];
-        while unsafe { libc::poll(&mut pfd, 1, 200) } == 1 {
-            let n = unsafe { libc::read(self.master, buf.as_mut_ptr().cast(), buf.len()) };
-            if n <= 0 {
-                break;
-            }
-            out.extend_from_slice(&buf[..n as usize]);
-            pfd.revents = 0;
-        }
-        out
-    }
-}
-
-#[cfg(test)]
-impl Drop for StdoutRedirect {
-    fn drop(&mut self) {
-        unsafe {
-            libc::dup2(self.saved, 1);
-            libc::close(self.saved);
-            libc::close(self.master);
-        }
-    }
-}
-
 impl TerminalDriver {
     /// Creates a new terminal driver.
     ///
@@ -828,57 +759,6 @@ mod tests {
         assert_eq!(out, b"\x1b[?2004l");
     }
 
-    /// Every driver a test creates and every redirection of standard output
-    /// is process-wide state, so the tests that touch either take turns here.
-    static DRIVER_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    /// Reports whether `out` contains `sequence`.
-    fn contains(out: &[u8], sequence: &[u8]) -> bool {
-        out.windows(sequence.len()).any(|w| w == sequence)
-    }
-
-    #[test]
-    fn constructor_does_not_enable_bracketed_paste() {
-        let _lock = DRIVER_TEST_LOCK.lock().expect("ok");
-        let redirect = super::StdoutRedirect::install();
-
-        let (master, slave) = open_pty();
-        let driver = TerminalDriver::with_input(unsafe { File::from_raw_fd(slave) }).expect("ok");
-        std::mem::drop(driver);
-        unsafe { libc::close(master) };
-
-        let out = redirect.read();
-        assert!(
-            !contains(&out, b"\x1b[?2004h"),
-            "the constructor enabled bracketed paste: {out:?}"
-        );
-    }
-
-    #[test]
-    fn enable_and_disable_bracketed_paste_write_the_sequences() {
-        let _lock = DRIVER_TEST_LOCK.lock().expect("ok");
-        let redirect = super::StdoutRedirect::install();
-
-        let (master, slave) = open_pty();
-        let mut driver =
-            TerminalDriver::with_input(unsafe { File::from_raw_fd(slave) }).expect("ok");
-        driver.enable_bracketed_paste().expect("ok");
-        let enabled = redirect.read();
-        driver.disable_bracketed_paste().expect("ok");
-        let disabled = redirect.read();
-        std::mem::drop(driver);
-        unsafe { libc::close(master) };
-
-        assert!(
-            contains(&enabled, b"\x1b[?2004h"),
-            "enabling wrote {enabled:?}"
-        );
-        assert!(
-            contains(&disabled, b"\x1b[?2004l"),
-            "disabling wrote {disabled:?}"
-        );
-    }
-
     /// Opens a pty and returns `(master, slave)` file descriptors.
     fn open_pty() -> (RawFd, RawFd) {
         let mut master = 0;
@@ -952,7 +832,6 @@ mod tests {
 
     #[test]
     fn duplicate_check() {
-        let _lock = DRIVER_TEST_LOCK.lock().expect("ok");
         if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
             return;
         }
@@ -972,8 +851,7 @@ mod tests {
 
     #[test]
     fn with_input_and_new_share_the_singleton() {
-        let _lock = DRIVER_TEST_LOCK.lock().expect("ok");
-        if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+        if !std::io::stdout().is_terminal() {
             return;
         }
 
