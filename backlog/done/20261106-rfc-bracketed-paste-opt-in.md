@@ -201,3 +201,25 @@ None.
 - A terminal-mode description as data rather than as methods would let an
   application name the set of modes it wants at construction and leave the
   opt-in question to that value.
+
+## Outcome
+
+Implemented in [#49](https://github.com/sile/tuinix/pull/49) (merged as `bc35bbb`).
+
+## Outcome
+
+Merged in #49 as `bc35bbb`.
+
+`install()` no longer calls `enable_bracketed_paste()`, and the two methods are
+public with rustdoc, beside the mouse pair. `Drop` and the panic hook are
+unchanged. `docs/input-decoding.md`, the `Input::Paste` rustdoc, and
+`examples/demo.rs` were updated to match.
+
+No test was added. The constructor's silence is visible in `install()`, and the
+bytes both methods write are already covered by
+`write_bracketed_paste_mode_writes_the_expected_sequence`. Observing the
+constructor's output would have required making the driver's output injectable
+or redirecting fd 1 process-wide; neither is warranted for this, and a test
+that needs the terminal belongs in a termnix-based crate rather than here.
+
+The scope is unchanged from what is described above.
