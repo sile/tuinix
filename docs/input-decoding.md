@@ -11,6 +11,7 @@ rustdoc and [demo.rs][demo]. This document answers the other question: given a
 byte sequence, what does tuinix read it as?
 
 [demo]: https://github.com/sile/tuinix/blob/main/examples/demo.rs
+[enable]: crate::TerminalDriver::enable_bracketed_paste
 
 ## The shape of the input
 
@@ -178,12 +179,18 @@ markers. Without them a paste is just a burst of bytes, so a newline in the
 pasted text is read as the Enter key and every other control byte is read as
 whatever key it usually stands for.
 
-A terminal only brackets a paste after an application asks it to.
-[`TerminalDriver`](crate::TerminalDriver) asks when it is constructed, the same
-way it enters raw mode and the alternate screen, so an application driving one
-receives a paste as [`Input::Paste`](crate::Input::Paste) without doing
-anything. The mode is not opt-in: a paste that arrives as the keys it looks
-like would let a newline in the pasted text act as `Enter`.
+A terminal only brackets a paste after an application asks it to, and tuinix
+does not ask on its own. An application that wants pastes as one value calls
+[`TerminalDriver::enable_bracketed_paste()`][enable] and gets [`Input::Paste`](crate::Input::Paste) instead of the keys the pasted
+text looks like; one that does not call it keeps receiving a paste as ordinary
+input, decoded as whatever keys the bytes spell.
+
+The mode is a request because a terminal that handles it badly is not
+distinguishable from one that handles it well. Some terminals drop line breaks
+from a bracketed paste, which turns a pasted file into a single line, and the
+decoder cannot tell -- it reports the body exactly as the terminal sent it.
+Deciding whether that trade is worth it is the application's, so the driver
+leaves the mode alone until it is asked.
 
 The two markers are recognized, and the text between them is reported as one
 [`Input::Paste`](crate::Input::Paste) whose payload is the body as it arrived,

@@ -59,19 +59,90 @@ pub struct TerminalDriver {
     cached_size: Size,
 }
 
+/// A temporary redirection of this process's standard output to a fresh pty.
+///
+/// A driver writes to whatever file descriptor 1 points at, so the only way to
+/// observe what a constructor emits is to point standard output somewhere
+/// readable first. The original stdout is restored when this is dropped.
+///
+/// This is process-wide state, so it exists only for the tests that need it and
+/// is not built into the library.
+#[cfg(test)]
+struct StdoutRedirect {
+    saved: RawFd,
+    master: RawFd,
+}
+
+#[cfg(test)]
+impl StdoutRedirect {
+    fn install() -> Self {
+        let mut master = 0;
+        let mut slave = 0;
+        assert_eq!(
+            unsafe {
+                libc::openpty(
+                    &mut master,
+                    &mut slave,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                )
+            },
+            0
+        );
+        let saved = unsafe { libc::fcntl(1, libc::F_DUPFD_CLOEXEC, 3) };
+        assert!(saved >= 0);
+        assert_eq!(unsafe { libc::dup2(slave, 1) }, 1);
+        unsafe { libc::close(slave) };
+        Self { saved, master }
+    }
+
+    fn read(&self) -> Vec<u8> {
+        let mut pfd = libc::pollfd {
+            fd: self.master,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let mut out = Vec::new();
+        let mut buf = [0u8; 256];
+        while unsafe { libc::poll(&mut pfd, 1, 200) } == 1 {
+            let n = unsafe { libc::read(self.master, buf.as_mut_ptr().cast(), buf.len()) };
+            if n <= 0 {
+                break;
+            }
+            out.extend_from_slice(&buf[..n as usize]);
+            pfd.revents = 0;
+        }
+        out
+    }
+}
+
+#[cfg(test)]
+impl Drop for StdoutRedirect {
+    fn drop(&mut self) {
+        unsafe {
+            libc::dup2(self.saved, 1);
+            libc::close(self.saved);
+            libc::close(self.master);
+        }
+    }
+}
+
 impl TerminalDriver {
     /// Creates a new terminal driver.
     ///
     /// This enters raw mode, switches to the alternate screen, hides the cursor,
-    /// puts the terminal in bracketed-paste mode, and installs a SIGWINCH handler
-    /// (taking over any handler the application had configured). Bracketed paste
-    /// makes a paste arrive as one [`Input::Paste`](crate::Input::Paste) instead
-    /// of the keys it looks like, so a newline in the pasted text is not read as
-    /// `Enter`; every mode is taken back when the driver is dropped. The input
-    /// and signal file descriptors are made non-blocking. The initial terminal
-    /// size is cached and can be read with
-    /// [`TerminalDriver::size()`]; it is refreshed by
-    /// [`TerminalDriver::handle_resize_signal()`] whenever a resize notification arrives.
+    /// and installs a SIGWINCH handler (taking over any handler the application
+    /// had configured). Every mode is taken back when the driver is dropped. The
+    /// input and signal file descriptors are made non-blocking. The initial
+    /// terminal size is cached and can be read with [`TerminalDriver::size()`];
+    /// it is refreshed by [`TerminalDriver::handle_resize_signal()`] whenever a
+    /// resize notification arrives.
+    ///
+    /// Bracketed paste is not among the modes the driver turns on. An
+    /// application that wants a paste to arrive as one
+    /// [`Input::Paste`](crate::Input::Paste) instead of the keys it looks like
+    /// calls [`TerminalDriver::enable_bracketed_paste()`].
     ///
     /// Use [`TerminalDriver::with_input()`] instead when standard input is not
     /// the keyboard -- for example when the application reads data from a pipe
@@ -175,7 +246,6 @@ impl TerminalDriver {
         this.enable_raw_mode()?;
         this.enable_alternate_screen()?;
         this.hide_cursor()?;
-        this.enable_bracketed_paste()?;
         this.output.flush()?;
 
         let default_hook = std::panic::take_hook();
@@ -349,12 +419,40 @@ impl TerminalDriver {
         Err(Error::last_os_error())
     }
 
-    fn enable_bracketed_paste(&mut self) -> io::Result<()> {
-        write_bracketed_paste_mode(&mut self.output, true)
+    /// Puts the terminal in bracketed-paste mode.
+    ///
+    /// The terminal then wraps pasted text in `ESC [ 200 ~` and `ESC [ 201 ~`,
+    /// which [`InputDecoder`](crate::InputDecoder) reports as one
+    /// [`Input::Paste`](crate::Input::Paste) rather than as the keys the text
+    /// looks like. A newline in the pasted text is then text instead of
+    /// `Enter`, which is the reason to ask for the mode.
+    ///
+    /// The mode is not on by default, and the driver does not call this for
+    /// you: a terminal that handles the mode badly degrades pastes in a way the
+    /// application cannot see, so turning it on is the application's decision.
+    /// A terminal that does not know the mode ignores it, and the call still
+    /// succeeds; pastes then keep arriving as ordinary input.
+    ///
+    /// The sequence is flushed before this returns, so an application can call
+    /// it from its own setup and stop there. There is no need to call
+    /// [`TerminalDriver::disable_bracketed_paste()`] to undo it: dropping the
+    /// driver takes the mode back.
+    pub fn enable_bracketed_paste(&mut self) -> io::Result<()> {
+        write_bracketed_paste_mode(&mut self.output, true)?;
+        self.output.flush()
     }
 
-    fn disable_bracketed_paste(&mut self) -> io::Result<()> {
-        write_bracketed_paste_mode(&mut self.output, false)
+    /// Takes the terminal back out of bracketed-paste mode.
+    ///
+    /// Pastes are then ordinary input again, decoded as the keys they look
+    /// like. This is the way back for an application that turns the mode on for
+    /// part of its run; one that turns it on and leaves it on does not need it,
+    /// since dropping the driver disables the mode itself.
+    ///
+    /// Disabling a mode that was never enabled is harmless.
+    pub fn disable_bracketed_paste(&mut self) -> io::Result<()> {
+        write_bracketed_paste_mode(&mut self.output, false)?;
+        self.output.flush()
     }
 
     fn enable_alternate_screen(&mut self) -> io::Result<()> {
@@ -730,6 +828,57 @@ mod tests {
         assert_eq!(out, b"\x1b[?2004l");
     }
 
+    /// Every driver a test creates and every redirection of standard output
+    /// is process-wide state, so the tests that touch either take turns here.
+    static DRIVER_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Reports whether `out` contains `sequence`.
+    fn contains(out: &[u8], sequence: &[u8]) -> bool {
+        out.windows(sequence.len()).any(|w| w == sequence)
+    }
+
+    #[test]
+    fn constructor_does_not_enable_bracketed_paste() {
+        let _lock = DRIVER_TEST_LOCK.lock().expect("ok");
+        let redirect = super::StdoutRedirect::install();
+
+        let (master, slave) = open_pty();
+        let driver = TerminalDriver::with_input(unsafe { File::from_raw_fd(slave) }).expect("ok");
+        std::mem::drop(driver);
+        unsafe { libc::close(master) };
+
+        let out = redirect.read();
+        assert!(
+            !contains(&out, b"\x1b[?2004h"),
+            "the constructor enabled bracketed paste: {out:?}"
+        );
+    }
+
+    #[test]
+    fn enable_and_disable_bracketed_paste_write_the_sequences() {
+        let _lock = DRIVER_TEST_LOCK.lock().expect("ok");
+        let redirect = super::StdoutRedirect::install();
+
+        let (master, slave) = open_pty();
+        let mut driver =
+            TerminalDriver::with_input(unsafe { File::from_raw_fd(slave) }).expect("ok");
+        driver.enable_bracketed_paste().expect("ok");
+        let enabled = redirect.read();
+        driver.disable_bracketed_paste().expect("ok");
+        let disabled = redirect.read();
+        std::mem::drop(driver);
+        unsafe { libc::close(master) };
+
+        assert!(
+            contains(&enabled, b"\x1b[?2004h"),
+            "enabling wrote {enabled:?}"
+        );
+        assert!(
+            contains(&disabled, b"\x1b[?2004l"),
+            "disabling wrote {disabled:?}"
+        );
+    }
+
     /// Opens a pty and returns `(master, slave)` file descriptors.
     fn open_pty() -> (RawFd, RawFd) {
         let mut master = 0;
@@ -803,6 +952,7 @@ mod tests {
 
     #[test]
     fn duplicate_check() {
+        let _lock = DRIVER_TEST_LOCK.lock().expect("ok");
         if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
             return;
         }
@@ -822,7 +972,8 @@ mod tests {
 
     #[test]
     fn with_input_and_new_share_the_singleton() {
-        if !std::io::stdout().is_terminal() {
+        let _lock = DRIVER_TEST_LOCK.lock().expect("ok");
+        if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
             return;
         }
 

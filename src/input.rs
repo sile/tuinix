@@ -44,6 +44,13 @@ pub enum Input {
     /// the pasted text is read as the Enter key. Recognizing the markers lets
     /// an application insert the text as one block.
     ///
+    /// A terminal sends the markers only after an application asks for them.
+    /// With a [`TerminalDriver`](crate::TerminalDriver),
+    /// [`enable_bracketed_paste()`](crate::TerminalDriver::enable_bracketed_paste)
+    /// is that request. The decoder reports the markers whether or not anything
+    /// asked for them, so a driver that never enables the mode produces this
+    /// variant for nothing but a terminal that brackets pastes anyway.
+    ///
     /// The body is reported as bytes rather than as a string: what a paste
     /// carries is whatever the terminal sent, and the decoder has no reason to
     /// insist it is UTF-8. The markers themselves are not included, so the
