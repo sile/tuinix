@@ -204,10 +204,6 @@ None.
 
 ## Outcome
 
-Implemented in [#49](https://github.com/sile/tuinix/pull/49) (merged as `bc35bbb`).
-
-## Outcome
-
 Merged in #49 as `bc35bbb`.
 
 `install()` no longer calls `enable_bracketed_paste()`, and the two methods are
